@@ -1,0 +1,32 @@
+<svg width="220" height="72" viewBox="0 0 220 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="hex" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d6efd"/>
+      <stop offset="1" stop-color="#00d4ff"/>
+    </linearGradient>
+    <linearGradient id="txt" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#9fd8ff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Hexagono con rayo -->
+  <g filter="url(#glow)">
+    <polygon points="34,6 56,19 56,45 34,58 12,45 12,19"
+      fill="none" stroke="url(#hex)" stroke-width="2.5"/>
+    <polygon points="34,14 30,34 37,34 31,52 44,29 36,29 40,14"
+      fill="url(#hex)"/>
+  </g>
+
+  <!-- Texto -->
+  <text x="72" y="34" font-family="Segoe UI, Arial, sans-serif" font-size="24"
+    font-weight="700" fill="url(#txt)">FVICOM</text>
+  <text x="73" y="50" font-family="Segoe UI, Arial, sans-serif" font-size="9.5"
+    letter-spacing="0.5" fill="#7fb8e6">INGENIERIA ELECTRICA</text>
+  <text x="73" y="62" font-family="Segoe UI, Arial, sans-serif" font-size="9.5"
+    letter-spacing="0.5" fill="#5b8fc7">Y TELECOMUNICACIONES S.A.S</text>
+</svg>
