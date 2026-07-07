@@ -24,7 +24,7 @@
 
   <!-- Texto -->
   <text x="72" y="34" font-family="Segoe UI, Arial, sans-serif" font-size="24"
-    font-weight="700" fill="url(#txt)">FVICOM</text>
+    font-weight="700" fill="url(#txt)">FVIECOM</text>
   <text x="73" y="50" font-family="Segoe UI, Arial, sans-serif" font-size="9.5"
     letter-spacing="0.5" fill="#7fb8e6">INGENIERIA ELECTRICA</text>
   <text x="73" y="62" font-family="Segoe UI, Arial, sans-serif" font-size="9.5"
