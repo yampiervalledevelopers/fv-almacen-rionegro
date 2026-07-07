@@ -269,7 +269,7 @@ button { font-family: inherit; cursor: pointer; }
 
 /* ---------- Acerca ---------- */
 .acerca { max-width: 620px; text-align: center; margin: 0 auto; }
-.acerca-logo { height: 70px; margin: 6px auto 16px; }
+.acerca-logo { height: 96px; width: 96px; object-fit: contain; background: #fff; border-radius: 16px; padding: 8px; margin: 6px auto 16px; display: block; }
 .acerca h3 { font-size: 20px; margin-bottom: 10px; }
 .acerca p { color: var(--texto-dim); line-height: 1.6; font-size: 14px; }
 .acerca-lista { text-align: left; max-width: 460px; margin: 18px auto; color: var(--texto-dim); font-size: 13.5px; line-height: 1.9; }
