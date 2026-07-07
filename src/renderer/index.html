@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' https://www.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://www.gstatic.com https://firestore.googleapis.com; img-src 'self' data:; style-src 'self' 'unsafe-inline';" />
+  <title>Inventario FVICOM</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ============ PANTALLA DE LOGIN ============ -->
+  <div id="pantalla-login" class="login-wrap">
+    <div class="login-bg"></div>
+    <div class="login-card">
+      <img src="assets/logo.svg" alt="FVICOM" class="login-logo" />
+      <h1>Inventario de Obra</h1>
+      <p class="login-sub">Aeropuerto Internacional Jose Maria Cordova - Rionegro</p>
+
+      <form id="form-login" autocomplete="on">
+        <label>Correo electronico</label>
+        <input type="email" id="login-correo" placeholder="usuario@fvicom.com" required />
+
+        <label>Contrasena</label>
+        <input type="password" id="login-clave" placeholder="Tu contrasena" required />
+
+        <div id="login-error" class="login-error" hidden></div>
+
+        <button type="submit" id="btn-login" class="btn-primary btn-block">Ingresar</button>
+      </form>
+
+      <div class="login-links">
+        <a href="#" id="link-recuperar">Olvide mi contrasena</a>
+        <span class="sep">|</span>
+        <a href="#" id="link-registro">Crear usuario</a>
+      </div>
+      <p class="login-foot">FV Ingenieria Electrica y Telecomunicaciones S.A.S</p>
+    </div>
+  </div>
+
+  <!-- ============ APLICACION ============ -->
+  <div id="app" class="app" hidden>
+    <!-- Barra lateral -->
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="assets/logo.svg" alt="FVICOM" class="brand-logo" />
+      </div>
+      <nav class="menu">
+        <button class="menu-item active" data-vista="dashboard"><span class="ic">▚</span> Panel general</button>
+        <button class="menu-item" data-vista="inventario"><span class="ic">▦</span> Inventario</button>
+        <button class="menu-item" data-vista="movimientos"><span class="ic">⇄</span> Movimientos</button>
+        <button class="menu-item" data-vista="importar"><span class="ic">↧</span> Importar PDF</button>
+        <button class="menu-item" data-vista="reportes"><span class="ic">↥</span> Reportes PDF</button>
+        <button class="menu-item" data-vista="acerca"><span class="ic">ⓘ</span> Acerca de</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="estado-conexion" id="estado-conexion"><span class="dot"></span> Conectado</div>
+        <div class="usuario-box">
+          <div class="usuario-avatar" id="usuario-avatar">?</div>
+          <div class="usuario-datos">
+            <div class="usuario-nombre" id="usuario-nombre">-</div>
+            <button id="btn-salir" class="btn-link">Cerrar sesion</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Contenido -->
+    <main class="contenido">
+      <header class="topbar">
+        <h2 id="titulo-vista">Panel general</h2>
+        <div class="topbar-proyecto">Proyecto Aeropuerto JMC · Rionegro</div>
+      </header>
+
+      <!-- Vista: Dashboard -->
+      <section class="vista" id="vista-dashboard">
+        <div class="cards" id="dash-cards"></div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head"><h3>Materiales con stock bajo</h3></div>
+            <div id="dash-bajos" class="lista-alertas"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3>Inventario por categoria</h3></div>
+            <div id="dash-categorias" class="lista-barras"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Ultimos movimientos</h3></div>
+          <div id="dash-movimientos" class="lista-mov"></div>
+        </div>
+      </section>
+
+      <!-- Vista: Inventario -->
+      <section class="vista" id="vista-inventario" hidden>
+        <div class="barra-acciones">
+          <input type="search" id="buscar-material" class="input-buscar" placeholder="Buscar por nombre, codigo o categoria..." />
+          <select id="filtro-categoria" class="select"></select>
+          <button id="btn-nuevo-material" class="btn-primary">+ Nuevo material</button>
+        </div>
+        <div class="panel sin-pad">
+          <table class="tabla" id="tabla-inventario">
+            <thead>
+              <tr>
+                <th>Codigo</th><th>Material</th><th>Categoria</th>
+                <th class="der">Cantidad</th><th>Unidad</th><th class="der">Minimo</th>
+                <th>Ubicacion</th><th class="cen">Acciones</th>
+              </tr>
+            </thead>
+            <tbody id="cuerpo-inventario"></tbody>
+          </table>
+          <div id="inv-vacio" class="vacio" hidden>No hay materiales aun. Agrega uno o importa un PDF.</div>
+        </div>
+      </section>
+
+      <!-- Vista: Movimientos -->
+      <section class="vista" id="vista-movimientos" hidden>
+        <div class="barra-acciones">
+          <input type="search" id="buscar-mov" class="input-buscar" placeholder="Buscar movimiento..." />
+          <select id="filtro-tipo-mov" class="select">
+            <option value="">Todos</option>
+            <option value="entrada">Entradas</option>
+            <option value="salida">Salidas</option>
+          </select>
+          <button id="btn-nuevo-mov" class="btn-primary">+ Registrar movimiento</button>
+        </div>
+        <div class="panel sin-pad">
+          <table class="tabla" id="tabla-mov">
+            <thead>
+              <tr><th>Fecha</th><th>Tipo</th><th>Material</th><th class="der">Cantidad</th><th>Frente / Nota</th><th>Usuario</th></tr>
+            </thead>
+            <tbody id="cuerpo-mov"></tbody>
+          </table>
+          <div id="mov-vacio" class="vacio" hidden>Aun no hay movimientos registrados.</div>
+        </div>
+      </section>
+
+      <!-- Vista: Importar PDF -->
+      <section class="vista" id="vista-importar" hidden>
+        <div class="panel">
+          <div class="panel-head"><h3>Importar lista de materiales desde PDF</h3></div>
+          <p class="ayuda">Selecciona un PDF con la lista de materiales. El programa detectara automaticamente los elementos. Podras revisar y corregir antes de agregarlos al inventario.</p>
+          <button id="btn-elegir-pdf" class="btn-primary">📄 Elegir archivo PDF</button>
+          <span id="pdf-nombre" class="pdf-nombre"></span>
+        </div>
+
+        <div class="panel sin-pad" id="panel-preview" hidden>
+          <div class="panel-head pad">
+            <h3>Materiales detectados (<span id="preview-count">0</span>)</h3>
+            <div>
+              <button id="btn-cancelar-import" class="btn-ghost">Cancelar</button>
+              <button id="btn-confirmar-import" class="btn-primary">Agregar al inventario</button>
+            </div>
+          </div>
+          <table class="tabla" id="tabla-preview">
+            <thead>
+              <tr><th>Codigo</th><th>Material</th><th>Categoria</th><th class="der">Cantidad</th><th>Unidad</th><th class="cen">Quitar</th></tr>
+            </thead>
+            <tbody id="cuerpo-preview"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Vista: Reportes PDF -->
+      <section class="vista" id="vista-reportes" hidden>
+        <div class="cards-reportes">
+          <div class="card-reporte">
+            <div class="card-reporte-ic">▤</div>
+            <h3>Reporte General</h3>
+            <p>Resumen del inventario agrupado por categoria, con totales y conteo de materiales con stock bajo.</p>
+            <button class="btn-primary" id="btn-rep-general">Generar PDF general</button>
+          </div>
+          <div class="card-reporte">
+            <div class="card-reporte-ic">▦</div>
+            <h3>Reporte Detallado</h3>
+            <p>Listado completo de todos los materiales con sus cantidades, unidades y ubicacion, mas el historial de movimientos.</p>
+            <button class="btn-primary" id="btn-rep-detallado">Generar PDF detallado</button>
+          </div>
+        </div>
+        <div id="rep-estado" class="rep-estado" hidden></div>
+      </section>
+
+      <!-- Vista: Acerca de -->
+      <section class="vista" id="vista-acerca" hidden>
+        <div class="panel acerca">
+          <img src="assets/logo.svg" alt="FVICOM" class="acerca-logo" />
+          <h3>Inventario FVICOM</h3>
+          <p>Sistema de control de inventario de materiales para el proyecto de instalaciones electricas en el Aeropuerto Internacional Jose Maria Cordova (Rionegro).</p>
+          <ul class="acerca-lista">
+            <li>Los datos se guardan en la nube (Firebase) y se sincronizan en tiempo real.</li>
+            <li>Funciona sin conexion: los cambios se suben al recuperar internet.</li>
+            <li>Importacion y exportacion de listas en PDF.</li>
+          </ul>
+          <div id="acerca-info" class="acerca-info"></div>
+          <p class="acerca-foot">FV Ingenieria Electrica y Telecomunicaciones S.A.S</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ============ MODAL GENERICO ============ -->
+  <div id="modal" class="modal-wrap" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3 id="modal-titulo">Titulo</h3>
+        <button class="modal-cerrar" id="modal-cerrar">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Notificaciones -->
+  <div id="toast" class="toast" hidden></div>
+
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>
