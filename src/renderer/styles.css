@@ -97,8 +97,7 @@ button { font-family: inherit; cursor: pointer; }
   padding: 34px 34px 26px;
   box-shadow: var(--sombra);
   text-align: center;
-}
-.login-logo { height: 64px; margin-bottom: 14px; }
+}.login-logo { height: 96px; width: 96px; object-fit: contain; background: #fff; border-radius: 16px; padding: 8px; margin-bottom: 14px; }
 .login-card h1 { font-size: 22px; font-weight: 700; letter-spacing: .3px; }
 .login-sub { color: var(--texto-dim); font-size: 12.5px; margin: 6px 0 22px; }
 .login-card form { text-align: left; }
