@@ -20,7 +20,7 @@ jobs:
         run: npm install
 
       - name: Generar el instalador (.exe)
-        run: npm run dist:win
+        run: npm run dist:win -- --publish never
 
       - name: Subir el instalador como artefacto
         uses: actions/upload-artifact@v4
