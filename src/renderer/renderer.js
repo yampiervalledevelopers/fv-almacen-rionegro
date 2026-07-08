@@ -40,6 +40,9 @@ const UNIDADES = ['unidad', 'metro', 'kilometro', 'centimetro', 'kilogramo',
   'gramo', 'litro', 'galon', 'bulto', 'rollo', 'caja', 'paquete', 'bolsa',
   'tramo', 'juego', 'par'];
 
+// Correo por defecto para el boton "Compartir por Gmail".
+const CORREO_COMPARTIR = 'proyectos.4@fviecomsas.com';
+
 // Configuracion de los 3 tipos de movimiento / orden.
 const TIPOS = {
   salida: { label: 'Salida', titulo: 'ORDEN DE SALIDA DE MATERIALES', campo: 'frente', campoLabel: 'Frente de obra' },
@@ -55,7 +58,7 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 function esc(s) {
   return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '<').replace(/>/g, '>')
+    .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '&gt;')
     .replace(/"/g, '"').replace(/'/g, '&#39;');
 }
 function fmtNum(n) { return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
@@ -104,10 +107,8 @@ $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') cerr
 
 /* ==================================================================
    INYECCION de estilos, menu, vistas y area de impresion
-   (para no tener que editar index.html ni styles.css)
    ================================================================== */
 function inyectarExtras() {
-  // ---- Estilos nuevos (impresion + componentes) ----
   const css = `
   #print-area { display: none; }
   @media print {
@@ -147,7 +148,6 @@ function inyectarExtras() {
   style.textContent = css;
   document.head.appendChild(style);
 
-  // ---- Items del menu (Ordenes y Responsables) despues de Movimientos ----
   const menu = $('.menu');
   const itemMov = $('.menu-item[data-vista="movimientos"]');
   const btnOrdenes = document.createElement('button');
@@ -165,7 +165,6 @@ function inyectarExtras() {
     menu.appendChild(btnOrdenes); menu.appendChild(btnResp);
   }
 
-  // ---- Vistas nuevas ----
   const cont = $('.contenido');
   const vistaOrdenes = document.createElement('section');
   vistaOrdenes.className = 'vista';
@@ -208,12 +207,10 @@ function inyectarExtras() {
     </div>`;
   if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); }
 
-  // ---- Area de impresion ----
   const area = document.createElement('div');
   area.id = 'print-area';
   document.body.appendChild(area);
 
-  // ---- Reconstruir encabezado de la tabla de movimientos ----
   const theadMov = $('#tabla-mov thead tr');
   if (theadMov) {
     theadMov.innerHTML = `
@@ -221,7 +218,6 @@ function inyectarExtras() {
       <th>Frente / Proveedor</th><th>Responsable</th><th>Nota</th><th>Usuario</th><th class="cen">Imprimir</th>`;
   }
 
-  // ---- Boton "Nueva orden" en la barra de movimientos ----
   const barraMov = $('#btn-nuevo-mov');
   if (barraMov) {
     const b = document.createElement('button');
@@ -595,7 +591,7 @@ function renderOrdenes() {
   $('#cuerpo-ordenes').querySelectorAll('[data-print-orden]').forEach((b) =>
     b.addEventListener('click', () => {
       const o = estado.ordenes.find((x) => x.id === b.dataset.printOrden);
-      if (o) imprimir(docOrden(o, o.usuario || nombreUsuario()));
+      if (o) imprimir(docOrden(o, o.usuario || nombreUsuario()), 'Orden_' + o.numero);
     }));
 }
 
@@ -675,7 +671,7 @@ function modalOrden(tipo) {
       });
       cerrarModal();
       toast('Orden generada: ' + orden.numero, 'ok');
-      imprimir(docOrden(orden, orden.usuario || nombreUsuario()));
+      imprimir(docOrden(orden, orden.usuario || nombreUsuario()), 'Orden_' + orden.numero);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Generar orden e imprimir'; }
   });
 }
@@ -715,13 +711,44 @@ function renderResponsable() {
 }
 
 /* ==================================================================
-   IMPRESION
+   IMPRESION / GUARDAR / COMPARTIR
    ================================================================== */
-function imprimir(html) {
+let docNombreActual = 'Documento_FVIECOM';
+
+function imprimir(html, nombre) {
   const area = $('#print-area');
   if (!area) return;
   area.innerHTML = html;
-  setTimeout(() => window.print(), 120);
+  docNombreActual = String(nombre || 'Documento_FVIECOM').replace(/[^\w\-]+/g, '_');
+  abrirModal('Documento generado', `
+    <p style="color:var(--texto-dim);margin-bottom:16px;line-height:1.5">El documento esta listo. Elige que deseas hacer:</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-primary" id="doc-imprimir">🖨️ Imprimir</button>
+      <button class="btn-primary" id="doc-guardar">💾 Guardar como PDF</button>
+      <button class="btn-primary" id="doc-compartir">📧 Compartir por Gmail</button>
+    </div>
+    <p style="color:var(--texto-mute);font-size:11.5px;margin-top:14px;line-height:1.6">
+      💡 <b>Guardar como PDF</b>: se abre la ventana de impresion; en <b>Destino</b> elige <b>"Guardar como PDF"</b>.<br>
+      💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envias tu.
+    </p>
+    <div class="modal-acciones"><button class="btn-ghost" id="doc-cerrar">Cerrar</button></div>
+  `);
+  $('#doc-imprimir').addEventListener('click', () => window.print());
+  $('#doc-guardar').addEventListener('click', () => { toast('En "Destino" elige "Guardar como PDF"', 'ok'); setTimeout(() => window.print(), 500); });
+  $('#doc-compartir').addEventListener('click', compartirPorGmail);
+  $('#doc-cerrar').addEventListener('click', cerrarModal);
+}
+
+function compartirPorGmail() {
+  const salto = String.fromCharCode(10) + String.fromCharCode(10);
+  const asunto = 'FVIECOM - ' + docNombreActual.replace(/_/g, ' ');
+  const cuerpo = 'Buenas,' + salto +
+    'Adjunto el documento "' + docNombreActual + '" del proyecto Aeropuerto Internacional Jose Maria Cordova (Rionegro).' + salto +
+    '(Recuerda adjuntar el PDF antes de enviar.)' + salto + 'Gracias.';
+  const url = 'https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(CORREO_COMPARTIR) +
+    '&su=' + encodeURIComponent(asunto) + '&body=' + encodeURIComponent(cuerpo);
+  window.open(url, '_blank');
+  toast('Abriendo Gmail... adjunta el PDF y envialo tu', 'ok');
 }
 
 function cabeceraDoc() {
@@ -770,7 +797,7 @@ function imprimirMovimiento(id) {
     nota: mv.nota, fecha: mv.fecha,
     items: [{ materialNombre: mv.materialNombre, cantidad: mv.cantidad, unidad: mv.unidad }]
   };
-  imprimir(docOrden(orden, mv.usuario || nombreUsuario()));
+  imprimir(docOrden(orden, mv.usuario || nombreUsuario()), (orden.numero || 'Movimiento'));
 }
 function imprimirHistorialResponsable() {
   const nombre = $('#sel-responsable').value;
@@ -792,7 +819,7 @@ function imprimirHistorialResponsable() {
     </table>
     ${firmasDoc(nombreUsuario(), nombre)}
   </div>`;
-  imprimir(html);
+  imprimir(html, 'Historial_' + nombre);
 }
 
 /* ==================================================================
