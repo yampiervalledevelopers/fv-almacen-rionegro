@@ -1,8 +1,9 @@
 // ============================================================
 //  Capa de datos - Firestore (base de datos en la nube)
 //  - Sincronizacion en tiempo real (onSnapshot)
-//  - Persistencia sin conexion (persistentLocalCache):
-//    los cambios se guardan localmente y se suben al reconectar.
+//  - Persistencia sin conexion (persistentLocalCache)
+//  - Movimientos con responsable y 3 tipos: entrada / salida / devolucion
+//  - Ordenes (varios materiales a la vez) imprimibles con firmas
 // ============================================================
 
 import {
@@ -25,23 +26,34 @@ import {
 
 import { firebaseApp } from './firebase-config.js';
 
-// Inicializar Firestore con cache local persistente (modo sin conexion).
 const db = initializeFirestore(firebaseApp, {
   localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
 });
 
 const COL_MATERIALES = 'materiales';
 const COL_MOVIMIENTOS = 'movimientos';
+const COL_ORDENES = 'ordenes';
 
-/* ------------------------------------------------------------------ */
-/* Materiales                                                          */
-/* ------------------------------------------------------------------ */
+function deltaStock(tipo, cantidad) {
+  const c = Number(cantidad) || 0;
+  return tipo === 'salida' ? -c : c;
+}
 
-/**
- * Se suscribe en tiempo real a la lista de materiales.
- * callback(arrayDeMateriales) se llama cada vez que hay cambios.
- * Devuelve una funcion para cancelar la suscripcion.
- */
+function generarNumeroOrden(tipo) {
+  const p = tipo === 'salida' ? 'SAL' : tipo === 'entrada' ? 'ENT' : 'DEV';
+  const d = new Date();
+  const z = (n) => String(n).padStart(2, '0');
+  return `${p}-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
+}
+
+function normalizar(s) {
+  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+function fechaISO(data) {
+  return data && data.fecha && data.fecha.toDate ? data.fecha.toDate().toISOString() : (data && data.fecha) || null;
+}
+
 export function escucharMateriales(callback, onError) {
   const q = query(collection(db, COL_MATERIALES), orderBy('nombre'));
   return onSnapshot(q, (snap) => {
@@ -51,9 +63,6 @@ export function escucharMateriales(callback, onError) {
   }, (err) => { if (onError) onError(err); });
 }
 
-/**
- * Agrega un material nuevo. Devuelve el id generado.
- */
 export async function agregarMaterial(datos) {
   const ref = await addDoc(collection(db, COL_MATERIALES), {
     codigo: datos.codigo || '',
@@ -70,9 +79,6 @@ export async function agregarMaterial(datos) {
   return ref.id;
 }
 
-/**
- * Actualiza un material existente.
- */
 export async function actualizarMaterial(id, cambios) {
   const limpio = {};
   ['codigo', 'nombre', 'categoria', 'unidad', 'ubicacion', 'nota'].forEach((k) => {
@@ -85,19 +91,10 @@ export async function actualizarMaterial(id, cambios) {
   await updateDoc(doc(db, COL_MATERIALES, id), limpio);
 }
 
-/**
- * Elimina un material.
- */
 export async function eliminarMaterial(id) {
   await deleteDoc(doc(db, COL_MATERIALES, id));
 }
 
-/**
- * Importa varios materiales de una vez (desde un PDF).
- * Si un material ya existe (mismo nombre, sin distinguir mayusculas),
- * suma la cantidad; si no, lo crea. Usa un batch para eficiencia.
- * Devuelve { creados, actualizados }.
- */
 export async function importarMateriales(lista, existentes) {
   const batch = writeBatch(db);
   const porNombre = {};
@@ -138,88 +135,138 @@ export async function importarMateriales(lista, existentes) {
   return { creados, actualizados };
 }
 
-/* ------------------------------------------------------------------ */
-/* Movimientos (entradas / salidas)                                    */
-/* ------------------------------------------------------------------ */
-
-/**
- * Registra un movimiento (entrada o salida) y ajusta el stock del material
- * de forma atomica (batch): el documento del material y el movimiento se
- * guardan juntos.
- */
 export async function registrarMovimiento(mov) {
   const cantidad = Number(mov.cantidad) || 0;
   if (cantidad <= 0) throw new Error('La cantidad debe ser mayor a cero.');
 
-  const delta = mov.tipo === 'entrada' ? cantidad : -cantidad;
+  const tipo = ['entrada', 'salida', 'devolucion'].includes(mov.tipo) ? mov.tipo : 'salida';
+  const delta = deltaStock(tipo, cantidad);
 
   const batch = writeBatch(db);
   const matRef = doc(db, COL_MATERIALES, mov.materialId);
-  batch.update(matRef, {
-    cantidad: increment(delta),
-    actualizado: serverTimestamp()
-  });
+  batch.update(matRef, { cantidad: increment(delta), actualizado: serverTimestamp() });
 
   const movRef = doc(collection(db, COL_MOVIMIENTOS));
   batch.set(movRef, {
-    tipo: mov.tipo === 'entrada' ? 'entrada' : 'salida',
+    tipo,
     materialId: mov.materialId,
     materialNombre: mov.materialNombre || '',
-    cantidad: cantidad,
+    cantidad,
     unidad: mov.unidad || 'unidad',
     frente: mov.frente || '',
+    proveedor: mov.proveedor || '',
+    responsable: mov.responsable || '',
     nota: mov.nota || '',
     usuario: mov.usuario || '',
-    fecha: serverTimestamp()
+    fecha: serverTimestamp(),
+    ordenId: '',
+    ordenNumero: ''
   });
 
   await batch.commit();
 }
 
-/**
- * Escucha en tiempo real los movimientos (mas recientes primero).
- */
 export function escucharMovimientos(callback, onError) {
   const q = query(collection(db, COL_MOVIMIENTOS), orderBy('fecha', 'desc'));
   return onSnapshot(q, (snap) => {
     const items = [];
-    snap.forEach((d) => {
-      const data = d.data();
-      items.push({
-        id: d.id,
-        ...data,
-        // convertir Timestamp de Firestore a fecha ISO utilizable
-        fecha: data.fecha && data.fecha.toDate ? data.fecha.toDate().toISOString() : (data.fecha || null)
-      });
-    });
+    snap.forEach((d) => items.push({ id: d.id, ...d.data(), fecha: fechaISO(d.data()) }));
     callback(items);
   }, (err) => { if (onError) onError(err); });
 }
 
-/**
- * Obtiene todos los movimientos una sola vez (para exportar reportes).
- */
 export async function obtenerMovimientos() {
   const q = query(collection(db, COL_MOVIMIENTOS), orderBy('fecha', 'desc'));
   const snap = await getDocs(q);
   const items = [];
-  snap.forEach((d) => {
-    const data = d.data();
-    items.push({
-      id: d.id,
-      ...data,
-      fecha: data.fecha && data.fecha.toDate ? data.fecha.toDate().toISOString() : (data.fecha || null)
-    });
-  });
+  snap.forEach((d) => items.push({ id: d.id, ...d.data(), fecha: fechaISO(d.data()) }));
   return items;
 }
 
-/* ------------------------------------------------------------------ */
-/* Utilidades                                                          */
-/* ------------------------------------------------------------------ */
+export async function registrarOrden(orden) {
+  const tipo = ['entrada', 'salida', 'devolucion'].includes(orden.tipo) ? orden.tipo : 'salida';
+  const items = (orden.items || [])
+    .filter((it) => it.materialId && (Number(it.cantidad) || 0) > 0)
+    .map((it) => ({
+      materialId: it.materialId,
+      materialNombre: it.materialNombre || '',
+      cantidad: Number(it.cantidad) || 0,
+      unidad: it.unidad || 'unidad'
+    }));
 
-function normalizar(s) {
-  return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  if (items.length === 0) throw new Error('Agrega al menos un material con cantidad valida.');
+
+  const numero = generarNumeroOrden(tipo);
+  const fecha = serverTimestamp();
+  const batch = writeBatch(db);
+  const ordenRef = doc(collection(db, COL_ORDENES));
+
+  for (const it of items) {
+    batch.update(doc(db, COL_MATERIALES, it.materialId), {
+      cantidad: increment(deltaStock(tipo, it.cantidad)),
+      actualizado: fecha
+    });
+    const movRef = doc(collection(db, COL_MOVIMIENTOS));
+    batch.set(movRef, {
+      tipo,
+      materialId: it.materialId,
+      materialNombre: it.materialNombre,
+      cantidad: it.cantidad,
+      unidad: it.unidad,
+      frente: orden.frente || '',
+      proveedor: orden.proveedor || '',
+      responsable: orden.responsable || '',
+      nota: orden.nota || '',
+      usuario: orden.usuario || '',
+      fecha,
+      ordenId: ordenRef.id,
+      ordenNumero: numero
+    });
+  }
+
+  batch.set(ordenRef, {
+    numero,
+    tipo,
+    frente: orden.frente || '',
+    proveedor: orden.proveedor || '',
+    responsable: orden.responsable || '',
+    nota: orden.nota || '',
+    usuario: orden.usuario || '',
+    fecha,
+    items
+  });
+
+  await batch.commit();
+
+  return {
+    id: ordenRef.id,
+    numero,
+    tipo,
+    frente: orden.frente || '',
+    proveedor: orden.proveedor || '',
+    responsable: orden.responsable || '',
+    nota: orden.nota || '',
+    usuario: orden.usuario || '',
+    fecha: new Date().toISOString(),
+    items
+  };
+}
+
+export function escucharOrdenes(callback, onError) {
+  const q = query(collection(db, COL_ORDENES), orderBy('fecha', 'desc'));
+  return onSnapshot(q, (snap) => {
+    const items = [];
+    snap.forEach((d) => items.push({ id: d.id, ...d.data(), fecha: fechaISO(d.data()) }));
+    callback(items);
+  }, (err) => { if (onError) onError(err); });
+}
+
+export async function obtenerOrdenes() {
+  const q = query(collection(db, COL_ORDENES), orderBy('fecha', 'desc'));
+  const snap = await getDocs(q);
+  const items = [];
+  snap.forEach((d) => items.push({ id: d.id, ...d.data(), fecha: fechaISO(d.data()) }));
+  return items;
 }
 
 export { db };
