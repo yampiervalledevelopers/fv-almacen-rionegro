@@ -1,8 +1,8 @@
 // ============================================================
 //  Inventario FVIECOM - Logica de la interfaz (renderer)
 //  Incluye: movimientos con responsable, 3 tipos de orden
-//  (salida / entrada / devolucion), impresion con firmas y
-//  seccion de historial por responsable.
+//  (salida / entrada / devolucion), pedidos pendientes,
+//  impresion con firmas e historial por responsable.
 // ============================================================
 
 import {
@@ -13,7 +13,7 @@ import {
 import {
   escucharMateriales, agregarMaterial, actualizarMaterial, eliminarMaterial,
   importarMateriales, registrarMovimiento, escucharMovimientos, obtenerMovimientos,
-  registrarOrden, escucharOrdenes
+  registrarOrden, recibirOrden, escucharOrdenes
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -142,6 +142,10 @@ function inyectarExtras() {
   .tipo-badge.salida { background:rgba(255,84,112,0.15); color:#ff9db0; }
   .tipo-badge.entrada { background:rgba(46,204,113,0.15); color:#7ee6a8; }
   .tipo-badge.devolucion { background:rgba(255,176,32,0.15); color:#ffd08a; }
+  .estado-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
+  .estado-badge.pendiente { background:rgba(255,176,32,0.18); color:#ffd08a; }
+  .estado-badge.recibido { background:rgba(46,204,113,0.15); color:#7ee6a8; }
+  .estado-badge.completado { background:rgba(120,160,220,0.15); color:#9fc2ef; }
   `;
   const style = document.createElement('style');
   style.id = 'fviecom-extra';
@@ -179,8 +183,8 @@ function inyectarExtras() {
     <div class="panel sin-pad">
       <table class="tabla" id="tabla-ordenes">
         <thead><tr>
-          <th>N° Orden</th><th>Fecha</th><th>Tipo</th><th>Responsable</th>
-          <th>Frente / Proveedor</th><th class="der">Items</th><th class="cen">Imprimir</th>
+          <th>N° Orden</th><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Responsable</th>
+          <th>Frente / Proveedor</th><th class="der">Items</th><th class="cen">Acciones</th>
         </tr></thead>
         <tbody id="cuerpo-ordenes"></tbody>
       </table>
@@ -441,7 +445,7 @@ function modalMaterial(id) {
       <div class="campo"><label>Unidad de medida</label><select id="f-unidad">${opcionesSelect(UNIDADES, m ? m.unidad : 'unidad')}</select></div>
       <div class="campo full"><label>Nombre del material *</label><input id="f-nombre" value="${esc(m ? m.nombre : '')}" placeholder="Ej: Cable THHN #12 AWG" /></div>
       <div class="campo full"><label>Categoria</label><select id="f-categoria">${opcionesSelect(CATEGORIAS, m ? m.categoria : 'Sin clasificar')}</select></div>
-      <div class="campo"><label>Cantidad</label><input id="f-cantidad" type="number" step="any" min="0" value="${m ? m.cantidad : 0}" /></div>
+      <div class="campo"><label>Cantidad inicial (opcional)</label><input id="f-cantidad" type="number" step="any" min="0" placeholder="0" value="${m ? m.cantidad : ''}" /></div>
       <div class="campo"><label>Stock minimo (alerta)</label><input id="f-minimo" type="number" step="any" min="0" value="${m ? (m.minimo || 0) : 0}" /></div>
       <div class="campo full"><label>Ubicacion en almacen</label><input id="f-ubicacion" value="${esc(m ? m.ubicacion : '')}" placeholder="Ej: Estante A-3" /></div>
       <div class="campo full"><label>Nota</label><textarea id="f-nota" placeholder="Opcional">${esc(m ? m.nota : '')}</textarea></div>
@@ -573,26 +577,79 @@ function modalMovimiento(materialId) {
 }
 
 /* ==================================================================
-   ORDENES (varios materiales)
+   ORDENES (varios materiales) + pedidos pendientes
    ================================================================== */
+function estadoOrden(o) {
+  return o.estado || (o.tipo === 'entrada' ? 'recibido' : 'completado');
+}
+function etiquetaEstado(est) {
+  return est === 'pendiente' ? 'Pendiente' : est === 'recibido' ? 'Recibido' : 'Completado';
+}
 function renderOrdenes() {
   if (!$('#cuerpo-ordenes')) return;
   $('#ord-vacio').hidden = estado.ordenes.length !== 0;
-  $('#cuerpo-ordenes').innerHTML = estado.ordenes.map((o) => `
+  $('#cuerpo-ordenes').innerHTML = estado.ordenes.map((o) => {
+    const est = estadoOrden(o);
+    const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
+    return `
     <tr>
       <td class="codigo-cel">${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
+      <td><span class="estado-badge ${est}">${etiquetaEstado(est)}</span></td>
       <td>${esc(o.responsable || '-')}</td>
       <td>${esc(o.frente || o.proveedor || '-')}</td>
       <td class="der">${(o.items || []).length}</td>
-      <td class="cen"><button class="btn-icon" title="Imprimir orden" data-print-orden="${o.id}">🖨</button></td>
-    </tr>`).join('');
+      <td class="cen"><div class="acciones-cel">
+        ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
+        <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
+      </div></td>
+    </tr>`;
+  }).join('');
   $('#cuerpo-ordenes').querySelectorAll('[data-print-orden]').forEach((b) =>
     b.addEventListener('click', () => {
       const o = estado.ordenes.find((x) => x.id === b.dataset.printOrden);
-      if (o) imprimir(docOrden(o, o.usuario || nombreUsuario()), 'Orden_' + o.numero);
+      if (o) imprimir(docOrden(o, o.usuario || nombreUsuario()), (o.tipo === 'entrada' ? 'Pedido_' : 'Orden_') + o.numero);
     }));
+  $('#cuerpo-ordenes').querySelectorAll('[data-recibir]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const o = estado.ordenes.find((x) => x.id === b.dataset.recibir);
+      if (o) modalRecibir(o);
+    }));
+}
+
+function modalRecibir(orden) {
+  const items = orden.items || [];
+  abrirModal('Recibir pedido — ' + orden.numero, `
+    <p style="color:var(--texto-dim);margin-bottom:14px;line-height:1.5">Verifica lo que llego al almacen. Ajusta las cantidades si llego diferente; al confirmar se sumaran al stock.</p>
+    <div id="recibir-items">
+      ${items.map((it, i) => `
+        <div class="orden-item-row" data-i="${i}" style="grid-template-columns:1fr 130px">
+          <div style="align-self:center">${esc(it.materialNombre)} <span style="color:var(--texto-mute)">(pedido: ${fmtNum(it.cantidad)} ${esc(it.unidad)})</span></div>
+          <input type="number" step="any" min="0" value="${it.cantidad}" data-recib="${i}" />
+        </div>`).join('')}
+    </div>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="rec-cancelar">Cancelar</button>
+      <button class="btn-primary" id="rec-ok">Confirmar recepcion</button>
+    </div>`, '600px');
+  $('#rec-cancelar').addEventListener('click', cerrarModal);
+  $('#rec-ok').addEventListener('click', async () => {
+    const recibidos = items.map((it, i) => {
+      const inp = $('#recibir-items [data-recib="' + i + '"]');
+      return {
+        materialId: it.materialId, materialNombre: it.materialNombre, unidad: it.unidad,
+        cantidad: parseFloat(inp ? inp.value : 0) || 0
+      };
+    });
+    if (!recibidos.some((r) => r.cantidad > 0)) { toast('Ingresa al menos una cantidad recibida', 'error'); return; }
+    const btn = $('#rec-ok'); btn.disabled = true; btn.textContent = 'Guardando...';
+    try {
+      await recibirOrden(orden, recibidos, nombreUsuario());
+      toast('Pedido recibido y sumado al stock', 'ok');
+      cerrarModal();
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar recepcion'; }
+  });
 }
 
 function modalOrden(tipo) {
@@ -613,7 +670,7 @@ function modalOrden(tipo) {
     <div class="orden-total" id="o-total"></div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="o-cancelar">Cancelar</button>
-      <button class="btn-primary" id="o-guardar">Generar orden e imprimir</button>
+      <button class="btn-primary" id="o-guardar">Generar e imprimir</button>
     </div>`, '640px');
 
   const render = () => {
@@ -670,9 +727,9 @@ function modalOrden(tipo) {
         usuario: nombreUsuario(), items
       });
       cerrarModal();
-      toast('Orden generada: ' + orden.numero, 'ok');
-      imprimir(docOrden(orden, orden.usuario || nombreUsuario()), 'Orden_' + orden.numero);
-    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Generar orden e imprimir'; }
+      toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
+      imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero);
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Generar e imprimir'; }
   });
 }
 
