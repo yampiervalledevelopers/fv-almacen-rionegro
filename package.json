@@ -14,7 +14,6 @@
     "dist": "electron-builder"
   },
   "dependencies": {
-    "firebase": "^10.12.2",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.15.0"
   },
@@ -28,10 +27,6 @@
     "directories": {
       "output": "dist"
     },
-    "files": [
-      "src/**/*",
-      "package.json"
-    ],
     "win": {
       "target": "nsis",
       "icon": "src/renderer/assets/logo-fviecom.png"
