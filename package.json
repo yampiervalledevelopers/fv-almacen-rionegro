@@ -1,8 +1,8 @@
 {
   "name": "fv-almacen-rionegro",
   "version": "1.0.0",
-  "description": "Inventario FVICOM - App de escritorio para control de materiales de obra electrica (Aeropuerto Jose Maria Cordova, Rionegro)",
-  "author": "FVICOM S.A.S",
+  "description": "Inventario FVIECOM - App de escritorio para control de materiales de obra electrica (Aeropuerto Jose Maria Cordova, Rionegro)",
+  "author": "FVIECOM S.A.S",
   "license": "UNLICENSED",
   "main": "src/main/main.js",
   "scripts": {
@@ -23,8 +23,8 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.fvicom.almacen",
-    "productName": "Inventario FVICOM",
+    "appId": "com.fviecom.almacen",
+    "productName": "Inventario FVIECOM",
     "directories": {
       "output": "dist"
     },
@@ -33,19 +33,22 @@
       "package.json"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "src/renderer/assets/logo-fviecom.png"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "Inventario FVICOM"
+      "shortcutName": "Inventario FVIECOM"
     },
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "src/renderer/assets/logo-fviecom.png"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "src/renderer/assets/logo-fviecom.png"
     }
   }
 }
