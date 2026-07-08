@@ -1,5 +1,8 @@
 // ============================================================
-//  Inventario FVICOM - Logica de la interfaz (renderer)
+//  Inventario FVIECOM - Logica de la interfaz (renderer)
+//  Incluye: movimientos con responsable, 3 tipos de orden
+//  (salida / entrada / devolucion), impresion con firmas y
+//  seccion de historial por responsable.
 // ============================================================
 
 import {
@@ -9,7 +12,8 @@ import {
 
 import {
   escucharMateriales, agregarMaterial, actualizarMaterial, eliminarMaterial,
-  importarMateriales, registrarMovimiento, escucharMovimientos, obtenerMovimientos
+  importarMateriales, registrarMovimiento, escucharMovimientos, obtenerMovimientos,
+  registrarOrden, escucharOrdenes
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -19,9 +23,10 @@ const estado = {
   usuario: null,
   materiales: [],
   movimientos: [],
+  ordenes: [],
   itemsImportados: [],
-  desuscribirMateriales: null,
-  desuscribirMovimientos: null
+  itemsOrden: [],
+  desuscribir: []
 };
 
 const CATEGORIAS = [
@@ -35,6 +40,13 @@ const UNIDADES = ['unidad', 'metro', 'kilometro', 'centimetro', 'kilogramo',
   'gramo', 'litro', 'galon', 'bulto', 'rollo', 'caja', 'paquete', 'bolsa',
   'tramo', 'juego', 'par'];
 
+// Configuracion de los 3 tipos de movimiento / orden.
+const TIPOS = {
+  salida: { label: 'Salida', titulo: 'ORDEN DE SALIDA DE MATERIALES', campo: 'frente', campoLabel: 'Frente de obra' },
+  entrada: { label: 'Entrada / Pedido', titulo: 'ORDEN DE ENTRADA / PEDIDO DE MATERIALES', campo: 'proveedor', campoLabel: 'Proveedor' },
+  devolucion: { label: 'Devolucion', titulo: 'ORDEN DE DEVOLUCION DE MATERIALES', campo: 'frente', campoLabel: 'Frente de obra (origen)' }
+};
+
 /* ------------------------------------------------------------------ */
 /* Utilidades DOM                                                      */
 /* ------------------------------------------------------------------ */
@@ -46,11 +58,7 @@ function esc(s) {
     .replace(/&/g, '&amp;').replace(/</g, '<').replace(/>/g, '>')
     .replace(/"/g, '"').replace(/'/g, '&#39;');
 }
-
-function fmtNum(n) {
-  return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 });
-}
-
+function fmtNum(n) { return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
 function fmtFecha(f) {
   if (!f) return '-';
   try { return new Date(f).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }); }
@@ -64,20 +72,29 @@ function toast(msg, tipo) {
   t.className = 'toast' + (tipo ? ' ' + tipo : '');
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, 3200);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 3400);
 }
-
 function esBajoStock(m) {
   const min = Number(m.minimo);
   return min > 0 && (Number(m.cantidad) || 0) <= min;
+}
+function agrupar(lista, campo) {
+  const g = {};
+  for (const item of lista) { const k = item[campo] || 'Sin clasificar'; (g[k] = g[k] || []).push(item); }
+  return g;
+}
+function opcionesSelect(lista, sel) {
+  return lista.map((v) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(v)}</option>`).join('');
 }
 
 /* ------------------------------------------------------------------ */
 /* Modal generico                                                      */
 /* ------------------------------------------------------------------ */
-function abrirModal(titulo, htmlBody) {
+function abrirModal(titulo, htmlBody, ancho) {
   $('#modal-titulo').textContent = titulo;
   $('#modal-body').innerHTML = htmlBody;
+  const m = $('#modal .modal');
+  if (m) m.style.maxWidth = ancho ? ancho : '';
   $('#modal').hidden = false;
 }
 function cerrarModal() { $('#modal').hidden = true; $('#modal-body').innerHTML = ''; }
@@ -86,96 +103,202 @@ $('#modal-cerrar').addEventListener('click', cerrarModal);
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') cerrarModal(); });
 
 /* ==================================================================
+   INYECCION de estilos, menu, vistas y area de impresion
+   (para no tener que editar index.html ni styles.css)
+   ================================================================== */
+function inyectarExtras() {
+  // ---- Estilos nuevos (impresion + componentes) ----
+  const css = `
+  #print-area { display: none; }
+  @media print {
+    body { background: #fff !important; }
+    .app, .login-wrap, .modal-wrap, .toast { display: none !important; }
+    #print-area { display: block !important; }
+  }
+  .doc { color:#111; font-family: Arial, Helvetica, sans-serif; padding:12px 20px; max-width:820px; margin:0 auto; }
+  .doc-head { display:flex; align-items:center; gap:16px; border-bottom:3px solid #0d6efd; padding-bottom:12px; }
+  .doc-logo { width:88px; height:88px; object-fit:contain; }
+  .doc-emp h1 { font-size:22px; margin:0; color:#0a1a3a; }
+  .doc-emp p { margin:2px 0; font-size:11px; color:#444; }
+  .doc-titulo { text-align:center; font-size:17px; margin:18px 0 12px; color:#0a1a3a; letter-spacing:.5px; }
+  .doc-meta { display:grid; grid-template-columns:1fr 1fr; gap:6px 24px; font-size:12.5px; margin-bottom:14px; }
+  .doc-meta b { color:#0a1a3a; }
+  .doc-tabla { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:4px; }
+  .doc-tabla th { background:#0d6efd; color:#fff; padding:8px; text-align:left; }
+  .doc-tabla td { border:1px solid #ccc; padding:7px 8px; }
+  .doc-nota { margin-top:12px; font-size:12px; color:#333; }
+  .doc-firmas { display:flex; gap:60px; justify-content:space-around; margin-top:70px; }
+  .doc-firma { text-align:center; flex:1; max-width:280px; }
+  .doc-firma .linea { border-top:1.6px solid #333; margin-bottom:6px; }
+  .doc-firma .rol { font-size:11px; color:#666; }
+  .doc-firma .nombre { font-size:13px; font-weight:bold; color:#111; }
+  .orden-items { margin:6px 0 4px; }
+  .orden-item-row { display:grid; grid-template-columns: 1fr 120px 42px; gap:8px; margin-bottom:8px; align-items:center; }
+  .orden-item-row .btn-icon { height:38px; }
+  .orden-add { margin-top:4px; }
+  .orden-total { font-size:12.5px; color:var(--texto-dim); margin-top:6px; }
+  .tipo-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
+  .tipo-badge.salida { background:rgba(255,84,112,0.15); color:#ff9db0; }
+  .tipo-badge.entrada { background:rgba(46,204,113,0.15); color:#7ee6a8; }
+  .tipo-badge.devolucion { background:rgba(255,176,32,0.15); color:#ffd08a; }
+  `;
+  const style = document.createElement('style');
+  style.id = 'fviecom-extra';
+  style.textContent = css;
+  document.head.appendChild(style);
+
+  // ---- Items del menu (Ordenes y Responsables) despues de Movimientos ----
+  const menu = $('.menu');
+  const itemMov = $('.menu-item[data-vista="movimientos"]');
+  const btnOrdenes = document.createElement('button');
+  btnOrdenes.className = 'menu-item';
+  btnOrdenes.dataset.vista = 'ordenes';
+  btnOrdenes.innerHTML = '<span class="ic">🧾</span> Ordenes';
+  const btnResp = document.createElement('button');
+  btnResp.className = 'menu-item';
+  btnResp.dataset.vista = 'responsables';
+  btnResp.innerHTML = '<span class="ic">👷</span> Responsables';
+  if (menu && itemMov) {
+    itemMov.insertAdjacentElement('afterend', btnResp);
+    itemMov.insertAdjacentElement('afterend', btnOrdenes);
+  } else if (menu) {
+    menu.appendChild(btnOrdenes); menu.appendChild(btnResp);
+  }
+
+  // ---- Vistas nuevas ----
+  const cont = $('.contenido');
+  const vistaOrdenes = document.createElement('section');
+  vistaOrdenes.className = 'vista';
+  vistaOrdenes.id = 'vista-ordenes';
+  vistaOrdenes.hidden = true;
+  vistaOrdenes.innerHTML = `
+    <div class="barra-acciones" style="flex-wrap:wrap">
+      <button class="btn-primary" data-nueva-orden="salida">📤 Nueva salida</button>
+      <button class="btn-primary" data-nueva-orden="entrada">📥 Nueva entrada / pedido</button>
+      <button class="btn-primary" data-nueva-orden="devolucion">🔄 Nueva devolucion</button>
+    </div>
+    <div class="panel sin-pad">
+      <table class="tabla" id="tabla-ordenes">
+        <thead><tr>
+          <th>N° Orden</th><th>Fecha</th><th>Tipo</th><th>Responsable</th>
+          <th>Frente / Proveedor</th><th class="der">Items</th><th class="cen">Imprimir</th>
+        </tr></thead>
+        <tbody id="cuerpo-ordenes"></tbody>
+      </table>
+      <div id="ord-vacio" class="vacio" hidden>Aun no hay ordenes registradas. Crea una con los botones de arriba.</div>
+    </div>`;
+  const vistaResp = document.createElement('section');
+  vistaResp.className = 'vista';
+  vistaResp.id = 'vista-responsables';
+  vistaResp.hidden = true;
+  vistaResp.innerHTML = `
+    <div class="barra-acciones">
+      <select id="sel-responsable" class="select" style="min-width:260px"></select>
+      <button class="btn-primary" id="btn-imprimir-historial">🖨 Imprimir historial</button>
+    </div>
+    <div class="panel sin-pad">
+      <table class="tabla">
+        <thead><tr>
+          <th>Fecha</th><th>Tipo</th><th>Material</th><th class="der">Cantidad</th>
+          <th>Orden</th><th>Frente / Proveedor</th>
+        </tr></thead>
+        <tbody id="cuerpo-responsable"></tbody>
+      </table>
+      <div id="resp-vacio" class="vacio">Elige un responsable para ver su historial completo.</div>
+    </div>`;
+  if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); }
+
+  // ---- Area de impresion ----
+  const area = document.createElement('div');
+  area.id = 'print-area';
+  document.body.appendChild(area);
+
+  // ---- Reconstruir encabezado de la tabla de movimientos ----
+  const theadMov = $('#tabla-mov thead tr');
+  if (theadMov) {
+    theadMov.innerHTML = `
+      <th>Fecha</th><th>Tipo</th><th>Material</th><th class="der">Cantidad</th>
+      <th>Frente / Proveedor</th><th>Responsable</th><th>Nota</th><th>Usuario</th><th class="cen">Imprimir</th>`;
+  }
+
+  // ---- Boton "Nueva orden" en la barra de movimientos ----
+  const barraMov = $('#btn-nuevo-mov');
+  if (barraMov) {
+    const b = document.createElement('button');
+    b.className = 'btn-ghost';
+    b.id = 'btn-ir-ordenes';
+    b.textContent = '📦 Crear orden (varios)';
+    barraMov.insertAdjacentElement('afterend', b);
+    b.addEventListener('click', () => $('.menu-item[data-vista="ordenes"]').click());
+  }
+}
+
+/* ==================================================================
    LOGIN
    ================================================================== */
-const formLogin = $('#form-login');
-formLogin.addEventListener('submit', async (e) => {
+$('#form-login').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const correo = $('#login-correo').value;
-  const clave = $('#login-clave').value;
   const btn = $('#btn-login');
   const errBox = $('#login-error');
   errBox.hidden = true;
   btn.disabled = true; btn.textContent = 'Ingresando...';
   try {
-    await iniciarSesion(correo, clave);
-    // onAuthStateChanged se encarga de mostrar la app
+    await iniciarSesion($('#login-correo').value, $('#login-clave').value);
   } catch (err) {
-    errBox.textContent = mensajeError(err);
-    errBox.hidden = false;
+    errBox.textContent = mensajeError(err); errBox.hidden = false;
   } finally {
     btn.disabled = false; btn.textContent = 'Ingresar';
   }
 });
 
-// Crear usuario
 $('#link-registro').addEventListener('click', (e) => {
   e.preventDefault();
   abrirModal('Crear nuevo usuario', `
-    <div class="campo full" style="margin-bottom:14px">
-      <label>Nombre completo</label>
-      <input id="reg-nombre" type="text" placeholder="Ej: Almacenista Obra JMC" />
-    </div>
-    <div class="campo full" style="margin-bottom:14px">
-      <label>Correo electronico</label>
-      <input id="reg-correo" type="email" placeholder="usuario@fvicom.com" />
-    </div>
-    <div class="campo full">
-      <label>Contrasena (minimo 6 caracteres)</label>
-      <input id="reg-clave" type="password" placeholder="********" />
-    </div>
+    <div class="campo full" style="margin-bottom:14px"><label>Nombre completo</label>
+      <input id="reg-nombre" type="text" placeholder="Ej: Almacenista Obra JMC" /></div>
+    <div class="campo full" style="margin-bottom:14px"><label>Correo electronico</label>
+      <input id="reg-correo" type="email" placeholder="usuario@fviecom.com" /></div>
+    <div class="campo full"><label>Contrasena (minimo 6 caracteres)</label>
+      <input id="reg-clave" type="password" placeholder="********" /></div>
     <div id="reg-error" class="login-error" hidden style="margin-top:14px"></div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="reg-cancelar">Cancelar</button>
       <button class="btn-primary" id="reg-guardar">Crear usuario</button>
-    </div>
-  `);
+    </div>`);
   $('#reg-cancelar').addEventListener('click', cerrarModal);
   $('#reg-guardar').addEventListener('click', async () => {
-    const nombre = $('#reg-nombre').value.trim();
+    const err = $('#reg-error'); err.hidden = true;
     const correo = $('#reg-correo').value.trim();
     const clave = $('#reg-clave').value;
-    const err = $('#reg-error');
-    err.hidden = true;
-    if (!correo || clave.length < 6) {
-      err.textContent = 'Ingresa un correo valido y una contrasena de al menos 6 caracteres.';
-      err.hidden = false; return;
-    }
-    try {
-      await registrarUsuario(correo, clave, nombre);
-      cerrarModal();
-      toast('Usuario creado correctamente', 'ok');
-    } catch (e2) {
-      err.textContent = mensajeError(e2); err.hidden = false;
-    }
+    if (!correo || clave.length < 6) { err.textContent = 'Ingresa un correo valido y una contrasena de al menos 6 caracteres.'; err.hidden = false; return; }
+    try { await registrarUsuario(correo, clave, $('#reg-nombre').value.trim()); cerrarModal(); toast('Usuario creado correctamente', 'ok'); }
+    catch (e2) { err.textContent = mensajeError(e2); err.hidden = false; }
   });
 });
 
-// Recuperar contrasena
 $('#link-recuperar').addEventListener('click', async (e) => {
   e.preventDefault();
   const correo = $('#login-correo').value.trim();
   if (!correo) { toast('Escribe tu correo en el campo de arriba primero', 'error'); return; }
-  try {
-    await recuperarClave(correo);
-    toast('Te enviamos un correo para restablecer la contrasena', 'ok');
-  } catch (err) { toast(mensajeError(err), 'error'); }
+  try { await recuperarClave(correo); toast('Te enviamos un correo para restablecer la contrasena', 'ok'); }
+  catch (err) { toast(mensajeError(err), 'error'); }
 });
 
-// Cerrar sesion
-$('#btn-salir').addEventListener('click', async () => {
-  await cerrarSesion();
-});
+$('#btn-salir').addEventListener('click', async () => { await cerrarSesion(); });
 
 /* ==================================================================
-   Manejo de sesion
+   Sesion
    ================================================================== */
+function nombreUsuario() {
+  return estado.usuario ? (estado.usuario.displayName || estado.usuario.email) : '';
+}
+
 alCambiarSesion((usuario) => {
   estado.usuario = usuario;
   if (usuario) {
     $('#pantalla-login').hidden = true;
     $('#app').hidden = false;
-    const nombre = usuario.displayName || usuario.email;
+    const nombre = nombreUsuario();
     $('#usuario-nombre').textContent = nombre;
     $('#usuario-avatar').textContent = (nombre || '?').charAt(0).toUpperCase();
     iniciarSuscripciones();
@@ -183,127 +306,91 @@ alCambiarSesion((usuario) => {
   } else {
     $('#pantalla-login').hidden = false;
     $('#app').hidden = true;
-    if (estado.desuscribirMateriales) estado.desuscribirMateriales();
-    if (estado.desuscribirMovimientos) estado.desuscribirMovimientos();
-    estado.materiales = []; estado.movimientos = [];
+    estado.desuscribir.forEach((fn) => { try { fn(); } catch (e) {} });
+    estado.desuscribir = [];
+    estado.materiales = []; estado.movimientos = []; estado.ordenes = [];
   }
 });
 
 function iniciarSuscripciones() {
-  if (estado.desuscribirMateriales) estado.desuscribirMateriales();
-  if (estado.desuscribirMovimientos) estado.desuscribirMovimientos();
+  estado.desuscribir.forEach((fn) => { try { fn(); } catch (e) {} });
+  estado.desuscribir = [];
 
-  estado.desuscribirMateriales = escucharMateriales((items) => {
+  estado.desuscribir.push(escucharMateriales((items) => {
     estado.materiales = items;
-    renderInventario();
-    renderDashboard();
-    llenarFiltroCategorias();
-    marcarConexion(true);
-  }, (err) => {
-    console.error(err);
-    toast('Error al conectar con la base de datos: ' + err.message, 'error');
-  });
+    renderInventario(); renderDashboard(); llenarFiltroCategorias();
+  }, (err) => { console.error(err); toast('Error de conexion: ' + err.message, 'error'); }));
 
-  estado.desuscribirMovimientos = escucharMovimientos((items) => {
+  estado.desuscribir.push(escucharMovimientos((items) => {
     estado.movimientos = items;
-    renderMovimientos();
-    renderDashboard();
-  }, (err) => console.error(err));
+    renderMovimientos(); renderDashboard(); llenarResponsables();
+  }, (err) => console.error(err)));
+
+  estado.desuscribir.push(escucharOrdenes((items) => {
+    estado.ordenes = items;
+    renderOrdenes();
+  }, (err) => console.error(err)));
 }
 
-function marcarConexion(ok) {
-  const el = $('#estado-conexion');
-  if (ok) { el.classList.remove('offline'); el.innerHTML = '<span class="dot"></span> Conectado'; }
-}
-
-// Indicador online/offline del navegador
-window.addEventListener('online', () => {
-  $('#estado-conexion').classList.remove('offline');
-  $('#estado-conexion').innerHTML = '<span class="dot"></span> Conectado';
-});
-window.addEventListener('offline', () => {
-  $('#estado-conexion').classList.add('offline');
-  $('#estado-conexion').innerHTML = '<span class="dot"></span> Sin conexion (guardando local)';
-});
+window.addEventListener('online', () => { $('#estado-conexion').classList.remove('offline'); $('#estado-conexion').innerHTML = '<span class="dot"></span> Conectado'; });
+window.addEventListener('offline', () => { $('#estado-conexion').classList.add('offline'); $('#estado-conexion').innerHTML = '<span class="dot"></span> Sin conexion (guardando local)'; });
 
 /* ==================================================================
-   Navegacion entre vistas
+   Navegacion
    ================================================================== */
 const TITULOS = {
   dashboard: 'Panel general', inventario: 'Inventario', movimientos: 'Movimientos',
+  ordenes: 'Ordenes', responsables: 'Responsables',
   importar: 'Importar PDF', reportes: 'Reportes PDF', acerca: 'Acerca de'
 };
-
-$$('.menu-item').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const vista = btn.dataset.vista;
-    $$('.menu-item').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    $$('.vista').forEach((v) => v.hidden = true);
-    $('#vista-' + vista).hidden = false;
-    $('#titulo-vista').textContent = TITULOS[vista] || '';
+function activarNavegacion() {
+  $$('.menu-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const vista = btn.dataset.vista;
+      $$('.menu-item').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      $$('.vista').forEach((v) => v.hidden = true);
+      const v = $('#vista-' + vista);
+      if (v) v.hidden = false;
+      $('#titulo-vista').textContent = TITULOS[vista] || '';
+    });
   });
-});
+}
 
 /* ==================================================================
    DASHBOARD
    ================================================================== */
 function renderDashboard() {
   const mats = estado.materiales;
-  const totalTipos = mats.length;
   const totalCant = mats.reduce((s, m) => s + (Number(m.cantidad) || 0), 0);
   const bajos = mats.filter(esBajoStock);
   const categorias = new Set(mats.map((m) => m.categoria || 'Sin clasificar')).size;
 
+  if (!$('#dash-cards')) return;
   $('#dash-cards').innerHTML = `
-    ${cardHtml('Tipos de material', totalTipos, '▦')}
+    ${cardHtml('Tipos de material', mats.length, '▦')}
     ${cardHtml('Cantidad total', fmtNum(totalCant), '∑')}
     ${cardHtml('Categorias', categorias, '▚')}
-    ${cardHtml('Stock bajo', bajos.length, '⚠', bajos.length > 0)}
-  `;
+    ${cardHtml('Stock bajo', bajos.length, '⚠', bajos.length > 0)}`;
 
-  // Alertas de stock bajo
-  const cont = $('#dash-bajos');
-  if (bajos.length === 0) {
-    cont.innerHTML = '<div class="vacio" style="padding:20px">Sin alertas. Todo el stock esta por encima del minimo. ✓</div>';
-  } else {
-    cont.innerHTML = bajos.slice(0, 8).map((m) => `
-      <div class="alerta-item">
-        <span>${esc(m.nombre)}</span>
-        <span class="cant">${fmtNum(m.cantidad)} ${esc(m.unidad)} (min ${fmtNum(m.minimo)})</span>
-      </div>`).join('');
-  }
+  $('#dash-bajos').innerHTML = bajos.length === 0
+    ? '<div class="vacio" style="padding:20px">Sin alertas. Todo el stock esta por encima del minimo. ✓</div>'
+    : bajos.slice(0, 8).map((m) => `<div class="alerta-item"><span>${esc(m.nombre)}</span><span class="cant">${fmtNum(m.cantidad)} ${esc(m.unidad)} (min ${fmtNum(m.minimo)})</span></div>`).join('');
 
-  // Barras por categoria
   const grupos = agrupar(mats, 'categoria');
   const cats = Object.keys(grupos).sort((a, b) => grupos[b].length - grupos[a].length);
   const max = Math.max(1, ...cats.map((c) => grupos[c].length));
   $('#dash-categorias').innerHTML = cats.length === 0
     ? '<div class="vacio" style="padding:20px">Aun no hay materiales.</div>'
-    : cats.map((c) => `
-      <div class="barra-row">
-        <div class="barra-top"><span>${esc(c)}</span><span>${grupos[c].length}</span></div>
-        <div class="barra-bg"><div class="barra-fill" style="width:${(grupos[c].length / max) * 100}%"></div></div>
-      </div>`).join('');
+    : cats.map((c) => `<div class="barra-row"><div class="barra-top"><span>${esc(c)}</span><span>${grupos[c].length}</span></div><div class="barra-bg"><div class="barra-fill" style="width:${(grupos[c].length / max) * 100}%"></div></div></div>`).join('');
 
-  // Ultimos movimientos
   const ult = estado.movimientos.slice(0, 6);
   $('#dash-movimientos').innerHTML = ult.length === 0
     ? '<div class="vacio" style="padding:20px">Sin movimientos recientes.</div>'
-    : ult.map((mv) => `
-      <div class="mov-item">
-        <span class="mov-tag ${mv.tipo}">${mv.tipo === 'entrada' ? 'ENTRADA' : 'SALIDA'}</span>
-        <span class="mov-desc">${esc(mv.materialNombre)} — <b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</span>
-        <span class="mov-fecha">${fmtFecha(mv.fecha)}</span>
-      </div>`).join('');
+    : ult.map((mv) => `<div class="mov-item"><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span><span class="mov-desc">${esc(mv.materialNombre)} — <b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</span><span class="mov-fecha">${fmtFecha(mv.fecha)}</span></div>`).join('');
 }
-
 function cardHtml(label, valor, ic, warn) {
-  return `<div class="card ${warn ? 'warn' : ''}">
-    <div class="card-label">${label}</div>
-    <div class="card-valor">${valor}</div>
-    <div class="card-ic">${ic}</div>
-  </div>`;
+  return `<div class="card ${warn ? 'warn' : ''}"><div class="card-label">${label}</div><div class="card-valor">${valor}</div><div class="card-ic">${ic}</div></div>`;
 }
 
 /* ==================================================================
@@ -311,30 +398,26 @@ function cardHtml(label, valor, ic, warn) {
    ================================================================== */
 function llenarFiltroCategorias() {
   const sel = $('#filtro-categoria');
+  if (!sel) return;
   const actual = sel.value;
   const cats = Array.from(new Set(estado.materiales.map((m) => m.categoria || 'Sin clasificar'))).sort();
-  sel.innerHTML = '<option value="">Todas las categorias</option>' +
-    cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  sel.innerHTML = '<option value="">Todas las categorias</option>' + cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   sel.value = actual;
 }
-
 function materialesFiltrados() {
   const q = ($('#buscar-material').value || '').toLowerCase().trim();
   const cat = $('#filtro-categoria').value;
   return estado.materiales.filter((m) => {
     if (cat && (m.categoria || 'Sin clasificar') !== cat) return false;
     if (!q) return true;
-    return [m.nombre, m.codigo, m.categoria, m.ubicacion]
-      .some((v) => String(v || '').toLowerCase().includes(q));
+    return [m.nombre, m.codigo, m.categoria, m.ubicacion].some((v) => String(v || '').toLowerCase().includes(q));
   });
 }
-
 function renderInventario() {
+  if (!$('#cuerpo-inventario')) return;
   const lista = materialesFiltrados();
-  const cuerpo = $('#cuerpo-inventario');
   $('#inv-vacio').hidden = estado.materiales.length !== 0;
-
-  cuerpo.innerHTML = lista.map((m) => `
+  $('#cuerpo-inventario').innerHTML = lista.map((m) => `
     <tr>
       <td class="codigo-cel">${esc(m.codigo || '-')}</td>
       <td>${esc(m.nombre)}${esBajoStock(m) ? '<span class="badge-bajo">STOCK BAJO</span>' : ''}</td>
@@ -343,29 +426,15 @@ function renderInventario() {
       <td>${esc(m.unidad)}</td>
       <td class="der">${m.minimo ? fmtNum(m.minimo) : '-'}</td>
       <td>${esc(m.ubicacion || '-')}</td>
-      <td class="cen">
-        <div class="acciones-cel">
-          <button class="btn-icon" title="Registrar movimiento" data-mov="${m.id}">⇄</button>
-          <button class="btn-icon" title="Editar" data-editar="${m.id}">✎</button>
-          <button class="btn-icon peligro" title="Eliminar" data-eliminar="${m.id}">🗑</button>
-        </div>
-      </td>
+      <td class="cen"><div class="acciones-cel">
+        <button class="btn-icon" title="Registrar movimiento" data-mov="${m.id}">⇄</button>
+        <button class="btn-icon" title="Editar" data-editar="${m.id}">✎</button>
+        <button class="btn-icon peligro" title="Eliminar" data-eliminar="${m.id}">🗑</button>
+      </div></td>
     </tr>`).join('');
-
-  cuerpo.querySelectorAll('[data-editar]').forEach((b) =>
-    b.addEventListener('click', () => modalMaterial(b.dataset.editar)));
-  cuerpo.querySelectorAll('[data-eliminar]').forEach((b) =>
-    b.addEventListener('click', () => confirmarEliminar(b.dataset.eliminar)));
-  cuerpo.querySelectorAll('[data-mov]').forEach((b) =>
-    b.addEventListener('click', () => modalMovimiento(b.dataset.mov)));
-}
-
-$('#buscar-material').addEventListener('input', renderInventario);
-$('#filtro-categoria').addEventListener('change', renderInventario);
-$('#btn-nuevo-material').addEventListener('click', () => modalMaterial(null));
-
-function opcionesSelect(lista, sel) {
-  return lista.map((v) => `<option value="${esc(v)}" ${v === sel ? 'selected' : ''}>${esc(v)}</option>`).join('');
+  $('#cuerpo-inventario').querySelectorAll('[data-editar]').forEach((b) => b.addEventListener('click', () => modalMaterial(b.dataset.editar)));
+  $('#cuerpo-inventario').querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', () => confirmarEliminar(b.dataset.eliminar)));
+  $('#cuerpo-inventario').querySelectorAll('[data-mov]').forEach((b) => b.addEventListener('click', () => modalMovimiento(b.dataset.mov)));
 }
 
 function modalMaterial(id) {
@@ -384,19 +453,14 @@ function modalMaterial(id) {
     <div class="modal-acciones">
       <button class="btn-ghost" id="m-cancelar">Cancelar</button>
       <button class="btn-primary" id="m-guardar">${m ? 'Guardar cambios' : 'Agregar material'}</button>
-    </div>
-  `);
+    </div>`);
   $('#m-cancelar').addEventListener('click', cerrarModal);
   $('#m-guardar').addEventListener('click', async () => {
     const datos = {
-      codigo: $('#f-codigo').value.trim(),
-      nombre: $('#f-nombre').value.trim(),
-      categoria: $('#f-categoria').value,
-      cantidad: $('#f-cantidad').value,
-      unidad: $('#f-unidad').value,
-      minimo: $('#f-minimo').value,
-      ubicacion: $('#f-ubicacion').value.trim(),
-      nota: $('#f-nota').value.trim()
+      codigo: $('#f-codigo').value.trim(), nombre: $('#f-nombre').value.trim(),
+      categoria: $('#f-categoria').value, cantidad: $('#f-cantidad').value,
+      unidad: $('#f-unidad').value, minimo: $('#f-minimo').value,
+      ubicacion: $('#f-ubicacion').value.trim(), nota: $('#f-nota').value.trim()
     };
     if (!datos.nombre) { toast('El nombre del material es obligatorio', 'error'); return; }
     try {
@@ -411,15 +475,11 @@ function confirmarEliminar(id) {
   const m = estado.materiales.find((x) => x.id === id);
   if (!m) return;
   abrirModal('Eliminar material', `
-    <p style="color:var(--texto-dim);line-height:1.6">
-      Vas a eliminar <b style="color:#fff">${esc(m.nombre)}</b> del inventario.
-      Esta accion no se puede deshacer.
-    </p>
+    <p style="color:var(--texto-dim);line-height:1.6">Vas a eliminar <b style="color:#fff">${esc(m.nombre)}</b> del inventario. Esta accion no se puede deshacer.</p>
     <div class="modal-acciones">
       <button class="btn-ghost" id="del-cancelar">Cancelar</button>
       <button class="btn-primary" id="del-ok" style="background:linear-gradient(135deg,#ff5470,#c0392b);color:#fff">Si, eliminar</button>
-    </div>
-  `);
+    </div>`);
   $('#del-cancelar').addEventListener('click', cerrarModal);
   $('#del-ok').addEventListener('click', async () => {
     try { await eliminarMaterial(id); toast('Material eliminado', 'ok'); cerrarModal(); }
@@ -428,117 +488,343 @@ function confirmarEliminar(id) {
 }
 
 /* ==================================================================
-   MOVIMIENTOS
+   MOVIMIENTOS individuales
    ================================================================== */
 function renderMovimientos() {
+  if (!$('#cuerpo-mov')) return;
   const q = ($('#buscar-mov').value || '').toLowerCase().trim();
   const tipo = $('#filtro-tipo-mov').value;
   const lista = estado.movimientos.filter((mv) => {
     if (tipo && mv.tipo !== tipo) return false;
     if (!q) return true;
-    return [mv.materialNombre, mv.frente, mv.nota, mv.usuario]
-      .some((v) => String(v || '').toLowerCase().includes(q));
+    return [mv.materialNombre, mv.frente, mv.proveedor, mv.nota, mv.responsable, mv.usuario].some((v) => String(v || '').toLowerCase().includes(q));
   });
-
   $('#mov-vacio').hidden = estado.movimientos.length !== 0;
   $('#cuerpo-mov').innerHTML = lista.map((mv) => `
     <tr>
       <td>${fmtFecha(mv.fecha)}</td>
-      <td><span class="mov-tag ${mv.tipo}">${mv.tipo === 'entrada' ? 'ENTRADA' : 'SALIDA'}</span></td>
+      <td><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
       <td>${esc(mv.materialNombre)}</td>
       <td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td>
-      <td>${esc(mv.frente || mv.nota || '-')}</td>
+      <td>${esc(mv.frente || mv.proveedor || '-')}</td>
+      <td>${esc(mv.responsable || '-')}</td>
+      <td>${esc(mv.nota || '-')}</td>
       <td>${esc(mv.usuario || '-')}</td>
+      <td class="cen"><button class="btn-icon" title="Imprimir comprobante" data-print-mov="${mv.id}">🖨</button></td>
     </tr>`).join('');
+  $('#cuerpo-mov').querySelectorAll('[data-print-mov]').forEach((b) =>
+    b.addEventListener('click', () => imprimirMovimiento(b.dataset.printMov)));
 }
 
-$('#buscar-mov').addEventListener('input', renderMovimientos);
-$('#filtro-tipo-mov').addEventListener('change', renderMovimientos);
-$('#btn-nuevo-mov').addEventListener('click', () => modalMovimiento(null));
+function prepararFiltroTipoMov() {
+  const sel = $('#filtro-tipo-mov');
+  if (sel) sel.innerHTML = `<option value="">Todos</option><option value="entrada">Entradas</option><option value="salida">Salidas</option><option value="devolucion">Devoluciones</option>`;
+}
+
+function segTipoHtml(sel) {
+  return `<div class="seg" id="seg-tipo">
+    <button type="button" data-t="salida" class="${sel === 'salida' ? 'on' : ''}">📤 Salida</button>
+    <button type="button" data-t="entrada" class="${sel === 'entrada' ? 'on' : ''}">📥 Entrada</button>
+    <button type="button" data-t="devolucion" class="${sel === 'devolucion' ? 'on' : ''}">🔄 Devolucion</button>
+  </div>`;
+}
 
 function modalMovimiento(materialId) {
-  if (estado.materiales.length === 0) {
-    toast('Primero agrega materiales al inventario', 'error'); return;
-  }
+  if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
   let tipoSel = 'salida';
-  const opciones = estado.materiales
-    .slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)))
+  const opciones = estado.materiales.slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)))
     .map((m) => `<option value="${m.id}" ${m.id === materialId ? 'selected' : ''}>${esc(m.nombre)} (${fmtNum(m.cantidad)} ${esc(m.unidad)})</option>`).join('');
 
   abrirModal('Registrar movimiento', `
-    <div class="campo full" style="margin-bottom:14px">
-      <label>Tipo de movimiento</label>
-      <div class="seg" id="seg-tipo">
-        <button type="button" data-t="entrada">↧ Entrada</button>
-        <button type="button" data-t="salida" class="on">↥ Salida</button>
-      </div>
-    </div>
-    <div class="campo full" style="margin-bottom:14px">
-      <label>Material</label>
-      <select id="mv-material">${opciones}</select>
-    </div>
+    <div class="campo full" style="margin-bottom:14px"><label>Tipo de movimiento</label>${segTipoHtml('salida')}</div>
+    <div class="campo full" style="margin-bottom:14px"><label>Material</label><select id="mv-material">${opciones}</select></div>
     <div class="form-grid">
       <div class="campo"><label>Cantidad *</label><input id="mv-cantidad" type="number" step="any" min="0" placeholder="0" /></div>
-      <div class="campo"><label>Frente de obra</label><input id="mv-frente" placeholder="Ej: Torre de control" /></div>
-      <div class="campo full"><label>Nota / responsable</label><input id="mv-nota" placeholder="Opcional" /></div>
+      <div class="campo" id="mv-campo-lugar"><label id="mv-lugar-label">Frente de obra</label><input id="mv-lugar" placeholder="Ej: Torre de control" /></div>
+      <div class="campo full"><label>Responsable</label><input id="mv-responsable" placeholder="Nombre de quien recibe / entrega" /></div>
+      <div class="campo full"><label>Nota</label><input id="mv-nota" placeholder="Opcional" /></div>
     </div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="mv-cancelar">Cancelar</button>
       <button class="btn-primary" id="mv-guardar">Registrar</button>
-    </div>
-  `);
+    </div>`);
 
-  $('#seg-tipo').querySelectorAll('button').forEach((b) => {
-    b.addEventListener('click', () => {
-      tipoSel = b.dataset.t;
-      $('#seg-tipo').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
-      b.classList.add('on');
-    });
-  });
+  const actualizarLabel = () => { $('#mv-lugar-label').textContent = (TIPOS[tipoSel] || TIPOS.salida).campoLabel; };
+  actualizarLabel();
+  $('#seg-tipo').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
+    tipoSel = b.dataset.t;
+    $('#seg-tipo').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+    b.classList.add('on'); actualizarLabel();
+  }));
 
   $('#mv-cancelar').addEventListener('click', cerrarModal);
   $('#mv-guardar').addEventListener('click', async () => {
-    const matId = $('#mv-material').value;
-    const mat = estado.materiales.find((x) => x.id === matId);
+    const mat = estado.materiales.find((x) => x.id === $('#mv-material').value);
     const cantidad = parseFloat($('#mv-cantidad').value);
     if (!mat || !cantidad || cantidad <= 0) { toast('Ingresa una cantidad valida', 'error'); return; }
-    if (tipoSel === 'salida' && cantidad > (Number(mat.cantidad) || 0)) {
-      toast('No hay suficiente stock. Disponible: ' + fmtNum(mat.cantidad) + ' ' + mat.unidad, 'error'); return;
-    }
+    if (tipoSel === 'salida' && cantidad > (Number(mat.cantidad) || 0)) { toast('No hay suficiente stock. Disponible: ' + fmtNum(mat.cantidad) + ' ' + mat.unidad, 'error'); return; }
+    const esProveedor = (TIPOS[tipoSel] || {}).campo === 'proveedor';
     try {
       await registrarMovimiento({
-        tipo: tipoSel, materialId: matId, materialNombre: mat.nombre,
-        cantidad, unidad: mat.unidad, frente: $('#mv-frente').value.trim(),
-        nota: $('#mv-nota').value.trim(),
-        usuario: estado.usuario ? (estado.usuario.displayName || estado.usuario.email) : ''
+        tipo: tipoSel, materialId: mat.id, materialNombre: mat.nombre, cantidad, unidad: mat.unidad,
+        frente: esProveedor ? '' : $('#mv-lugar').value.trim(),
+        proveedor: esProveedor ? $('#mv-lugar').value.trim() : '',
+        responsable: $('#mv-responsable').value.trim(), nota: $('#mv-nota').value.trim(), usuario: nombreUsuario()
       });
-      toast('Movimiento registrado', 'ok');
-      cerrarModal();
+      toast('Movimiento registrado', 'ok'); cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); }
   });
 }
 
 /* ==================================================================
+   ORDENES (varios materiales)
+   ================================================================== */
+function renderOrdenes() {
+  if (!$('#cuerpo-ordenes')) return;
+  $('#ord-vacio').hidden = estado.ordenes.length !== 0;
+  $('#cuerpo-ordenes').innerHTML = estado.ordenes.map((o) => `
+    <tr>
+      <td class="codigo-cel">${esc(o.numero)}</td>
+      <td>${fmtFecha(o.fecha)}</td>
+      <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
+      <td>${esc(o.responsable || '-')}</td>
+      <td>${esc(o.frente || o.proveedor || '-')}</td>
+      <td class="der">${(o.items || []).length}</td>
+      <td class="cen"><button class="btn-icon" title="Imprimir orden" data-print-orden="${o.id}">🖨</button></td>
+    </tr>`).join('');
+  $('#cuerpo-ordenes').querySelectorAll('[data-print-orden]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const o = estado.ordenes.find((x) => x.id === b.dataset.printOrden);
+      if (o) imprimir(docOrden(o, o.usuario || nombreUsuario()));
+    }));
+}
+
+function modalOrden(tipo) {
+  if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
+  const t = TIPOS[tipo] || TIPOS.salida;
+  const esProveedor = t.campo === 'proveedor';
+  estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '' }];
+
+  abrirModal('Nueva orden — ' + t.label, `
+    <div class="form-grid">
+      <div class="campo"><label>${esc(t.campoLabel)}</label><input id="o-lugar" placeholder="${esProveedor ? 'Nombre del proveedor' : 'Ej: Torre de control'}" /></div>
+      <div class="campo"><label>Responsable</label><input id="o-responsable" placeholder="Nombre del responsable" /></div>
+      <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
+    </div>
+    <label style="display:block;font-size:12px;color:var(--texto-dim);margin:14px 0 6px;font-weight:600">Materiales</label>
+    <div class="orden-items" id="orden-items"></div>
+    <button class="btn-ghost orden-add" id="o-add">＋ Agregar material</button>
+    <div class="orden-total" id="o-total"></div>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="o-cancelar">Cancelar</button>
+      <button class="btn-primary" id="o-guardar">Generar orden e imprimir</button>
+    </div>`, '640px');
+
+  const render = () => {
+    const cont = $('#orden-items');
+    const opcs = estado.materiales.slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+    cont.innerHTML = estado.itemsOrden.map((it) => `
+      <div class="orden-item-row" data-row="${it._id}">
+        <select data-campo="materialId">
+          <option value="">— Elige material —</option>
+          ${opcs.map((m) => `<option value="${m.id}" ${m.id === it.materialId ? 'selected' : ''}>${esc(m.nombre)} (${fmtNum(m.cantidad)} ${esc(m.unidad)})</option>`).join('')}
+        </select>
+        <input type="number" step="any" min="0" placeholder="Cantidad" data-campo="cantidad" value="${it.cantidad}" />
+        <button class="btn-icon peligro" data-quitar="${it._id}" title="Quitar">✕</button>
+      </div>`).join('');
+    cont.querySelectorAll('.orden-item-row').forEach((row) => {
+      const id = Number(row.dataset.row);
+      const item = estado.itemsOrden.find((x) => x._id === id);
+      row.querySelectorAll('[data-campo]').forEach((el) => el.addEventListener('change', () => { item[el.dataset.campo] = el.value; actualizarTotal(); }));
+      row.querySelector('[data-quitar]').addEventListener('click', () => {
+        estado.itemsOrden = estado.itemsOrden.filter((x) => x._id !== id);
+        if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '' });
+        render();
+      });
+    });
+    actualizarTotal();
+  };
+  const actualizarTotal = () => {
+    const n = estado.itemsOrden.filter((it) => it.materialId && Number(it.cantidad) > 0).length;
+    $('#o-total').textContent = n > 0 ? `${n} material(es) en la orden.` : 'Agrega al menos un material con cantidad.';
+  };
+  render();
+
+  $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '' }); render(); });
+  $('#o-cancelar').addEventListener('click', cerrarModal);
+  $('#o-guardar').addEventListener('click', async () => {
+    const items = estado.itemsOrden
+      .filter((it) => it.materialId && Number(it.cantidad) > 0)
+      .map((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return { materialId: it.materialId, materialNombre: m ? m.nombre : '', cantidad: Number(it.cantidad), unidad: m ? m.unidad : 'unidad' }; });
+    if (items.length === 0) { toast('Agrega al menos un material con cantidad', 'error'); return; }
+    if (tipo === 'salida') {
+      for (const it of items) {
+        const m = estado.materiales.find((x) => x.id === it.materialId);
+        if (m && it.cantidad > (Number(m.cantidad) || 0)) { toast(`Stock insuficiente de "${m.nombre}" (disp: ${fmtNum(m.cantidad)})`, 'error'); return; }
+      }
+    }
+    const btn = $('#o-guardar'); btn.disabled = true; btn.textContent = 'Generando...';
+    try {
+      const orden = await registrarOrden({
+        tipo,
+        frente: esProveedor ? '' : $('#o-lugar').value.trim(),
+        proveedor: esProveedor ? $('#o-lugar').value.trim() : '',
+        responsable: $('#o-responsable').value.trim(),
+        nota: $('#o-nota').value.trim(),
+        usuario: nombreUsuario(), items
+      });
+      cerrarModal();
+      toast('Orden generada: ' + orden.numero, 'ok');
+      imprimir(docOrden(orden, orden.usuario || nombreUsuario()));
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Generar orden e imprimir'; }
+  });
+}
+
+/* ==================================================================
+   RESPONSABLES (historial por persona)
+   ================================================================== */
+function llenarResponsables() {
+  const sel = $('#sel-responsable');
+  if (!sel) return;
+  const actual = sel.value;
+  const nombres = Array.from(new Set(estado.movimientos.map((m) => (m.responsable || '').trim()).filter(Boolean))).sort();
+  sel.innerHTML = '<option value="">— Elige un responsable —</option>' + nombres.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (nombres.includes(actual)) sel.value = actual;
+  renderResponsable();
+}
+function movimientosDeResponsable(nombre) {
+  return estado.movimientos.filter((m) => (m.responsable || '').trim() === nombre);
+}
+function renderResponsable() {
+  const cuerpo = $('#cuerpo-responsable');
+  if (!cuerpo) return;
+  const nombre = $('#sel-responsable').value;
+  if (!nombre) { cuerpo.innerHTML = ''; $('#resp-vacio').hidden = false; $('#resp-vacio').textContent = 'Elige un responsable para ver su historial completo.'; return; }
+  const lista = movimientosDeResponsable(nombre);
+  $('#resp-vacio').hidden = lista.length !== 0;
+  if (lista.length === 0) $('#resp-vacio').textContent = 'Este responsable no tiene movimientos.';
+  cuerpo.innerHTML = lista.map((mv) => `
+    <tr>
+      <td>${fmtFecha(mv.fecha)}</td>
+      <td><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
+      <td>${esc(mv.materialNombre)}</td>
+      <td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td>
+      <td class="codigo-cel">${esc(mv.ordenNumero || '-')}</td>
+      <td>${esc(mv.frente || mv.proveedor || '-')}</td>
+    </tr>`).join('');
+}
+
+/* ==================================================================
+   IMPRESION
+   ================================================================== */
+function imprimir(html) {
+  const area = $('#print-area');
+  if (!area) return;
+  area.innerHTML = html;
+  setTimeout(() => window.print(), 120);
+}
+
+function cabeceraDoc() {
+  return `<div class="doc-head">
+    <img src="assets/logo-fviecom.png" class="doc-logo" alt="FVIECOM" />
+    <div class="doc-emp">
+      <h1>FVIECOM S.A.S</h1>
+      <p>FV Ingenieria Electrica y Telecomunicaciones</p>
+      <p>Proyecto: Aeropuerto Internacional Jose Maria Cordova - Rionegro</p>
+    </div>
+  </div>`;
+}
+function firmasDoc(almacenista, responsable) {
+  return `<div class="doc-firmas">
+    <div class="doc-firma"><div class="linea"></div><div class="rol">Almacenista</div><div class="nombre">${esc(almacenista || '-')}</div></div>
+    <div class="doc-firma"><div class="linea"></div><div class="rol">Responsable</div><div class="nombre">${esc(responsable || '-')}</div></div>
+  </div>`;
+}
+function docOrden(o, almacenista) {
+  const t = TIPOS[o.tipo] || TIPOS.salida;
+  const campoValor = t.campo === 'proveedor' ? (o.proveedor || '-') : (o.frente || '-');
+  const filas = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad)}</td></tr>`).join('');
+  return `<div class="doc">
+    ${cabeceraDoc()}
+    <h2 class="doc-titulo">${t.titulo}</h2>
+    <div class="doc-meta">
+      <div><b>N° Orden:</b> ${esc(o.numero || '-')}</div>
+      <div><b>Fecha:</b> ${fmtFecha(o.fecha)}</div>
+      <div><b>${esc(t.campoLabel)}:</b> ${esc(campoValor)}</div>
+      <div><b>Responsable:</b> ${esc(o.responsable || '-')}</div>
+    </div>
+    <table class="doc-tabla">
+      <thead><tr><th>#</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    ${o.nota ? `<p class="doc-nota"><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
+    ${firmasDoc(almacenista, o.responsable)}
+  </div>`;
+}
+function imprimirMovimiento(id) {
+  const mv = estado.movimientos.find((x) => x.id === id);
+  if (!mv) return;
+  const orden = {
+    numero: mv.ordenNumero || ('MOV-' + (mv.id || '').slice(-6)),
+    tipo: mv.tipo, frente: mv.frente, proveedor: mv.proveedor, responsable: mv.responsable,
+    nota: mv.nota, fecha: mv.fecha,
+    items: [{ materialNombre: mv.materialNombre, cantidad: mv.cantidad, unidad: mv.unidad }]
+  };
+  imprimir(docOrden(orden, mv.usuario || nombreUsuario()));
+}
+function imprimirHistorialResponsable() {
+  const nombre = $('#sel-responsable').value;
+  if (!nombre) { toast('Elige un responsable primero', 'error'); return; }
+  const lista = movimientosDeResponsable(nombre);
+  if (lista.length === 0) { toast('Este responsable no tiene movimientos', 'error'); return; }
+  const filas = lista.map((m) => `<tr><td>${fmtFecha(m.fecha)}</td><td>${(TIPOS[m.tipo] || {}).label || m.tipo}</td><td>${esc(m.materialNombre)}</td><td style="text-align:right">${fmtNum(m.cantidad)} ${esc(m.unidad || '')}</td><td>${esc(m.ordenNumero || '-')}</td><td>${esc(m.frente || m.proveedor || '-')}</td></tr>`).join('');
+  const html = `<div class="doc">
+    ${cabeceraDoc()}
+    <h2 class="doc-titulo">HISTORIAL DEL RESPONSABLE</h2>
+    <div class="doc-meta">
+      <div><b>Responsable:</b> ${esc(nombre)}</div>
+      <div><b>Fecha de emision:</b> ${fmtFecha(new Date().toISOString())}</div>
+      <div><b>Total de movimientos:</b> ${lista.length}</div>
+    </div>
+    <table class="doc-tabla">
+      <thead><tr><th>Fecha</th><th>Tipo</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Orden</th><th>Frente/Prov.</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    ${firmasDoc(nombreUsuario(), nombre)}
+  </div>`;
+  imprimir(html);
+}
+
+/* ==================================================================
    IMPORTAR PDF
    ================================================================== */
-$('#btn-elegir-pdf').addEventListener('click', async () => {
-  if (!window.nativo) { toast('Funcion disponible solo en la app de escritorio', 'error'); return; }
-  const res = await window.nativo.importarPdf();
-  if (!res || res.canceled) return;
-  if (res.error) { toast(res.error, 'error'); return; }
-
-  $('#pdf-nombre').textContent = res.fileName || '';
-  estado.itemsImportados = (res.items || []).map((it, i) => ({ ...it, _id: i }));
-
-  if (estado.itemsImportados.length === 0) {
-    toast('No se detectaron materiales. Revisa el formato del PDF.', 'error');
-    $('#panel-preview').hidden = true;
-    return;
-  }
-  renderPreview();
-  $('#panel-preview').hidden = false;
-});
-
+function initImportar() {
+  const btn = $('#btn-elegir-pdf');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    if (!window.nativo) { toast('La importacion de PDF funciona en la app de escritorio', 'error'); return; }
+    const res = await window.nativo.importarPdf();
+    if (!res || res.canceled) return;
+    if (res.error) { toast(res.error, 'error'); return; }
+    $('#pdf-nombre').textContent = res.fileName || '';
+    estado.itemsImportados = (res.items || []).map((it, i) => ({ ...it, _id: i }));
+    if (estado.itemsImportados.length === 0) { toast('No se detectaron materiales. Revisa el formato del PDF.', 'error'); $('#panel-preview').hidden = true; return; }
+    renderPreview(); $('#panel-preview').hidden = false;
+  });
+  $('#btn-cancelar-import').addEventListener('click', () => { estado.itemsImportados = []; $('#panel-preview').hidden = true; $('#pdf-nombre').textContent = ''; });
+  $('#btn-confirmar-import').addEventListener('click', async () => {
+    if (estado.itemsImportados.length === 0) return;
+    const b = $('#btn-confirmar-import'); b.disabled = true; b.textContent = 'Agregando...';
+    try {
+      const limpio = estado.itemsImportados.map((it) => ({ codigo: it.codigo, nombre: it.nombre, categoria: it.categoria, cantidad: it.cantidad, unidad: it.unidad })).filter((it) => it.nombre && it.nombre.trim());
+      const r = await importarMateriales(limpio, estado.materiales);
+      toast(`Importados: ${r.creados} nuevos, ${r.actualizados} actualizados`, 'ok');
+      estado.itemsImportados = []; $('#panel-preview').hidden = true; $('#pdf-nombre').textContent = '';
+      $('.menu-item[data-vista="inventario"]').click();
+    } catch (e) { toast('Error al importar: ' + e.message, 'error'); }
+    finally { b.disabled = false; b.textContent = 'Agregar al inventario'; }
+  });
+}
 function renderPreview() {
   $('#preview-count').textContent = estado.itemsImportados.length;
   const cuerpo = $('#cuerpo-preview');
@@ -551,117 +837,70 @@ function renderPreview() {
       <td><select data-campo="unidad">${opcionesSelect(UNIDADES, it.unidad || 'unidad')}</select></td>
       <td class="cen"><button class="btn-icon peligro" data-quitar="${it._id}">✕</button></td>
     </tr>`).join('');
-
-  cuerpo.querySelectorAll('input, select').forEach((inp) => {
-    inp.addEventListener('change', (e) => {
-      const row = parseInt(e.target.closest('tr').dataset.row, 10);
-      const item = estado.itemsImportados.find((x) => x._id === row);
-      if (item) item[e.target.dataset.campo] = e.target.value;
-    });
-  });
-  cuerpo.querySelectorAll('[data-quitar]').forEach((b) => {
-    b.addEventListener('click', () => {
-      const id = parseInt(b.dataset.quitar, 10);
-      estado.itemsImportados = estado.itemsImportados.filter((x) => x._id !== id);
-      renderPreview();
-      if (estado.itemsImportados.length === 0) $('#panel-preview').hidden = true;
-    });
-  });
+  cuerpo.querySelectorAll('input, select').forEach((inp) => inp.addEventListener('change', (e) => {
+    const row = parseInt(e.target.closest('tr').dataset.row, 10);
+    const item = estado.itemsImportados.find((x) => x._id === row);
+    if (item) item[e.target.dataset.campo] = e.target.value;
+  }));
+  cuerpo.querySelectorAll('[data-quitar]').forEach((b) => b.addEventListener('click', () => {
+    estado.itemsImportados = estado.itemsImportados.filter((x) => x._id !== parseInt(b.dataset.quitar, 10));
+    renderPreview(); if (estado.itemsImportados.length === 0) $('#panel-preview').hidden = true;
+  }));
 }
 
-$('#btn-cancelar-import').addEventListener('click', () => {
-  estado.itemsImportados = [];
-  $('#panel-preview').hidden = true;
-  $('#pdf-nombre').textContent = '';
-});
-
-$('#btn-confirmar-import').addEventListener('click', async () => {
-  if (estado.itemsImportados.length === 0) return;
-  const btn = $('#btn-confirmar-import');
-  btn.disabled = true; btn.textContent = 'Agregando...';
-  try {
-    const limpio = estado.itemsImportados.map((it) => ({
-      codigo: it.codigo, nombre: it.nombre, categoria: it.categoria,
-      cantidad: it.cantidad, unidad: it.unidad
-    })).filter((it) => it.nombre && it.nombre.trim());
-    const r = await importarMateriales(limpio, estado.materiales);
-    toast(`Importados: ${r.creados} nuevos, ${r.actualizados} actualizados`, 'ok');
-    estado.itemsImportados = [];
-    $('#panel-preview').hidden = true;
-    $('#pdf-nombre').textContent = '';
-    // Ir al inventario
-    $('.menu-item[data-vista="inventario"]').click();
-  } catch (e) {
-    toast('Error al importar: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Agregar al inventario';
-  }
-});
-
 /* ==================================================================
-   REPORTES PDF
+   REPORTES PDF (Electron)
    ================================================================== */
-$('#btn-rep-general').addEventListener('click', () => generarReporte('general'));
-$('#btn-rep-detallado').addEventListener('click', () => generarReporte('detallado'));
-
+function initReportes() {
+  const g = $('#btn-rep-general'); const d = $('#btn-rep-detallado');
+  if (g) g.addEventListener('click', () => generarReporte('general'));
+  if (d) d.addEventListener('click', () => generarReporte('detallado'));
+}
 async function generarReporte(tipo) {
-  if (!window.nativo) { toast('Funcion disponible solo en la app de escritorio', 'error'); return; }
+  if (!window.nativo) { toast('Los reportes PDF se generan en la app de escritorio. En la web usa la impresion de ordenes.', 'error'); return; }
   if (estado.materiales.length === 0) { toast('No hay materiales para exportar', 'error'); return; }
-
-  const estadoBox = $('#rep-estado');
-  estadoBox.hidden = false;
-  estadoBox.textContent = 'Generando reporte...';
+  const box = $('#rep-estado'); box.hidden = false; box.textContent = 'Generando reporte...';
   try {
     let movimientos = estado.movimientos;
-    if (tipo === 'detallado') {
-      try { movimientos = await obtenerMovimientos(); } catch (e) { /* usar cache */ }
-    }
+    if (tipo === 'detallado') { try { movimientos = await obtenerMovimientos(); } catch (e) {} }
     const res = await window.nativo.exportarPdf({
       tipo,
-      materiales: estado.materiales.map((m) => ({
-        codigo: m.codigo, nombre: m.nombre, categoria: m.categoria,
-        cantidad: m.cantidad, unidad: m.unidad, minimo: m.minimo, ubicacion: m.ubicacion
-      })),
-      movimientos: movimientos.map((mv) => ({
-        tipo: mv.tipo, materialNombre: mv.materialNombre, cantidad: mv.cantidad,
-        unidad: mv.unidad, frente: mv.frente, nota: mv.nota, fecha: mv.fecha
-      })),
-      meta: {
-        fecha: new Date().toLocaleString('es-CO'),
-        usuario: estado.usuario ? (estado.usuario.displayName || estado.usuario.email) : ''
-      }
+      materiales: estado.materiales.map((m) => ({ codigo: m.codigo, nombre: m.nombre, categoria: m.categoria, cantidad: m.cantidad, unidad: m.unidad, minimo: m.minimo, ubicacion: m.ubicacion })),
+      movimientos: movimientos.map((mv) => ({ tipo: mv.tipo, materialNombre: mv.materialNombre, cantidad: mv.cantidad, unidad: mv.unidad, frente: mv.frente, nota: mv.nota, fecha: mv.fecha })),
+      meta: { fecha: new Date().toLocaleString('es-CO'), usuario: nombreUsuario() }
     });
-    if (res.canceled) { estadoBox.hidden = true; return; }
-    if (res.error) { estadoBox.textContent = res.error; toast(res.error, 'error'); return; }
-    estadoBox.innerHTML = `✓ Reporte generado: <b>${esc(res.filePath)}</b>`;
-    toast('Reporte PDF generado', 'ok');
+    if (res.canceled) { box.hidden = true; return; }
+    if (res.error) { box.textContent = res.error; toast(res.error, 'error'); return; }
+    box.innerHTML = `✓ Reporte generado: <b>${esc(res.filePath)}</b>`; toast('Reporte PDF generado', 'ok');
     window.nativo.abrirArchivo(res.filePath);
-  } catch (e) {
-    estadoBox.textContent = 'Error: ' + e.message;
-    toast('Error al generar el PDF', 'error');
-  }
+  } catch (e) { box.textContent = 'Error: ' + e.message; toast('Error al generar el PDF', 'error'); }
 }
 
 /* ==================================================================
-   ACERCA DE
+   ACERCA
    ================================================================== */
 async function cargarInfoApp() {
-  if (!window.nativo) return;
-  try {
-    const info = await window.nativo.infoApp();
-    $('#acerca-info').textContent =
-      `Version ${info.version} · Electron ${info.electron} · Node ${info.node} · ${info.plataforma}`;
-  } catch (e) { /* ignore */ }
+  if (!window.nativo || !$('#acerca-info')) return;
+  try { const info = await window.nativo.infoApp(); $('#acerca-info').textContent = `Version ${info.version} · Electron ${info.electron} · Node ${info.node} · ${info.plataforma}`; }
+  catch (e) {}
 }
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                             */
-/* ------------------------------------------------------------------ */
-function agrupar(lista, campo) {
-  const g = {};
-  for (const item of lista) {
-    const k = item[campo] || 'Sin clasificar';
-    (g[k] = g[k] || []).push(item);
-  }
-  return g;
-}
+/* ==================================================================
+   ARRANQUE
+   ================================================================== */
+inyectarExtras();
+activarNavegacion();
+prepararFiltroTipoMov();
+initImportar();
+initReportes();
+
+$('#buscar-material').addEventListener('input', renderInventario);
+$('#filtro-categoria').addEventListener('change', renderInventario);
+$('#btn-nuevo-material').addEventListener('click', () => modalMaterial(null));
+$('#buscar-mov').addEventListener('input', renderMovimientos);
+$('#filtro-tipo-mov').addEventListener('change', renderMovimientos);
+$('#btn-nuevo-mov').addEventListener('click', () => modalMovimiento(null));
+
+$$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalOrden(b.dataset.nuevaOrden)));
+$('#sel-responsable').addEventListener('change', renderResponsable);
+$('#btn-imprimir-historial').addEventListener('click', imprimirHistorialResponsable);
