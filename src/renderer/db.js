@@ -1,9 +1,7 @@
 // ============================================================
 //  Capa de datos - Firestore (base de datos en la nube)
-//  - Sincronizacion en tiempo real (onSnapshot)
-//  - Persistencia sin conexion (persistentLocalCache)
 //  - Movimientos con responsable y 3 tipos: entrada / salida / devolucion
-//  - Ordenes (varios materiales a la vez) imprimibles con firmas
+//  - Ordenes: entrada = pedido pendiente (no suma stock hasta recibir)
 // ============================================================
 
 import {
@@ -53,6 +51,8 @@ function normalizar(s) {
 function fechaISO(data) {
   return data && data.fecha && data.fecha.toDate ? data.fecha.toDate().toISOString() : (data && data.fecha) || null;
 }
+
+/* ---------------- Materiales ---------------- */
 
 export function escucharMateriales(callback, onError) {
   const q = query(collection(db, COL_MATERIALES), orderBy('nombre'));
@@ -135,6 +135,8 @@ export async function importarMateriales(lista, existentes) {
   return { creados, actualizados };
 }
 
+/* ---------------- Movimientos individuales ---------------- */
+
 export async function registrarMovimiento(mov) {
   const cantidad = Number(mov.cantidad) || 0;
   if (cantidad <= 0) throw new Error('La cantidad debe ser mayor a cero.');
@@ -183,6 +185,8 @@ export async function obtenerMovimientos() {
   return items;
 }
 
+/* ---------------- Ordenes ---------------- */
+
 export async function registrarOrden(orden) {
   const tipo = ['entrada', 'salida', 'devolucion'].includes(orden.tipo) ? orden.tipo : 'salida';
   const items = (orden.items || [])
@@ -201,32 +205,39 @@ export async function registrarOrden(orden) {
   const batch = writeBatch(db);
   const ordenRef = doc(collection(db, COL_ORDENES));
 
-  for (const it of items) {
-    batch.update(doc(db, COL_MATERIALES, it.materialId), {
-      cantidad: increment(deltaStock(tipo, it.cantidad)),
-      actualizado: fecha
-    });
-    const movRef = doc(collection(db, COL_MOVIMIENTOS));
-    batch.set(movRef, {
-      tipo,
-      materialId: it.materialId,
-      materialNombre: it.materialNombre,
-      cantidad: it.cantidad,
-      unidad: it.unidad,
-      frente: orden.frente || '',
-      proveedor: orden.proveedor || '',
-      responsable: orden.responsable || '',
-      nota: orden.nota || '',
-      usuario: orden.usuario || '',
-      fecha,
-      ordenId: ordenRef.id,
-      ordenNumero: numero
-    });
+  // Las ordenes de ENTRADA (pedidos) NO tocan el stock hasta que se reciben.
+  const esPedidoPendiente = (tipo === 'entrada');
+  const estadoOrden = esPedidoPendiente ? 'pendiente' : 'completado';
+
+  if (!esPedidoPendiente) {
+    for (const it of items) {
+      batch.update(doc(db, COL_MATERIALES, it.materialId), {
+        cantidad: increment(deltaStock(tipo, it.cantidad)),
+        actualizado: fecha
+      });
+      const movRef = doc(collection(db, COL_MOVIMIENTOS));
+      batch.set(movRef, {
+        tipo,
+        materialId: it.materialId,
+        materialNombre: it.materialNombre,
+        cantidad: it.cantidad,
+        unidad: it.unidad,
+        frente: orden.frente || '',
+        proveedor: orden.proveedor || '',
+        responsable: orden.responsable || '',
+        nota: orden.nota || '',
+        usuario: orden.usuario || '',
+        fecha,
+        ordenId: ordenRef.id,
+        ordenNumero: numero
+      });
+    }
   }
 
   batch.set(ordenRef, {
     numero,
     tipo,
+    estado: estadoOrden,
     frente: orden.frente || '',
     proveedor: orden.proveedor || '',
     responsable: orden.responsable || '',
@@ -239,17 +250,53 @@ export async function registrarOrden(orden) {
   await batch.commit();
 
   return {
-    id: ordenRef.id,
-    numero,
-    tipo,
-    frente: orden.frente || '',
-    proveedor: orden.proveedor || '',
-    responsable: orden.responsable || '',
-    nota: orden.nota || '',
-    usuario: orden.usuario || '',
-    fecha: new Date().toISOString(),
-    items
+    id: ordenRef.id, numero, tipo, estado: estadoOrden,
+    frente: orden.frente || '', proveedor: orden.proveedor || '',
+    responsable: orden.responsable || '', nota: orden.nota || '',
+    usuario: orden.usuario || '', fecha: new Date().toISOString(), items
   };
+}
+
+/**
+ * Recibe un pedido pendiente: suma al stock lo que llego, crea los
+ * movimientos de entrada y marca la orden como "recibido".
+ */
+export async function recibirOrden(orden, recibidos, usuario) {
+  const items = (recibidos || []).filter((it) => it.materialId && (Number(it.cantidad) || 0) > 0);
+  if (items.length === 0) throw new Error('Ingresa al menos una cantidad recibida.');
+
+  const fecha = serverTimestamp();
+  const batch = writeBatch(db);
+
+  for (const it of items) {
+    batch.update(doc(db, COL_MATERIALES, it.materialId), {
+      cantidad: increment(Number(it.cantidad) || 0),
+      actualizado: fecha
+    });
+    const movRef = doc(collection(db, COL_MOVIMIENTOS));
+    batch.set(movRef, {
+      tipo: 'entrada',
+      materialId: it.materialId,
+      materialNombre: it.materialNombre || '',
+      cantidad: Number(it.cantidad) || 0,
+      unidad: it.unidad || 'unidad',
+      frente: '',
+      proveedor: orden.proveedor || '',
+      responsable: orden.responsable || '',
+      nota: 'Recepcion de pedido ' + (orden.numero || ''),
+      usuario: usuario || '',
+      fecha,
+      ordenId: orden.id,
+      ordenNumero: orden.numero || ''
+    });
+  }
+
+  batch.update(doc(db, COL_ORDENES, orden.id), {
+    estado: 'recibido',
+    fechaRecepcion: fecha
+  });
+
+  await batch.commit();
 }
 
 export function escucharOrdenes(callback, onError) {
