@@ -13,7 +13,8 @@ import {
 import {
   escucharMateriales, agregarMaterial, actualizarMaterial, eliminarMaterial,
   importarMateriales, registrarMovimiento, escucharMovimientos, obtenerMovimientos,
-  registrarOrden, recibirOrden, escucharOrdenes
+  registrarOrden, recibirOrden, escucharOrdenes,
+  eliminarMovimiento, eliminarOrden
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -272,7 +273,7 @@ function inyectarExtras() {
   if (theadMov) {
     theadMov.innerHTML = `
       <th>Fecha</th><th>Tipo</th><th>Material</th><th class="der">Cantidad</th>
-      <th>Frente / Proveedor</th><th>Responsable</th><th>Nota</th><th>Usuario</th><th class="cen">Imprimir</th>`;
+      <th>Frente / Proveedor</th><th>Responsable</th><th>Nota</th><th>Usuario</th><th class="cen">Acciones</th>`;
   }
 
   // ---- Boton "Nueva orden" en la barra de movimientos ----
@@ -621,10 +622,15 @@ function renderMovimientos() {
       <td>${esc(mv.responsable || '-')}</td>
       <td>${esc(mv.nota || '-')}</td>
       <td>${esc(mv.usuario || '-')}</td>
-      <td class="cen"><button class="btn-icon" title="Imprimir comprobante" data-print-mov="${mv.id}">🖨</button></td>
+      <td class="cen"><div class="acciones-cel">
+        <button class="btn-icon" title="Imprimir comprobante" data-print-mov="${mv.id}">🖨</button>
+        <button class="btn-icon peligro" title="Eliminar movimiento" data-del-mov="${mv.id}">🗑</button>
+      </div></td>
     </tr>`).join('');
   $('#cuerpo-mov').querySelectorAll('[data-print-mov]').forEach((b) =>
     b.addEventListener('click', () => imprimirMovimiento(b.dataset.printMov)));
+  $('#cuerpo-mov').querySelectorAll('[data-del-mov]').forEach((b) =>
+    b.addEventListener('click', () => confirmarEliminarMovimiento(b.dataset.delMov)));
 }
 
 // Filtro del tipo de movimiento (agregar devolucion a la lista existente)
@@ -728,6 +734,7 @@ function renderOrdenes() {
       <td class="cen"><div class="acciones-cel">
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
         <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
+        <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
       </div></td>
     </tr>`;
   }).join('');
@@ -740,6 +747,11 @@ function renderOrdenes() {
     b.addEventListener('click', () => {
       const o = estado.ordenes.find((x) => x.id === b.dataset.recibir);
       if (o) modalRecibir(o);
+    }));
+  $('#cuerpo-ordenes').querySelectorAll('[data-del-orden]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const o = estado.ordenes.find((x) => x.id === b.dataset.delOrden);
+      if (o) confirmarEliminarOrden(o);
     }));
 }
 
@@ -863,6 +875,83 @@ function modalOrden(tipo) {
       toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
       imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Generar e imprimir'; }
+  });
+}
+
+/* ==================================================================
+   ELIMINAR (limpieza de datos de prueba)
+   ================================================================== */
+function confirmarEliminarMovimiento(id) {
+  const mv = estado.movimientos.find((x) => x.id === id);
+  if (!mv) return;
+  const mat = estado.materiales.find((x) => x.id === mv.materialId);
+  const existeMat = !!mat;
+  const esSalida = mv.tipo === 'salida';
+  const accionStock = esSalida
+    ? `se <b>devolveran ${fmtNum(mv.cantidad)} ${esc(mv.unidad || '')}</b> al stock`
+    : `se <b>descontaran ${fmtNum(mv.cantidad)} ${esc(mv.unidad || '')}</b> del stock`;
+  const bloqueStock = existeMat
+    ? `<label style="display:flex;align-items:center;gap:8px;margin-top:14px;color:var(--texto-dim);font-size:13px;line-height:1.5">
+         <input type="checkbox" id="del-ajustar" checked style="width:auto;flex:none" />
+         <span>Ajustar el stock de "<b style="color:#fff">${esc(mat.nombre)}</b>" (${accionStock})</span>
+       </label>`
+    : `<p style="color:var(--texto-mute);font-size:12.5px;margin-top:12px">El material de este movimiento ya no existe en el inventario, asi que el stock no cambiara.</p>`;
+  abrirModal('Eliminar movimiento', `
+    <p style="color:var(--texto-dim);line-height:1.6">Vas a eliminar este movimiento:</p>
+    <div style="background:rgba(255,255,255,0.04);border-radius:10px;padding:12px 14px;margin:10px 0;font-size:13px;line-height:1.7">
+      <div><b>Tipo:</b> ${(TIPOS[mv.tipo] || {}).label || mv.tipo}</div>
+      <div><b>Material:</b> ${esc(mv.materialNombre)}</div>
+      <div><b>Cantidad:</b> ${fmtNum(mv.cantidad)} ${esc(mv.unidad || '')}</div>
+      <div><b>Fecha:</b> ${fmtFecha(mv.fecha)}</div>
+      ${mv.responsable ? `<div><b>Responsable:</b> ${esc(mv.responsable)}</div>` : ''}
+    </div>
+    ${bloqueStock}
+    <p style="color:#ff9db0;font-size:12px;margin-top:12px">Esta accion no se puede deshacer.</p>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="delmv-cancelar">Cancelar</button>
+      <button class="btn-primary" id="delmv-ok" style="background:linear-gradient(135deg,#ff5470,#c0392b);color:#fff">Si, eliminar</button>
+    </div>`);
+  $('#delmv-cancelar').addEventListener('click', cerrarModal);
+  $('#delmv-ok').addEventListener('click', async () => {
+    const ajustar = existeMat && !!(($('#del-ajustar') || {}).checked);
+    const btn = $('#delmv-ok'); btn.disabled = true; btn.textContent = 'Eliminando...';
+    try {
+      await eliminarMovimiento(mv, ajustar);
+      toast('Movimiento eliminado', 'ok');
+      cerrarModal();
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Si, eliminar'; }
+  });
+}
+
+function confirmarEliminarOrden(orden) {
+  const ligados = estado.movimientos.filter((m) => m.ordenId === orden.id);
+  const idsExistentes = estado.materiales.map((m) => m.id);
+  const nItems = (orden.items || []).length;
+  const hayMovs = ligados.length > 0;
+  abrirModal('Eliminar orden — ' + esc(orden.numero || ''), `
+    <p style="color:var(--texto-dim);line-height:1.6">Vas a eliminar la orden <b style="color:#fff">${esc(orden.numero || '')}</b>
+      (${(TIPOS[orden.tipo] || {}).label || orden.tipo}) con ${nItems} material(es).</p>
+    ${hayMovs
+      ? `<p style="color:var(--texto-dim);font-size:13px;margin-top:10px;line-height:1.5">Se eliminaran tambien sus <b>${ligados.length}</b> movimiento(s) asociado(s).</p>`
+      : `<p style="color:var(--texto-dim);font-size:13px;margin-top:10px;line-height:1.5">Esta orden no tiene movimientos que afecten el stock (pedido pendiente), asi que el inventario no cambia.</p>`}
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;color:var(--texto-dim);font-size:13px;line-height:1.5">
+      <input type="checkbox" id="delord-ajustar" ${hayMovs ? 'checked' : 'disabled'} style="width:auto;flex:none" />
+      <span>Ajustar el stock automaticamente (revertir el efecto de la orden)</span>
+    </label>
+    <p style="color:#ff9db0;font-size:12px;margin-top:12px">Esta accion no se puede deshacer.</p>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="delord-cancelar">Cancelar</button>
+      <button class="btn-primary" id="delord-ok" style="background:linear-gradient(135deg,#ff5470,#c0392b);color:#fff">Si, eliminar</button>
+    </div>`);
+  $('#delord-cancelar').addEventListener('click', cerrarModal);
+  $('#delord-ok').addEventListener('click', async () => {
+    const ajustar = hayMovs && !!(($('#delord-ajustar') || {}).checked);
+    const btn = $('#delord-ok'); btn.disabled = true; btn.textContent = 'Eliminando...';
+    try {
+      await eliminarOrden(orden, ligados, ajustar ? idsExistentes : []);
+      toast('Orden eliminada', 'ok');
+      cerrarModal();
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Si, eliminar'; }
   });
 }
 

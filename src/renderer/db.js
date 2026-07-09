@@ -315,4 +315,50 @@ export async function obtenerOrdenes() {
   return items;
 }
 
+/* ---------------- Eliminar (limpieza de datos) ---------------- */
+
+// Elimina un movimiento individual. Si ajustarStock=true y hay materialId,
+// revierte en el stock el efecto que ese movimiento tuvo (una salida se
+// devuelve al stock; una entrada/devolucion se descuenta).
+export async function eliminarMovimiento(mov, ajustarStock) {
+  if (!mov || !mov.id) throw new Error('Movimiento invalido.');
+  const batch = writeBatch(db);
+  if (ajustarStock && mov.materialId) {
+    const deltaOriginal = deltaStock(mov.tipo, Number(mov.cantidad) || 0);
+    batch.update(doc(db, COL_MATERIALES, mov.materialId), {
+      cantidad: increment(-deltaOriginal),
+      actualizado: serverTimestamp()
+    });
+  }
+  batch.delete(doc(db, COL_MOVIMIENTOS, mov.id));
+  await batch.commit();
+}
+
+// Elimina una orden junto con TODOS sus movimientos asociados. El ajuste de
+// stock se agrupa por material (para no aplicar dos transforms al mismo doc)
+// y solo se hace para los materiales cuyos ids vengan en idsMaterialesAjustar;
+// si ese arreglo va vacio, no se toca el inventario.
+export async function eliminarOrden(orden, movimientosLigados, idsMaterialesAjustar) {
+  if (!orden || !orden.id) throw new Error('Orden invalida.');
+  const batch = writeBatch(db);
+  const ajustables = new Set(idsMaterialesAjustar || []);
+  const ajustePorMaterial = {};
+
+  for (const mv of (movimientosLigados || [])) {
+    if (mv && mv.id) batch.delete(doc(db, COL_MOVIMIENTOS, mv.id));
+    if (mv && mv.materialId && ajustables.has(mv.materialId)) {
+      const deltaOriginal = deltaStock(mv.tipo, Number(mv.cantidad) || 0);
+      ajustePorMaterial[mv.materialId] = (ajustePorMaterial[mv.materialId] || 0) + deltaOriginal;
+    }
+  }
+  for (const matId in ajustePorMaterial) {
+    batch.update(doc(db, COL_MATERIALES, matId), {
+      cantidad: increment(-ajustePorMaterial[matId]),
+      actualizado: serverTimestamp()
+    });
+  }
+  batch.delete(doc(db, COL_ORDENES, orden.id));
+  await batch.commit();
+}
+
 export { db };
