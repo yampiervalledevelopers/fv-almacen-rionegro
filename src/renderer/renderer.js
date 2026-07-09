@@ -1,8 +1,8 @@
 // ============================================================
 //  Inventario FVIECOM - Logica de la interfaz (renderer)
-//  Movimientos con responsable + contrato/frente, 3 tipos de
-//  orden, pedidos pendientes, impresion con firmas, historial
-//  por responsable y consumo por contrato/frente.
+//  Incluye: movimientos con responsable, 3 tipos de orden
+//  (salida / entrada / devolucion), impresion con firmas y
+//  seccion de historial por responsable.
 // ============================================================
 
 import {
@@ -40,8 +40,10 @@ const UNIDADES = ['unidad', 'metro', 'kilometro', 'centimetro', 'kilogramo',
   'gramo', 'litro', 'galon', 'bulto', 'rollo', 'caja', 'paquete', 'bolsa',
   'tramo', 'juego', 'par'];
 
+// Correo por defecto para el boton "Compartir por Gmail".
 const CORREO_COMPARTIR = 'proyectos.4@fviecomsas.com';
 
+// Configuracion de los 3 tipos de movimiento / orden.
 const TIPOS = {
   salida: { label: 'Salida', titulo: 'ORDEN DE SALIDA DE MATERIALES', campo: 'frente', campoLabel: 'Frente de obra' },
   entrada: { label: 'Entrada / Pedido', titulo: 'ORDEN DE ENTRADA / PEDIDO DE MATERIALES', campo: 'proveedor', campoLabel: 'Proveedor' },
@@ -76,7 +78,7 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 function esc(s) {
   return String(s == null ? '' : s)
-    .replace(/&/g, '&').replace(/</g, '<').replace(/>/g, '>')
+    .replace(/&/g, '&').replace(/</g, '&lt;').replace(/>/g, '>')
     .replace(/"/g, '"').replace(/'/g, ''');
 }
 function fmtNum(n) { return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
@@ -125,8 +127,10 @@ $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') cerr
 
 /* ==================================================================
    INYECCION de estilos, menu, vistas y area de impresion
+   (para no tener que editar index.html ni styles.css)
    ================================================================== */
 function inyectarExtras() {
+  // ---- Estilos nuevos (impresion + componentes) ----
   const css = `
   #print-area { display: none; }
   @media print {
@@ -170,6 +174,7 @@ function inyectarExtras() {
   style.textContent = css;
   document.head.appendChild(style);
 
+  // ---- Items del menu (Ordenes y Responsables) despues de Movimientos ----
   const menu = $('.menu');
   const itemMov = $('.menu-item[data-vista="movimientos"]');
   const btnOrdenes = document.createElement('button');
@@ -185,6 +190,7 @@ function inyectarExtras() {
   btnConsumo.dataset.vista = 'consumo';
   btnConsumo.innerHTML = '<span class="ic">▪</span> Consumo x contrato';
   if (menu && itemMov) {
+    // Insertar en orden: Movimientos -> Ordenes -> Responsables -> Consumo
     itemMov.insertAdjacentElement('afterend', btnConsumo);
     itemMov.insertAdjacentElement('afterend', btnResp);
     itemMov.insertAdjacentElement('afterend', btnOrdenes);
@@ -192,6 +198,7 @@ function inyectarExtras() {
     menu.appendChild(btnOrdenes); menu.appendChild(btnResp); menu.appendChild(btnConsumo);
   }
 
+  // ---- Vistas nuevas ----
   const cont = $('.contenido');
   const vistaOrdenes = document.createElement('section');
   vistaOrdenes.className = 'vista';
@@ -255,10 +262,12 @@ function inyectarExtras() {
     </div>`;
   if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); cont.appendChild(vistaConsumo); }
 
+  // ---- Area de impresion ----
   const area = document.createElement('div');
   area.id = 'print-area';
   document.body.appendChild(area);
 
+  // ---- Reconstruir encabezado de la tabla de movimientos ----
   const theadMov = $('#tabla-mov thead tr');
   if (theadMov) {
     theadMov.innerHTML = `
@@ -266,6 +275,7 @@ function inyectarExtras() {
       <th>Frente / Proveedor</th><th>Responsable</th><th>Nota</th><th>Usuario</th><th class="cen">Imprimir</th>`;
   }
 
+  // ---- Boton "Nueva orden" en la barra de movimientos ----
   const barraMov = $('#btn-nuevo-mov');
   if (barraMov) {
     const b = document.createElement('button');
@@ -276,6 +286,7 @@ function inyectarExtras() {
     b.addEventListener('click', () => $('.menu-item[data-vista="ordenes"]').click());
   }
 
+  // ---- Filtro por frente en Movimientos ----
   const filtroTipo = $('#filtro-tipo-mov');
   if (filtroTipo) {
     const selF = document.createElement('select');
@@ -285,8 +296,20 @@ function inyectarExtras() {
     filtroTipo.insertAdjacentElement('afterend', selF);
     selF.addEventListener('change', renderMovimientos);
   }
+
+  // ---- Graficas de consumo en el Panel general ----
+  const vistaDash = $('#vista-dashboard');
+  if (vistaDash) {
+    const div = document.createElement('div');
+    div.className = 'grid-2';
+    div.innerHTML = `
+      <div class="panel"><div class="panel-head"><h3>Consumo por contrato</h3></div><div id="dash-consumo-contrato" class="lista-barras"></div></div>
+      <div class="panel"><div class="panel-head"><h3>Consumo por frente</h3></div><div id="dash-consumo-frente" class="lista-barras"></div></div>`;
+    vistaDash.appendChild(div);
+  }
 }
 
+// Opciones de frentes agrupadas por contrato (para <select>).
 function frentesOptions(sel) {
   let h = '';
   for (const c in CONTRATOS) {
@@ -452,6 +475,28 @@ function renderDashboard() {
   $('#dash-movimientos').innerHTML = ult.length === 0
     ? '<div class="vacio" style="padding:20px">Sin movimientos recientes.</div>'
     : ult.map((mv) => `<div class="mov-item"><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span><span class="mov-desc">${esc(mv.materialNombre)} — <b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</span><span class="mov-fecha">${fmtFecha(mv.fecha)}</span></div>`).join('');
+
+  // Consumo por contrato / frente (cantidad neta = salidas - devoluciones)
+  const porContrato = {};
+  const porFrente = {};
+  for (const mv of estado.movimientos) {
+    if (mv.tipo !== 'salida' && mv.tipo !== 'devolucion') continue;
+    if (!mv.frente) continue;
+    const q = (Number(mv.cantidad) || 0) * (mv.tipo === 'salida' ? 1 : -1);
+    const contrato = mv.contrato || contratoDeFrente(mv.frente) || 'Sin contrato';
+    porContrato[contrato] = (porContrato[contrato] || 0) + q;
+    const kf = 'Frente ' + mv.frente;
+    porFrente[kf] = (porFrente[kf] || 0) + q;
+  }
+  const barrasConsumo = (obj) => {
+    const keys = Object.keys(obj).sort((a, b) => obj[b] - obj[a]);
+    const mx = Math.max(1, ...keys.map((k) => Math.abs(obj[k])));
+    return keys.length === 0
+      ? '<div class="vacio" style="padding:20px">Sin consumo registrado aun.</div>'
+      : keys.map((k) => `<div class="barra-row"><div class="barra-top"><span>${esc(k)}</span><span>${fmtNum(obj[k])}</span></div><div class="barra-bg"><div class="barra-fill" style="width:${(Math.abs(obj[k]) / mx) * 100}%"></div></div></div>`).join('');
+  };
+  if ($('#dash-consumo-contrato')) $('#dash-consumo-contrato').innerHTML = barrasConsumo(porContrato);
+  if ($('#dash-consumo-frente')) $('#dash-consumo-frente').innerHTML = barrasConsumo(porFrente);
 }
 function cardHtml(label, valor, ic, warn) {
   return `<div class="card ${warn ? 'warn' : ''}"><div class="card-label">${label}</div><div class="card-valor">${valor}</div><div class="card-ic">${ic}</div></div>`;
@@ -566,7 +611,7 @@ function renderMovimientos() {
     return [mv.materialNombre, mv.frente, mv.contrato, mv.proveedor, mv.nota, mv.responsable, mv.usuario].some((v) => String(v || '').toLowerCase().includes(q));
   });
   $('#mov-vacio').hidden = estado.movimientos.length !== 0;
-  $('#cuerpo-mov').innerHTML = lista.map((mv) => `
+  $('#cuerpo-mov').innerHTML = lista.map((mv, i) => `
     <tr>
       <td>${fmtFecha(mv.fecha)}</td>
       <td><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
@@ -582,6 +627,7 @@ function renderMovimientos() {
     b.addEventListener('click', () => imprimirMovimiento(b.dataset.printMov)));
 }
 
+// Filtro del tipo de movimiento (agregar devolucion a la lista existente)
 function prepararFiltroTipoMov() {
   const sel = $('#filtro-tipo-mov');
   if (sel) sel.innerHTML = `<option value="">Todos</option><option value="entrada">Entradas</option><option value="salida">Salidas</option><option value="devolucion">Devoluciones</option>`;
@@ -618,9 +664,10 @@ function modalMovimiento(materialId) {
   const renderLugar = () => {
     const cont = $('#mv-campo-lugar');
     if (tipoSel === 'entrada') {
-      cont.innerHTML = `<label>Proveedor</label><input id="mv-lugar" placeholder="Nombre del proveedor" />`;
+      cont.innerHTML = `<label>Proveedor</label><input id="mv-proveedor" placeholder="Nombre del proveedor" style="margin-bottom:10px" />`
+        + `<label>Frente de obra (opcional)</label>${frenteSelectHtml('mv-frente', '')}`;
     } else {
-      cont.innerHTML = `<label>Frente de obra (opcional)</label>${frenteSelectHtml('mv-lugar', '')}`;
+      cont.innerHTML = `<label>Frente de obra (opcional)</label>${frenteSelectHtml('mv-frente', '')}`;
     }
   };
   renderLugar();
@@ -636,18 +683,17 @@ function modalMovimiento(materialId) {
     const cantidad = parseFloat($('#mv-cantidad').value);
     if (!mat || !cantidad || cantidad <= 0) { toast('Ingresa una cantidad valida', 'error'); return; }
     if (tipoSel === 'salida' && cantidad > (Number(mat.cantidad) || 0)) { toast('No hay suficiente stock. Disponible: ' + fmtNum(mat.cantidad) + ' ' + mat.unidad, 'error'); return; }
-    const esProveedor = (TIPOS[tipoSel] || {}).campo === 'proveedor';
-    const lugarVal = (($('#mv-lugar') || {}).value || '').trim();
-    if (!esProveedor && !lugarVal) {
+    const frenteVal = (($('#mv-frente') || {}).value || '').trim();
+    const proveedorVal = (($('#mv-proveedor') || {}).value || '').trim();
+    if ((tipoSel === 'salida' || tipoSel === 'devolucion') && !frenteVal) {
       if (!confirm('Estas registrando este movimiento SIN frente de obra. Deseas continuar?')) return;
     }
-    const frente = esProveedor ? '' : lugarVal;
     try {
       await registrarMovimiento({
         tipo: tipoSel, materialId: mat.id, materialNombre: mat.nombre, cantidad, unidad: mat.unidad,
-        frente,
-        contrato: esProveedor ? '' : contratoDeFrente(frente),
-        proveedor: esProveedor ? lugarVal : '',
+        frente: frenteVal,
+        contrato: contratoDeFrente(frenteVal),
+        proveedor: proveedorVal,
         responsable: $('#mv-responsable').value.trim(), nota: $('#mv-nota').value.trim(), usuario: nombreUsuario()
       });
       toast('Movimiento registrado', 'ok'); cerrarModal();
@@ -656,7 +702,7 @@ function modalMovimiento(materialId) {
 }
 
 /* ==================================================================
-   ORDENES (varios materiales) + pedidos pendientes
+   ORDENES (varios materiales)
    ================================================================== */
 function estadoOrden(o) {
   return o.estado || (o.tipo === 'entrada' ? 'recibido' : 'completado');
@@ -739,7 +785,8 @@ function modalOrden(tipo) {
 
   abrirModal('Nueva orden — ' + t.label, `
     <div class="form-grid">
-      <div class="campo"><label>${esProveedor ? 'Proveedor' : 'Frente de obra (opcional)'}</label>${esProveedor ? `<input id="o-lugar" placeholder="Nombre del proveedor" />` : frenteSelectHtml('o-lugar', '')}</div>
+      ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
+      <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', '')}</div>
       <div class="campo"><label>Responsable</label><input id="o-responsable" placeholder="Nombre del responsable" /></div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
     </div>
@@ -789,24 +836,25 @@ function modalOrden(tipo) {
       .filter((it) => it.materialId && Number(it.cantidad) > 0)
       .map((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return { materialId: it.materialId, materialNombre: m ? m.nombre : '', cantidad: Number(it.cantidad), unidad: m ? m.unidad : 'unidad' }; });
     if (items.length === 0) { toast('Agrega al menos un material con cantidad', 'error'); return; }
+    // Validar stock en salidas
     if (tipo === 'salida') {
       for (const it of items) {
         const m = estado.materiales.find((x) => x.id === it.materialId);
         if (m && it.cantidad > (Number(m.cantidad) || 0)) { toast(`Stock insuficiente de "${m.nombre}" (disp: ${fmtNum(m.cantidad)})`, 'error'); return; }
       }
     }
-    const lugarVal = (($('#o-lugar') || {}).value || '').trim();
-    if (!esProveedor && !lugarVal) {
+    const frenteVal = (($('#o-frente') || {}).value || '').trim();
+    const proveedorVal = (($('#o-proveedor') || {}).value || '').trim();
+    if ((tipo === 'salida' || tipo === 'devolucion') && !frenteVal) {
       if (!confirm('Estas generando esta orden SIN frente de obra. Deseas continuar?')) return;
     }
-    const frente = esProveedor ? '' : lugarVal;
     const btn = $('#o-guardar'); btn.disabled = true; btn.textContent = 'Generando...';
     try {
       const orden = await registrarOrden({
         tipo,
-        frente,
-        contrato: esProveedor ? '' : contratoDeFrente(frente),
-        proveedor: esProveedor ? lugarVal : '',
+        frente: frenteVal,
+        contrato: contratoDeFrente(frenteVal),
+        proveedor: proveedorVal,
         responsable: $('#o-responsable').value.trim(),
         nota: $('#o-nota').value.trim(),
         usuario: nombreUsuario(), items
@@ -944,10 +992,11 @@ function imprimirConsumo() {
 }
 
 /* ==================================================================
-   IMPRESION / GUARDAR / COMPARTIR
+   IMPRESION
    ================================================================== */
 let docNombreActual = 'Documento_FVIECOM';
 
+// Muestra el documento y ofrece: Imprimir, Guardar como PDF, Compartir por Gmail.
 function imprimir(html, nombre) {
   const area = $('#print-area');
   if (!area) return;
@@ -961,17 +1010,18 @@ function imprimir(html, nombre) {
       <button class="btn-primary" id="doc-compartir">📧 Compartir por Gmail</button>
     </div>
     <p style="color:var(--texto-mute);font-size:11.5px;margin-top:14px;line-height:1.6">
-      💡 <b>Guardar como PDF</b>: en la ventana de impresion, en <b>Impresora/Destino</b> elige <b>"Microsoft Print to PDF"</b> o <b>"Guardar como PDF"</b>.<br>
+      💡 <b>Guardar como PDF</b>: se abre la ventana de impresion; en <b>Destino</b> elige <b>"Guardar como PDF"</b>.<br>
       💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envias tu.
     </p>
     <div class="modal-acciones"><button class="btn-ghost" id="doc-cerrar">Cerrar</button></div>
   `);
   $('#doc-imprimir').addEventListener('click', () => window.print());
-  $('#doc-guardar').addEventListener('click', () => { toast('En Impresora/Destino elige "Microsoft Print to PDF"', 'ok'); setTimeout(() => window.print(), 500); });
+  $('#doc-guardar').addEventListener('click', () => { toast('En "Destino" elige "Guardar como PDF"', 'ok'); setTimeout(() => window.print(), 500); });
   $('#doc-compartir').addEventListener('click', compartirPorGmail);
   $('#doc-cerrar').addEventListener('click', cerrarModal);
 }
 
+// Abre Gmail (compose) con el destinatario, asunto y cuerpo ya escritos. No envia.
 function compartirPorGmail() {
   const salto = String.fromCharCode(10) + String.fromCharCode(10);
   const asunto = 'FVIECOM - ' + docNombreActual.replace(/_/g, ' ');
@@ -1005,7 +1055,7 @@ function docOrden(o, almacenista) {
   const esProv = t.campo === 'proveedor';
   const contrato = o.contrato || contratoDeFrente(o.frente);
   const metaLugar = esProv
-    ? `<div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>`
+    ? (`<div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>` + (o.frente ? `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente:</b> ${esc(o.frente)}</div>` : ''))
     : `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente de obra:</b> ${esc(o.frente || '-')}</div>`;
   const filas = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad)}</td></tr>`).join('');
   return `<div class="doc">
@@ -1030,7 +1080,7 @@ function imprimirMovimiento(id) {
   if (!mv) return;
   const orden = {
     numero: mv.ordenNumero || ('MOV-' + (mv.id || '').slice(-6)),
-    tipo: mv.tipo, frente: mv.frente, contrato: mv.contrato, proveedor: mv.proveedor, responsable: mv.responsable,
+    tipo: mv.tipo, frente: mv.frente, proveedor: mv.proveedor, responsable: mv.responsable,
     nota: mv.nota, fecha: mv.fecha,
     items: [{ materialNombre: mv.materialNombre, cantidad: mv.cantidad, unidad: mv.unidad }]
   };
