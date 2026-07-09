@@ -1,5 +1,5 @@
 // ============================================================
-//  Reglas de seguridad de Firestore - Inventario FVICOM
+//  Reglas de seguridad de Firestore - Inventario FVIECOM
 // ------------------------------------------------------------
 //  Estas reglas protegen los datos: SOLO usuarios con sesion
 //  iniciada (login) pueden leer y escribir el inventario.

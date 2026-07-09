@@ -7,7 +7,7 @@
  *  - 'general':   resumen por categoria + totales.
  *  - 'detallado': tabla completa de materiales + historial de movimientos.
  *
- * Membrete corporativo FVICOM en cada pagina.
+ * Membrete corporativo FVIECOM en cada pagina.
  */
 
 const COLORES = {
@@ -86,7 +86,7 @@ function dibujarEncabezado(doc, tipo, meta) {
   doc.restore();
 
   doc.fillColor(COLORES.blanco).font('Helvetica-Bold').fontSize(18)
-    .text('FVICOM S.A.S', 100, 24);
+    .text('FVIECOM S.A.S', 100, 24);
   doc.fillColor(COLORES.cian).font('Helvetica').fontSize(9)
     .text('FV Ingenieria Electrica y Telecomunicaciones', 100, 46);
   doc.fillColor('#c7d3ea').fontSize(8)
@@ -286,7 +286,7 @@ function dibujarPiePaginas(doc) {
     const w = doc.page.width;
     const h = doc.page.height;
     doc.fillColor(COLORES.gris).font('Helvetica').fontSize(8)
-      .text('FVICOM S.A.S - Inventario de obra  |  Documento generado automaticamente',
+      .text('FVIECOM S.A.S - Inventario de obra  |  Documento generado automaticamente',
         40, h - 30, { width: w - 120, align: 'left' });
     doc.text('Pagina ' + (i - range.start + 1) + ' de ' + range.count, w - 120, h - 30, { width: 80, align: 'right' });
   }

@@ -1,0 +1,41 @@
+name: Publicar version web (GitHub Pages)
+
+# Publica la interfaz (src/renderer) como sitio web en GitHub Pages.
+# Se ejecuta al hacer push a main y tambien manualmente desde "Actions".
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Permisos necesarios para desplegar en Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Evita despliegues simultaneos.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Descargar el codigo
+        uses: actions/checkout@v4
+
+      - name: Configurar GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir la interfaz (src/renderer) como sitio
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: src/renderer
+
+      - name: Desplegar en GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
