@@ -24,7 +24,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 680,
     backgroundColor: '#0a0f1e',
-    title: 'Inventario FVICOM',
+    title: 'Inventario FVIECOM',
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

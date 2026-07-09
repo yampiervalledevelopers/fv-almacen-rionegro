@@ -78,8 +78,8 @@ const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
 function esc(s) {
   return String(s == null ? '' : s)
-    .replace(/&/g, '&').replace(/</g, '&lt;').replace(/>/g, '>')
-    .replace(/"/g, '"').replace(/'/g, ''');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 function fmtNum(n) { return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
 function fmtFecha(f) {
