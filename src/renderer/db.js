@@ -1,6 +1,6 @@
 // ============================================================
 //  Capa de datos - Firestore (base de datos en la nube)
-//  - Movimientos con responsable y 3 tipos: entrada / salida / devolucion
+//  - Movimientos con responsable, contrato y 3 tipos
 //  - Ordenes: entrada = pedido pendiente (no suma stock hasta recibir)
 // ============================================================
 
@@ -156,6 +156,7 @@ export async function registrarMovimiento(mov) {
     cantidad,
     unidad: mov.unidad || 'unidad',
     frente: mov.frente || '',
+    contrato: mov.contrato || '',
     proveedor: mov.proveedor || '',
     responsable: mov.responsable || '',
     nota: mov.nota || '',
@@ -205,7 +206,6 @@ export async function registrarOrden(orden) {
   const batch = writeBatch(db);
   const ordenRef = doc(collection(db, COL_ORDENES));
 
-  // Las ordenes de ENTRADA (pedidos) NO tocan el stock hasta que se reciben.
   const esPedidoPendiente = (tipo === 'entrada');
   const estadoOrden = esPedidoPendiente ? 'pendiente' : 'completado';
 
@@ -223,6 +223,7 @@ export async function registrarOrden(orden) {
         cantidad: it.cantidad,
         unidad: it.unidad,
         frente: orden.frente || '',
+        contrato: orden.contrato || '',
         proveedor: orden.proveedor || '',
         responsable: orden.responsable || '',
         nota: orden.nota || '',
@@ -239,6 +240,7 @@ export async function registrarOrden(orden) {
     tipo,
     estado: estadoOrden,
     frente: orden.frente || '',
+    contrato: orden.contrato || '',
     proveedor: orden.proveedor || '',
     responsable: orden.responsable || '',
     nota: orden.nota || '',
@@ -251,16 +253,13 @@ export async function registrarOrden(orden) {
 
   return {
     id: ordenRef.id, numero, tipo, estado: estadoOrden,
-    frente: orden.frente || '', proveedor: orden.proveedor || '',
-    responsable: orden.responsable || '', nota: orden.nota || '',
-    usuario: orden.usuario || '', fecha: new Date().toISOString(), items
+    frente: orden.frente || '', contrato: orden.contrato || '',
+    proveedor: orden.proveedor || '', responsable: orden.responsable || '',
+    nota: orden.nota || '', usuario: orden.usuario || '',
+    fecha: new Date().toISOString(), items
   };
 }
 
-/**
- * Recibe un pedido pendiente: suma al stock lo que llego, crea los
- * movimientos de entrada y marca la orden como "recibido".
- */
 export async function recibirOrden(orden, recibidos, usuario) {
   const items = (recibidos || []).filter((it) => it.materialId && (Number(it.cantidad) || 0) > 0);
   if (items.length === 0) throw new Error('Ingresa al menos una cantidad recibida.');
