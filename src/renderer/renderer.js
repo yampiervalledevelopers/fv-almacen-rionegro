@@ -160,6 +160,11 @@ function inyectarExtras() {
   .orden-item-row .btn-icon { height:38px; }
   .orden-add { margin-top:4px; }
   .orden-total { font-size:12.5px; color:var(--texto-dim); margin-top:6px; }
+  .orden-item-row { align-items:end; }
+  .mat-picker { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .mat-picker .mat-filtro { font-size:12px; padding:7px 9px; }
+  .orden-aviso { background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35); color:#c9f0d8; border-radius:8px; padding:9px 12px; font-size:12.5px; margin-bottom:12px; }
+  .link-btn { background:none; border:none; color:#4da3ff; cursor:pointer; text-decoration:underline; font-size:12.5px; padding:0; }
   .tipo-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
   .tipo-badge.salida { background:rgba(255,84,112,0.15); color:#ff9db0; }
   .tipo-badge.entrada { background:rgba(46,204,113,0.15); color:#7ee6a8; }
@@ -777,16 +782,80 @@ function modalRecibir(orden) {
   });
 }
 
+/* ---- Borrador de orden (autoguardado en el equipo) + opciones agrupadas ---- */
+function normTxt(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+function claveBorradorOrden(tipo) { return 'fviecom_borrador_orden_' + tipo; }
+function guardarBorradorOrden(tipo) {
+  try {
+    const d = {
+      frente: (($('#o-frente') || {}).value) || '',
+      proveedor: (($('#o-proveedor') || {}).value) || '',
+      responsable: (($('#o-responsable') || {}).value) || '',
+      nota: (($('#o-nota') || {}).value) || '',
+      items: (estado.itemsOrden || []).map((it) => ({ materialId: it.materialId || '', cantidad: it.cantidad || '' })),
+      ts: Date.now()
+    };
+    const hayAlgo = d.frente || d.proveedor || d.responsable || d.nota ||
+      d.items.some((it) => it.materialId || (it.cantidad !== '' && it.cantidad != null));
+    if (hayAlgo) localStorage.setItem(claveBorradorOrden(tipo), JSON.stringify(d));
+    else localStorage.removeItem(claveBorradorOrden(tipo));
+  } catch (e) { /* localStorage no disponible: se ignora */ }
+}
+function leerBorradorOrden(tipo) {
+  try { return JSON.parse(localStorage.getItem(claveBorradorOrden(tipo)) || 'null'); }
+  catch (e) { return null; }
+}
+function limpiarBorradorOrden(tipo) {
+  try { localStorage.removeItem(claveBorradorOrden(tipo)); } catch (e) { /* ignore */ }
+}
+// Opciones del <select> de material, agrupadas por categoria (optgroup) y
+// filtradas por el texto escrito. El material ya seleccionado se conserva
+// visible aunque no coincida con el filtro.
+function opcionesMaterialAgrupadas(sel, filtro) {
+  const q = normTxt(filtro);
+  const grupos = {};
+  for (const m of estado.materiales) {
+    if (q) {
+      const texto = normTxt((m.nombre || '') + ' ' + (m.codigo || '') + ' ' + (m.categoria || ''));
+      if (!texto.includes(q) && m.id !== sel) continue;
+    }
+    const c = m.categoria || 'Sin clasificar';
+    (grupos[c] = grupos[c] || []).push(m);
+  }
+  const cats = Object.keys(grupos).sort((a, b) => a.localeCompare(b));
+  let html = '<option value="">— Elige material —</option>';
+  for (const c of cats) {
+    html += `<optgroup label="${esc(c)}">`;
+    grupos[c].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+    for (const m of grupos[c]) {
+      html += `<option value="${m.id}" ${m.id === sel ? 'selected' : ''}>${esc(m.nombre)} (${fmtNum(m.cantidad)} ${esc(m.unidad)})</option>`;
+    }
+    html += `</optgroup>`;
+  }
+  if (cats.length === 0) html += '<option value="" disabled>(sin coincidencias)</option>';
+  return html;
+}
+
 function modalOrden(tipo) {
   if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
   const t = TIPOS[tipo] || TIPOS.salida;
   const esProveedor = t.campo === 'proveedor';
-  estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '' }];
+
+  // Recuperar borrador: lo que se estaba llenando si el modal se cerro sin generar.
+  const borrador = leerBorradorOrden(tipo);
+  if (borrador && Array.isArray(borrador.items) && borrador.items.length) {
+    estado.itemsOrden = borrador.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }));
+  } else {
+    estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
+  }
 
   abrirModal('Nueva orden — ' + t.label, `
+    ${borrador ? `<div class="orden-aviso">📝 Recuperamos una orden sin terminar. <button type="button" id="o-nuevo" class="link-btn">Empezar de nuevo</button></div>` : ''}
     <div class="form-grid">
       ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
-      <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', '')}</div>
+      <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', borrador ? (borrador.frente || '') : '')}</div>
       <div class="campo"><label>Responsable</label><input id="o-responsable" placeholder="Nombre del responsable" /></div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
     </div>
@@ -799,26 +868,44 @@ function modalOrden(tipo) {
       <button class="btn-primary" id="o-guardar">Generar e imprimir</button>
     </div>`, '640px');
 
+  // Restaurar los textos guardados en el borrador.
+  if (borrador) {
+    if ($('#o-proveedor')) $('#o-proveedor').value = borrador.proveedor || '';
+    if ($('#o-responsable')) $('#o-responsable').value = borrador.responsable || '';
+    if ($('#o-nota')) $('#o-nota').value = borrador.nota || '';
+  }
+
+  const persistir = () => guardarBorradorOrden(tipo);
+
   const render = () => {
     const cont = $('#orden-items');
-    const opcs = estado.materiales.slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
     cont.innerHTML = estado.itemsOrden.map((it) => `
       <div class="orden-item-row" data-row="${it._id}">
-        <select data-campo="materialId">
-          <option value="">— Elige material —</option>
-          ${opcs.map((m) => `<option value="${m.id}" ${m.id === it.materialId ? 'selected' : ''}>${esc(m.nombre)} (${fmtNum(m.cantidad)} ${esc(m.unidad)})</option>`).join('')}
-        </select>
+        <div class="mat-picker">
+          <input type="text" class="mat-filtro" placeholder="🔎 Escribe para filtrar (nombre, codigo o categoria)" data-campo="filtro" value="${esc(it._filtro || '')}" />
+          <select data-campo="materialId">${opcionesMaterialAgrupadas(it.materialId, it._filtro)}</select>
+        </div>
         <input type="number" step="any" min="0" placeholder="Cantidad" data-campo="cantidad" value="${it.cantidad}" />
         <button class="btn-icon peligro" data-quitar="${it._id}" title="Quitar">✕</button>
       </div>`).join('');
     cont.querySelectorAll('.orden-item-row').forEach((row) => {
       const id = Number(row.dataset.row);
       const item = estado.itemsOrden.find((x) => x._id === id);
-      row.querySelectorAll('[data-campo]').forEach((el) => el.addEventListener('change', () => { item[el.dataset.campo] = el.value; actualizarTotal(); }));
+      const selEl = row.querySelector('select[data-campo="materialId"]');
+      const filtroEl = row.querySelector('.mat-filtro');
+      const cantEl = row.querySelector('input[data-campo="cantidad"]');
+      // Filtrar en vivo: solo se reconstruyen las opciones del select, sin
+      // volver a dibujar toda la fila, para no perder el foco del teclado.
+      filtroEl.addEventListener('input', () => {
+        item._filtro = filtroEl.value;
+        selEl.innerHTML = opcionesMaterialAgrupadas(item.materialId, item._filtro);
+      });
+      selEl.addEventListener('change', () => { item.materialId = selEl.value; actualizarTotal(); persistir(); });
+      cantEl.addEventListener('input', () => { item.cantidad = cantEl.value; actualizarTotal(); persistir(); });
       row.querySelector('[data-quitar]').addEventListener('click', () => {
         estado.itemsOrden = estado.itemsOrden.filter((x) => x._id !== id);
-        if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '' });
-        render();
+        if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' });
+        render(); persistir();
       });
     });
     actualizarTotal();
@@ -829,7 +916,16 @@ function modalOrden(tipo) {
   };
   render();
 
-  $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '' }); render(); });
+  // Guardar el borrador cuando cambian los campos de cabecera.
+  ['o-frente', 'o-responsable', 'o-proveedor', 'o-nota'].forEach((cid) => {
+    const el = $('#' + cid);
+    if (el) { el.addEventListener('change', persistir); el.addEventListener('input', persistir); }
+  });
+
+  // "Empezar de nuevo": descarta el borrador y reabre limpio.
+  if ($('#o-nuevo')) $('#o-nuevo').addEventListener('click', () => { limpiarBorradorOrden(tipo); cerrarModal(); modalOrden(tipo); });
+
+  $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '' }); render(); persistir(); });
   $('#o-cancelar').addEventListener('click', cerrarModal);
   $('#o-guardar').addEventListener('click', async () => {
     const items = estado.itemsOrden
@@ -859,6 +955,7 @@ function modalOrden(tipo) {
         nota: $('#o-nota').value.trim(),
         usuario: nombreUsuario(), items
       });
+      limpiarBorradorOrden(tipo);
       cerrarModal();
       toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
       imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero);
