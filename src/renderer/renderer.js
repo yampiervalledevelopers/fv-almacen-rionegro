@@ -865,6 +865,7 @@ function renderOrdenes() {
       <td class="der">${(o.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
+        <button class="btn-icon" title="Repetir esta orden" data-repetir="${o.id}">🔁</button>
         <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
       </div></td>
@@ -885,6 +886,30 @@ function renderOrdenes() {
       const o = estado.ordenes.find((x) => x.id === b.dataset.delOrden);
       if (o) confirmarEliminarOrden(o);
     }));
+  $('#cuerpo-ordenes').querySelectorAll('[data-repetir]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const o = estado.ordenes.find((x) => x.id === b.dataset.repetir);
+      if (o) repetirOrden(o);
+    }));
+}
+
+// Abre "Nueva orden" precargada con los materiales de una orden existente,
+// para volver a despacharla ajustando solo lo necesario.
+function repetirOrden(orden) {
+  if (!orden) return;
+  const items = (orden.items || [])
+    .filter((it) => estado.materiales.some((m) => m.id === it.materialId))
+    .map((it) => ({ materialId: it.materialId, cantidad: it.cantidad }));
+  const faltan = (orden.items || []).length - items.length;
+  const precarga = {
+    frente: orden.frente || '',
+    proveedor: orden.proveedor || '',
+    responsable: orden.responsable || '',
+    nota: orden.nota || '',
+    items: items.length ? items : [{ materialId: '', cantidad: '' }]
+  };
+  modalOrden(orden.tipo, precarga);
+  if (faltan > 0) toast(faltan + ' material(es) de la orden original ya no existen y no se cargaron', 'error');
 }
 
 function modalRecibir(orden) {
@@ -977,24 +1002,27 @@ function opcionesMaterialAgrupadas(sel, filtro) {
   return html;
 }
 
-function modalOrden(tipo) {
+function modalOrden(tipo, precarga) {
   if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
   const t = TIPOS[tipo] || TIPOS.salida;
   const esProveedor = t.campo === 'proveedor';
 
-  // Recuperar borrador: lo que se estaba llenando si el modal se cerro sin generar.
-  const borrador = leerBorradorOrden(tipo);
-  if (borrador && Array.isArray(borrador.items) && borrador.items.length) {
-    estado.itemsOrden = borrador.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }));
+  // Fuente de datos: 'precarga' (al repetir una orden) tiene prioridad; si no,
+  // se recupera el borrador de lo que se estaba llenando.
+  const borrador = precarga ? null : leerBorradorOrden(tipo);
+  const base = precarga || borrador;
+  if (base && Array.isArray(base.items) && base.items.length) {
+    estado.itemsOrden = base.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }));
   } else {
     estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
   }
 
   abrirModal('Nueva orden — ' + t.label, `
     ${borrador ? `<div class="orden-aviso">📝 Recuperamos una orden sin terminar. <button type="button" id="o-nuevo" class="link-btn">Empezar de nuevo</button></div>` : ''}
+    ${precarga ? `<div class="orden-aviso">🔁 Orden copiada. Ajusta lo que necesites y genera una nueva.</div>` : ''}
     <div class="form-grid">
       ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
-      <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', borrador ? (borrador.frente || '') : '')}</div>
+      <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', base ? (base.frente || '') : '')}</div>
       <div class="campo"><label>Responsable</label><input id="o-responsable" placeholder="Nombre del responsable" /></div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
     </div>
@@ -1007,11 +1035,11 @@ function modalOrden(tipo) {
       <button class="btn-primary" id="o-guardar">Generar e imprimir</button>
     </div>`, '640px');
 
-  // Restaurar los textos guardados en el borrador.
-  if (borrador) {
-    if ($('#o-proveedor')) $('#o-proveedor').value = borrador.proveedor || '';
-    if ($('#o-responsable')) $('#o-responsable').value = borrador.responsable || '';
-    if ($('#o-nota')) $('#o-nota').value = borrador.nota || '';
+  // Restaurar los textos (del borrador o de la orden copiada).
+  if (base) {
+    if ($('#o-proveedor')) $('#o-proveedor').value = base.proveedor || '';
+    if ($('#o-responsable')) $('#o-responsable').value = base.responsable || '';
+    if ($('#o-nota')) $('#o-nota').value = base.nota || '';
   }
 
   const persistir = () => guardarBorradorOrden(tipo);
