@@ -174,6 +174,16 @@ function inyectarExtras() {
   .estado-badge.pendiente { background:rgba(255,176,32,0.18); color:#ffd08a; }
   .estado-badge.recibido { background:rgba(46,204,113,0.15); color:#7ee6a8; }
   .estado-badge.completado { background:rgba(120,160,220,0.15); color:#9fc2ef; }
+  tr.grupo-row { cursor:pointer; }
+  tr.grupo-row:hover { background:rgba(255,255,255,0.03); }
+  tr.grupo-row .caret { display:inline-block; transition:transform .15s ease; color:var(--texto-mute); font-size:11px; margin-right:4px; }
+  tr.grupo-row.abierto .caret { transform:rotate(90deg); }
+  tr.grupo-detalle > td { padding:0 0 0 26px; background:rgba(0,0,0,0.18); }
+  .tabla-detalle { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .tabla-detalle th, .tabla-detalle td { padding:6px 12px; border-bottom:1px solid rgba(255,255,255,0.06); text-align:left; }
+  .tabla-detalle th.der, .tabla-detalle td.der { text-align:right; }
+  .tabla-detalle th { color:var(--texto-dim); font-weight:600; }
+  .mov-hint { font-size:12px; color:var(--texto-dim); padding:8px 4px 12px; }
   `;
   const style = document.createElement('style');
   style.id = 'fviecom-extra';
@@ -277,8 +287,17 @@ function inyectarExtras() {
   const theadMov = $('#tabla-mov thead tr');
   if (theadMov) {
     theadMov.innerHTML = `
-      <th>Fecha</th><th>Tipo</th><th>Material</th><th class="der">Cantidad</th>
-      <th>Frente / Proveedor</th><th>Responsable</th><th>Nota</th><th>Usuario</th><th class="cen">Acciones</th>`;
+      <th>Fecha</th><th>N° Orden / Material</th><th>Tipo</th><th class="cen">Items</th>
+      <th>Frente / Proveedor</th><th>Responsable</th><th>Usuario</th><th class="cen">Acciones</th>`;
+  }
+
+  // ---- Ayuda: los movimientos se agrupan por orden ----
+  const tablaMov = $('#tabla-mov');
+  if (tablaMov && tablaMov.parentElement) {
+    const hintMov = document.createElement('div');
+    hintMov.className = 'mov-hint';
+    hintMov.innerHTML = '💡 Los movimientos se agrupan por orden y fecha. Haz <b>doble clic</b> en una fila (o clic en la ▸) para desplegar todo lo que se pidio en esa orden.';
+    tablaMov.parentElement.insertBefore(hintMov, tablaMov);
   }
 
   // ---- Boton "Nueva orden" en la barra de movimientos ----
@@ -607,35 +626,143 @@ function confirmarEliminar(id) {
    ================================================================== */
 function renderMovimientos() {
   if (!$('#cuerpo-mov')) return;
-  const q = ($('#buscar-mov').value || '').toLowerCase().trim();
+  const q = normTxt($('#buscar-mov').value || '');
   const tipo = $('#filtro-tipo-mov').value;
   const fFrente = (($('#filtro-frente-mov') || {}).value) || '';
-  const lista = estado.movimientos.filter((mv) => {
-    if (tipo && mv.tipo !== tipo) return false;
-    if (fFrente && (mv.frente || '') !== fFrente) return false;
+
+  // 1) Agrupar por numero de orden. Los movimientos sin orden (sueltos)
+  //    quedan como grupos individuales de un solo item.
+  const grupos = [];
+  const porOrden = {};
+  for (const mv of estado.movimientos) {
+    if (mv.ordenNumero) {
+      let g = porOrden[mv.ordenNumero];
+      if (!g) {
+        g = porOrden[mv.ordenNumero] = {
+          key: 'ord-' + mv.ordenNumero, esOrden: true,
+          ordenNumero: mv.ordenNumero, ordenId: mv.ordenId || '',
+          tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato,
+          proveedor: mv.proveedor, responsable: mv.responsable, usuario: mv.usuario,
+          movimientos: []
+        };
+        grupos.push(g);
+      }
+      g.movimientos.push(mv);
+      if (mv.fecha && String(mv.fecha) > String(g.fecha || '')) g.fecha = mv.fecha;
+    } else {
+      grupos.push({
+        key: 'mov-' + mv.id, esOrden: false,
+        ordenNumero: '', ordenId: '',
+        tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato,
+        proveedor: mv.proveedor, responsable: mv.responsable, usuario: mv.usuario,
+        movimientos: [mv]
+      });
+    }
+  }
+
+  // 2) Filtrar a nivel de grupo (asi la orden se conserva completa aunque el
+  //    texto coincida con un solo material).
+  const filtrados = grupos.filter((g) => {
+    if (tipo && g.tipo !== tipo) return false;
+    if (fFrente && (g.frente || '') !== fFrente) return false;
     if (!q) return true;
-    return [mv.materialNombre, mv.frente, mv.contrato, mv.proveedor, mv.nota, mv.responsable, mv.usuario].some((v) => String(v || '').toLowerCase().includes(q));
+    const base = normTxt([g.ordenNumero, g.frente, g.contrato, g.proveedor, g.responsable, g.usuario].join(' '));
+    if (base.includes(q)) return true;
+    return g.movimientos.some((mv) => normTxt((mv.materialNombre || '') + ' ' + (mv.nota || '')).includes(q));
   });
+
+  // 3) Ordenar por fecha, mas reciente primero.
+  filtrados.sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+
   $('#mov-vacio').hidden = estado.movimientos.length !== 0;
-  $('#cuerpo-mov').innerHTML = lista.map((mv, i) => `
-    <tr>
-      <td>${fmtFecha(mv.fecha)}</td>
-      <td><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
-      <td>${esc(mv.materialNombre)}</td>
-      <td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td>
-      <td>${mv.frente ? (esc(mv.frente) + (mv.contrato ? ` <span style="color:var(--texto-mute)">(${esc(mv.contrato)})</span>` : '')) : esc(mv.proveedor || '-')}</td>
-      <td>${esc(mv.responsable || '-')}</td>
-      <td>${esc(mv.nota || '-')}</td>
-      <td>${esc(mv.usuario || '-')}</td>
-      <td class="cen"><div class="acciones-cel">
-        <button class="btn-icon" title="Imprimir comprobante" data-print-mov="${mv.id}">🖨</button>
-        <button class="btn-icon peligro" title="Eliminar movimiento" data-del-mov="${mv.id}">🗑</button>
-      </div></td>
-    </tr>`).join('');
-  $('#cuerpo-mov').querySelectorAll('[data-print-mov]').forEach((b) =>
-    b.addEventListener('click', () => imprimirMovimiento(b.dataset.printMov)));
-  $('#cuerpo-mov').querySelectorAll('[data-del-mov]').forEach((b) =>
-    b.addEventListener('click', () => confirmarEliminarMovimiento(b.dataset.delMov)));
+
+  const cuerpo = $('#cuerpo-mov');
+  const mapa = {};
+  filtrados.forEach((g) => { mapa[g.key] = g; });
+
+  if (filtrados.length === 0) {
+    cuerpo.innerHTML = estado.movimientos.length === 0 ? '' :
+      '<tr><td colspan="8" class="cen" style="padding:22px;color:var(--texto-mute)">No hay movimientos que coincidan con el filtro.</td></tr>';
+    return;
+  }
+
+  cuerpo.innerHTML = filtrados.map((g) => {
+    const lugar = g.frente
+      ? (esc(g.frente) + (g.contrato ? ` <span style="color:var(--texto-mute)">(${esc(g.contrato)})</span>` : ''))
+      : esc(g.proveedor || '-');
+    const idCol = g.esOrden
+      ? `<span class="caret">▸</span> <b>${esc(g.ordenNumero)}</b>`
+      : `<span class="caret">▸</span> <span style="color:var(--texto-mute)">Individual:</span> ${esc((g.movimientos[0] || {}).materialNombre || '-')}`;
+    const acciones = g.esOrden
+      ? `<button class="btn-icon" title="Imprimir orden" data-print-grupo="${g.key}">🖨</button>
+         <button class="btn-icon peligro" title="Eliminar orden" data-del-grupo="${g.key}">🗑</button>`
+      : `<button class="btn-icon" title="Imprimir comprobante" data-print-mov="${g.movimientos[0].id}">🖨</button>
+         <button class="btn-icon peligro" title="Eliminar movimiento" data-del-mov="${g.movimientos[0].id}">🗑</button>`;
+    const detalle = g.movimientos.map((mv) => `
+      <tr><td>${esc(mv.materialNombre)}</td><td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td><td>${esc(mv.nota || '-')}</td></tr>`).join('');
+    return `
+      <tr class="grupo-row" data-key="${g.key}" title="Doble clic para ver el detalle">
+        <td>${fmtFecha(g.fecha)}</td>
+        <td class="codigo-cel">${idCol}</td>
+        <td><span class="tipo-badge ${g.tipo}">${(TIPOS[g.tipo] || {}).label || g.tipo}</span></td>
+        <td class="cen">${g.movimientos.length}</td>
+        <td>${lugar}</td>
+        <td>${esc(g.responsable || '-')}</td>
+        <td>${esc(g.usuario || '-')}</td>
+        <td class="cen"><div class="acciones-cel">${acciones}</div></td>
+      </tr>
+      <tr class="grupo-detalle" data-key="${g.key}" hidden>
+        <td colspan="8">
+          <table class="tabla-detalle">
+            <thead><tr><th>Material</th><th class="der">Cantidad</th><th>Nota</th></tr></thead>
+            <tbody>${detalle}</tbody>
+          </table>
+        </td>
+      </tr>`;
+  }).join('');
+
+  // Expandir / colapsar el detalle con doble clic en la fila (o clic en la ▸).
+  const toggle = (row) => {
+    const det = row.nextElementSibling;
+    if (det && det.classList.contains('grupo-detalle')) {
+      det.hidden = !det.hidden;
+      row.classList.toggle('abierto', !det.hidden);
+    }
+  };
+  cuerpo.querySelectorAll('tr.grupo-row').forEach((row) => {
+    row.addEventListener('dblclick', (e) => { if (e.target.closest('button')) return; toggle(row); });
+    const caret = row.querySelector('.caret');
+    if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggle(row); });
+  });
+  cuerpo.querySelectorAll('[data-print-grupo]').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); imprimirGrupo(mapa[b.dataset.printGrupo]); }));
+  cuerpo.querySelectorAll('[data-del-grupo]').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); const g = mapa[b.dataset.delGrupo]; const o = ordenDeGrupo(g); if (o) confirmarEliminarOrden(o); else toast('No se encontro la orden asociada.', 'error'); }));
+  cuerpo.querySelectorAll('[data-print-mov]').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); imprimirMovimiento(b.dataset.printMov); }));
+  cuerpo.querySelectorAll('[data-del-mov]').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); confirmarEliminarMovimiento(b.dataset.delMov); }));
+}
+
+// Devuelve la orden (de estado.ordenes) asociada a un grupo, si aun existe.
+function ordenDeGrupo(g) {
+  if (!g) return null;
+  return estado.ordenes.find((o) => (g.ordenId && o.id === g.ordenId) || (g.ordenNumero && o.numero === g.ordenNumero)) || null;
+}
+// Imprime el documento de un grupo: la orden completa si existe, o una
+// reconstruccion a partir de sus movimientos si la orden ya fue borrada.
+function imprimirGrupo(g) {
+  if (!g) return;
+  if (!g.esOrden) { imprimirMovimiento(g.movimientos[0].id); return; }
+  const orden = ordenDeGrupo(g);
+  if (orden) { imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (orden.tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero); return; }
+  const pseudo = {
+    numero: g.ordenNumero, tipo: g.tipo, frente: g.frente, contrato: g.contrato,
+    proveedor: g.proveedor, responsable: g.responsable,
+    nota: (g.movimientos[0] || {}).nota, fecha: g.fecha,
+    items: g.movimientos.map((m) => ({ materialNombre: m.materialNombre, cantidad: m.cantidad, unidad: m.unidad }))
+  };
+  imprimir(docOrden(pseudo, g.usuario || nombreUsuario()), 'Orden_' + (g.ordenNumero || 'mov'));
 }
 
 // Filtro del tipo de movimiento (agregar devolucion a la lista existente)
