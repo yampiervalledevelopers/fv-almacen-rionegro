@@ -184,6 +184,14 @@ function inyectarExtras() {
   .tabla-detalle th.der, .tabla-detalle td.der { text-align:right; }
   .tabla-detalle th { color:var(--texto-dim); font-weight:600; }
   .mov-hint { font-size:12px; color:var(--texto-dim); padding:8px 4px 12px; }
+  tr.inv-tipo > td { background:rgba(77,163,255,0.10); color:#dce9ff; font-weight:700; font-size:13px; padding:9px 12px; letter-spacing:.3px; }
+  tr.inv-clase > td { background:rgba(255,255,255,0.03); color:var(--texto-dim); font-weight:600; font-size:12px; padding:6px 12px 6px 26px; }
+  .conteo { color:var(--texto-mute); font-weight:400; font-size:11.5px; }
+  .ctx-menu { position:fixed; z-index:1000; background:#0f1830; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:6px; box-shadow:0 12px 30px rgba(0,0,0,0.5); min-width:210px; }
+  .ctx-menu .ctx-titulo { font-size:11.5px; color:var(--texto-mute); padding:6px 10px 8px; border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ctx-menu button { display:block; width:100%; text-align:left; background:none; border:none; color:var(--texto); padding:9px 10px; border-radius:7px; cursor:pointer; font-size:13px; }
+  .ctx-menu button:hover { background:rgba(255,255,255,0.06); }
+  .ctx-menu button.peligro { color:#ff9db0; }
   `;
   const style = document.createElement('style');
   style.id = 'fviecom-extra';
@@ -298,6 +306,23 @@ function inyectarExtras() {
     hintMov.className = 'mov-hint';
     hintMov.innerHTML = '💡 Los movimientos se agrupan por orden y fecha. Haz <b>doble clic</b> en una fila (o clic en la ▸) para desplegar todo lo que se pidio en esa orden.';
     tablaMov.parentElement.insertBefore(hintMov, tablaMov);
+  }
+
+  // ---- Encabezado de inventario: la 3a columna pasa a ser "Clase" ----
+  // (el "Tipo"/categoria ahora es el encabezado de cada grupo).
+  const theadInv = $('#tabla-inventario thead tr');
+  if (theadInv) {
+    theadInv.innerHTML = `
+      <th>Codigo</th><th>Material</th><th>Clase</th>
+      <th class="der">Cantidad</th><th>Unidad</th><th class="der">Minimo</th>
+      <th>Ubicacion</th><th class="cen">Acciones</th>`;
+  }
+  const tablaInv = $('#tabla-inventario');
+  if (tablaInv && tablaInv.parentElement) {
+    const hintInv = document.createElement('div');
+    hintInv.className = 'mov-hint';
+    hintInv.innerHTML = '💡 El inventario se agrupa por <b>Tipo</b> y <b>Clase</b>. Haz <b>doble clic</b> en un material para mas opciones (duplicar, editar, etc.).';
+    tablaInv.parentElement.insertBefore(hintInv, tablaInv);
   }
 
   // ---- Boton "Nueva orden" en la barra de movimientos ----
@@ -544,65 +569,166 @@ function materialesFiltrados() {
   return estado.materiales.filter((m) => {
     if (cat && (m.categoria || 'Sin clasificar') !== cat) return false;
     if (!q) return true;
-    return [m.nombre, m.codigo, m.categoria, m.ubicacion].some((v) => String(v || '').toLowerCase().includes(q));
+    return [m.nombre, m.codigo, m.categoria, m.clase, m.ubicacion].some((v) => String(v || '').toLowerCase().includes(q));
   });
 }
-function renderInventario() {
-  if (!$('#cuerpo-inventario')) return;
-  const lista = materialesFiltrados();
-  $('#inv-vacio').hidden = estado.materiales.length !== 0;
-  $('#cuerpo-inventario').innerHTML = lista.map((m) => `
-    <tr>
+// Clases (subgrupos) ya usadas en el inventario, para autocompletar.
+function clasesExistentes() {
+  return Array.from(new Set(estado.materiales.map((m) => (m.clase || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
+function filaMaterialHtml(m, clase) {
+  return `
+    <tr data-fila="${m.id}" title="Doble clic para mas opciones">
       <td class="codigo-cel">${esc(m.codigo || '-')}</td>
       <td>${esc(m.nombre)}${esBajoStock(m) ? '<span class="badge-bajo">STOCK BAJO</span>' : ''}</td>
-      <td><span class="chip">${esc(m.categoria || 'Sin clasificar')}</span></td>
+      <td><span class="chip">${esc(clase)}</span></td>
       <td class="der ${esBajoStock(m) ? 'cant-bajo' : ''}">${fmtNum(m.cantidad)}</td>
       <td>${esc(m.unidad)}</td>
       <td class="der">${m.minimo ? fmtNum(m.minimo) : '-'}</td>
       <td>${esc(m.ubicacion || '-')}</td>
       <td class="cen"><div class="acciones-cel">
         <button class="btn-icon" title="Registrar movimiento" data-mov="${m.id}">⇄</button>
+        <button class="btn-icon" title="Duplicar" data-duplicar="${m.id}">⧉</button>
         <button class="btn-icon" title="Editar" data-editar="${m.id}">✎</button>
         <button class="btn-icon peligro" title="Eliminar" data-eliminar="${m.id}">🗑</button>
       </div></td>
-    </tr>`).join('');
-  $('#cuerpo-inventario').querySelectorAll('[data-editar]').forEach((b) => b.addEventListener('click', () => modalMaterial(b.dataset.editar)));
-  $('#cuerpo-inventario').querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', () => confirmarEliminar(b.dataset.eliminar)));
-  $('#cuerpo-inventario').querySelectorAll('[data-mov]').forEach((b) => b.addEventListener('click', () => modalMovimiento(b.dataset.mov)));
+    </tr>`;
+}
+function renderInventario() {
+  if (!$('#cuerpo-inventario')) return;
+  const lista = materialesFiltrados();
+  $('#inv-vacio').hidden = estado.materiales.length !== 0;
+
+  // Agrupar por Tipo (categoria) y, dentro, por Clase.
+  const porTipo = {};
+  for (const m of lista) {
+    const tipo = m.categoria || 'Sin clasificar';
+    const clase = (m.clase || '').trim() || 'Sin clase';
+    porTipo[tipo] = porTipo[tipo] || {};
+    (porTipo[tipo][clase] = porTipo[tipo][clase] || []).push(m);
+  }
+  const tipos = Object.keys(porTipo).sort((a, b) => a.localeCompare(b));
+
+  let html = '';
+  for (const tipo of tipos) {
+    const clases = Object.keys(porTipo[tipo]).sort((a, b) => a.localeCompare(b));
+    const totalTipo = clases.reduce((s, c) => s + porTipo[tipo][c].length, 0);
+    html += `<tr class="inv-tipo"><td colspan="8">▦ ${esc(tipo)} <span class="conteo">(${totalTipo})</span></td></tr>`;
+    for (const clase of clases) {
+      const mats = porTipo[tipo][clase].slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+      html += `<tr class="inv-clase"><td colspan="8">${esc(clase)} <span class="conteo">(${mats.length})</span></td></tr>`;
+      html += mats.map((m) => filaMaterialHtml(m, clase)).join('');
+    }
+  }
+
+  const cuerpo = $('#cuerpo-inventario');
+  cuerpo.innerHTML = html;
+  cuerpo.querySelectorAll('[data-editar]').forEach((b) => b.addEventListener('click', () => modalMaterial(b.dataset.editar)));
+  cuerpo.querySelectorAll('[data-eliminar]').forEach((b) => b.addEventListener('click', () => confirmarEliminar(b.dataset.eliminar)));
+  cuerpo.querySelectorAll('[data-mov]').forEach((b) => b.addEventListener('click', () => modalMovimiento(b.dataset.mov)));
+  cuerpo.querySelectorAll('[data-duplicar]').forEach((b) => b.addEventListener('click', () => duplicarMaterial(b.dataset.duplicar)));
+  cuerpo.querySelectorAll('tr[data-fila]').forEach((row) => {
+    row.addEventListener('dblclick', (e) => { if (e.target.closest('button')) return; menuMaterial(row.dataset.fila, e.clientX, e.clientY); });
+  });
 }
 
-function modalMaterial(id) {
+// Menu contextual al hacer doble clic en un material.
+let menuCtxEl = null;
+function cerrarMenuCtx() {
+  if (menuCtxEl) { menuCtxEl.remove(); menuCtxEl = null; document.removeEventListener('click', cerrarMenuCtx); }
+}
+function menuMaterial(id, x, y) {
+  const m = estado.materiales.find((mm) => mm.id === id);
+  if (!m) return;
+  cerrarMenuCtx();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.innerHTML = `
+    <div class="ctx-titulo">${esc(m.nombre)}</div>
+    <button data-accion="mov">⇄ Registrar movimiento</button>
+    <button data-accion="duplicar">⧉ Duplicar</button>
+    <button data-accion="editar">✎ Editar</button>
+    <button data-accion="eliminar" class="peligro">🗑 Eliminar</button>`;
+  document.body.appendChild(menu);
+  menuCtxEl = menu;
+  const px = Math.max(8, Math.min(x, window.innerWidth - menu.offsetWidth - 8));
+  const py = Math.max(8, Math.min(y, window.innerHeight - menu.offsetHeight - 8));
+  menu.style.left = px + 'px';
+  menu.style.top = py + 'px';
+  menu.querySelectorAll('button').forEach((b) => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const a = b.dataset.accion;
+    cerrarMenuCtx();
+    if (a === 'mov') modalMovimiento(id);
+    else if (a === 'duplicar') duplicarMaterial(id);
+    else if (a === 'editar') modalMaterial(id);
+    else if (a === 'eliminar') confirmarEliminar(id);
+  }));
+  setTimeout(() => document.addEventListener('click', cerrarMenuCtx), 0);
+}
+
+// Abre el formulario como material NUEVO, precargado a partir de uno existente.
+function duplicarMaterial(id) {
+  const m = estado.materiales.find((x) => x.id === id);
+  if (!m) return;
+  modalMaterial(null, {
+    codigo: '', nombre: (m.nombre || '') + ' (copia)', categoria: m.categoria,
+    clase: m.clase || '', unidad: m.unidad, minimo: m.minimo, ubicacion: m.ubicacion, nota: m.nota, cantidad: ''
+  });
+}
+
+function modalMaterial(id, prefill) {
   const m = id ? estado.materiales.find((x) => x.id === id) : null;
-  abrirModal(m ? 'Editar material' : 'Nuevo material', `
+  const b = m || prefill || {};
+  const editando = !!m;
+  const listaClases = clasesExistentes();
+  abrirModal(editando ? 'Editar material' : (prefill ? 'Duplicar material' : 'Nuevo material'), `
     <div class="form-grid">
-      <div class="campo"><label>Codigo</label><input id="f-codigo" value="${esc(m ? m.codigo : '')}" placeholder="Opcional" /></div>
-      <div class="campo"><label>Unidad de medida</label><select id="f-unidad">${opcionesSelect(UNIDADES, m ? m.unidad : 'unidad')}</select></div>
-      <div class="campo full"><label>Nombre del material *</label><input id="f-nombre" value="${esc(m ? m.nombre : '')}" placeholder="Ej: Cable THHN #12 AWG" /></div>
-      <div class="campo full"><label>Categoria</label><select id="f-categoria">${opcionesSelect(CATEGORIAS, m ? m.categoria : 'Sin clasificar')}</select></div>
-      <div class="campo"><label>Cantidad inicial (opcional)</label><input id="f-cantidad" type="number" step="any" min="0" placeholder="0" value="${m ? m.cantidad : ''}" /></div>
-      <div class="campo"><label>Stock minimo (alerta)</label><input id="f-minimo" type="number" step="any" min="0" value="${m ? (m.minimo || 0) : 0}" /></div>
-      <div class="campo full"><label>Ubicacion en almacen</label><input id="f-ubicacion" value="${esc(m ? m.ubicacion : '')}" placeholder="Ej: Estante A-3" /></div>
-      <div class="campo full"><label>Nota</label><textarea id="f-nota" placeholder="Opcional">${esc(m ? m.nota : '')}</textarea></div>
+      <div class="campo"><label>Codigo</label><input id="f-codigo" value="${esc(b.codigo || '')}" placeholder="Opcional" /></div>
+      <div class="campo"><label>Unidad de medida</label><select id="f-unidad">${opcionesSelect(UNIDADES, b.unidad || 'unidad')}</select></div>
+      <div class="campo full"><label>Nombre del material *</label><input id="f-nombre" value="${esc(b.nombre || '')}" placeholder="Ej: Cable THHN #12 AWG" /></div>
+      <div class="campo"><label>Tipo (categoria)</label><select id="f-categoria">${opcionesSelect(CATEGORIAS, b.categoria || 'Sin clasificar')}</select></div>
+      <div class="campo"><label>Clase (subgrupo)</label>
+        <input id="f-clase" list="lista-clases" value="${esc(b.clase || '')}" placeholder="Ej: Herramientas manuales" autocomplete="off" />
+        <datalist id="lista-clases">${listaClases.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+      </div>
+      <div class="campo"><label>Cantidad inicial (opcional)</label><input id="f-cantidad" type="number" step="any" min="0" placeholder="0" value="${b.cantidad != null ? b.cantidad : ''}" /></div>
+      <div class="campo"><label>Stock minimo (alerta)</label><input id="f-minimo" type="number" step="any" min="0" value="${b.minimo != null ? b.minimo : 0}" /></div>
+      <div class="campo full"><label>Ubicacion en almacen</label><input id="f-ubicacion" value="${esc(b.ubicacion || '')}" placeholder="Ej: Estante A-3" /></div>
+      <div class="campo full"><label>Nota</label><textarea id="f-nota" placeholder="Opcional">${esc(b.nota || '')}</textarea></div>
     </div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="m-cancelar">Cancelar</button>
-      <button class="btn-primary" id="m-guardar">${m ? 'Guardar cambios' : 'Agregar material'}</button>
+      ${editando ? '' : '<button class="btn-ghost" id="m-guardar-otro">Guardar y agregar otro</button>'}
+      <button class="btn-primary" id="m-guardar">${editando ? 'Guardar cambios' : 'Agregar material'}</button>
     </div>`);
-  $('#m-cancelar').addEventListener('click', cerrarModal);
-  $('#m-guardar').addEventListener('click', async () => {
-    const datos = {
-      codigo: $('#f-codigo').value.trim(), nombre: $('#f-nombre').value.trim(),
-      categoria: $('#f-categoria').value, cantidad: $('#f-cantidad').value,
-      unidad: $('#f-unidad').value, minimo: $('#f-minimo').value,
-      ubicacion: $('#f-ubicacion').value.trim(), nota: $('#f-nota').value.trim()
-    };
+
+  const leerDatos = () => ({
+    codigo: $('#f-codigo').value.trim(), nombre: $('#f-nombre').value.trim(),
+    categoria: $('#f-categoria').value, clase: $('#f-clase').value.trim(),
+    cantidad: $('#f-cantidad').value, unidad: $('#f-unidad').value, minimo: $('#f-minimo').value,
+    ubicacion: $('#f-ubicacion').value.trim(), nota: $('#f-nota').value.trim()
+  });
+  const guardar = async (cerrar) => {
+    const datos = leerDatos();
     if (!datos.nombre) { toast('El nombre del material es obligatorio', 'error'); return; }
     try {
       if (m) { await actualizarMaterial(m.id, datos); toast('Material actualizado', 'ok'); }
       else { await agregarMaterial(datos); toast('Material agregado', 'ok'); }
-      cerrarModal();
+      if (cerrar) { cerrarModal(); return; }
+      // "Guardar y agregar otro": conserva tipo/clase/unidad/ubicacion; limpia lo demas.
+      $('#f-codigo').value = '';
+      $('#f-nombre').value = '';
+      $('#f-cantidad').value = '';
+      const dl = $('#lista-clases');
+      if (dl) dl.innerHTML = clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
+      $('#f-nombre').focus();
     } catch (e) { toast('Error: ' + e.message, 'error'); }
-  });
+  };
+
+  $('#m-cancelar').addEventListener('click', cerrarModal);
+  $('#m-guardar').addEventListener('click', () => guardar(true));
+  if ($('#m-guardar-otro')) $('#m-guardar-otro').addEventListener('click', () => guardar(false));
 }
 
 function confirmarEliminar(id) {

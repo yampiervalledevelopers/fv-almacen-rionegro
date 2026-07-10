@@ -68,6 +68,7 @@ export async function agregarMaterial(datos) {
     codigo: datos.codigo || '',
     nombre: datos.nombre || '',
     categoria: datos.categoria || 'Sin clasificar',
+    clase: datos.clase || '',
     cantidad: Number(datos.cantidad) || 0,
     unidad: datos.unidad || 'unidad',
     minimo: Number(datos.minimo) || 0,
@@ -81,7 +82,7 @@ export async function agregarMaterial(datos) {
 
 export async function actualizarMaterial(id, cambios) {
   const limpio = {};
-  ['codigo', 'nombre', 'categoria', 'unidad', 'ubicacion', 'nota'].forEach((k) => {
+  ['codigo', 'nombre', 'categoria', 'clase', 'unidad', 'ubicacion', 'nota'].forEach((k) => {
     if (cambios[k] !== undefined) limpio[k] = cambios[k];
   });
   ['cantidad', 'minimo'].forEach((k) => {
