@@ -362,4 +362,50 @@ export async function eliminarOrden(orden, movimientosLigados, idsMaterialesAjus
   await batch.commit();
 }
 
+/* ---------------- Kits (plantillas de materiales) ---------------- */
+
+const COL_KITS = 'kits';
+
+function limpiarItemsKit(items) {
+  return (items || [])
+    .filter((it) => it.materialId && (Number(it.cantidad) || 0) > 0)
+    .map((it) => ({
+      materialId: it.materialId,
+      materialNombre: it.materialNombre || '',
+      cantidad: Number(it.cantidad) || 0,
+      unidad: it.unidad || 'unidad'
+    }));
+}
+
+export function escucharKits(callback, onError) {
+  const q = query(collection(db, COL_KITS), orderBy('nombre'));
+  return onSnapshot(q, (snap) => {
+    const items = [];
+    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+    callback(items);
+  }, (err) => { if (onError) onError(err); });
+}
+
+export async function agregarKit(kit) {
+  const ref = await addDoc(collection(db, COL_KITS), {
+    nombre: kit.nombre || '',
+    items: limpiarItemsKit(kit.items),
+    creado: serverTimestamp(),
+    actualizado: serverTimestamp()
+  });
+  return ref.id;
+}
+
+export async function actualizarKit(id, kit) {
+  await updateDoc(doc(db, COL_KITS, id), {
+    nombre: kit.nombre || '',
+    items: limpiarItemsKit(kit.items),
+    actualizado: serverTimestamp()
+  });
+}
+
+export async function eliminarKit(id) {
+  await deleteDoc(doc(db, COL_KITS, id));
+}
+
 export { db };

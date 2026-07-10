@@ -14,7 +14,8 @@ import {
   escucharMateriales, agregarMaterial, actualizarMaterial, eliminarMaterial,
   importarMateriales, registrarMovimiento, escucharMovimientos, obtenerMovimientos,
   registrarOrden, recibirOrden, escucharOrdenes,
-  eliminarMovimiento, eliminarOrden
+  eliminarMovimiento, eliminarOrden,
+  escucharKits, agregarKit, actualizarKit, eliminarKit
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -25,8 +26,10 @@ const estado = {
   materiales: [],
   movimientos: [],
   ordenes: [],
+  kits: [],
   itemsImportados: [],
   itemsOrden: [],
+  itemsKit: [],
   desuscribir: []
 };
 
@@ -166,6 +169,8 @@ function inyectarExtras() {
   .mat-picker .mat-filtro { font-size:12px; padding:7px 9px; }
   .orden-aviso { background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35); color:#c9f0d8; border-radius:8px; padding:9px 12px; font-size:12.5px; margin-bottom:12px; }
   .link-btn { background:none; border:none; color:#4da3ff; cursor:pointer; text-decoration:underline; font-size:12.5px; padding:0; }
+  .kit-cargar { display:flex; gap:8px; margin:0 0 10px; }
+  .kit-cargar select { flex:1; min-width:0; }
   .tipo-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
   .tipo-badge.salida { background:rgba(255,84,112,0.15); color:#ff9db0; }
   .tipo-badge.entrada { background:rgba(46,204,113,0.15); color:#7ee6a8; }
@@ -213,13 +218,18 @@ function inyectarExtras() {
   btnConsumo.className = 'menu-item';
   btnConsumo.dataset.vista = 'consumo';
   btnConsumo.innerHTML = '<span class="ic">▪</span> Consumo x contrato';
+  const btnKits = document.createElement('button');
+  btnKits.className = 'menu-item';
+  btnKits.dataset.vista = 'kits';
+  btnKits.innerHTML = '<span class="ic">📦</span> Kits';
   if (menu && itemMov) {
-    // Insertar en orden: Movimientos -> Ordenes -> Responsables -> Consumo
+    // Insertar en orden: Movimientos -> Ordenes -> Kits -> Responsables -> Consumo
     itemMov.insertAdjacentElement('afterend', btnConsumo);
     itemMov.insertAdjacentElement('afterend', btnResp);
+    itemMov.insertAdjacentElement('afterend', btnKits);
     itemMov.insertAdjacentElement('afterend', btnOrdenes);
   } else if (menu) {
-    menu.appendChild(btnOrdenes); menu.appendChild(btnResp); menu.appendChild(btnConsumo);
+    menu.appendChild(btnOrdenes); menu.appendChild(btnKits); menu.appendChild(btnResp); menu.appendChild(btnConsumo);
   }
 
   // ---- Vistas nuevas ----
@@ -284,7 +294,23 @@ function inyectarExtras() {
       </table>
       <div id="cons-vacio" class="vacio">Elige un contrato o frente para ver el consumo de materiales.</div>
     </div>`;
-  if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); cont.appendChild(vistaConsumo); }
+  const vistaKits = document.createElement('section');
+  vistaKits.className = 'vista';
+  vistaKits.id = 'vista-kits';
+  vistaKits.hidden = true;
+  vistaKits.innerHTML = `
+    <div class="barra-acciones">
+      <button class="btn-primary" id="btn-nuevo-kit">+ Nuevo kit</button>
+    </div>
+    <div class="mov-hint">💡 Un kit es un grupo de materiales que sueles despachar juntos (ej. "Kit herramientas"). Al crear una orden puedes cargarlo con un clic.</div>
+    <div class="panel sin-pad">
+      <table class="tabla">
+        <thead><tr><th>Kit</th><th class="der">Materiales</th><th class="cen">Acciones</th></tr></thead>
+        <tbody id="cuerpo-kits"></tbody>
+      </table>
+      <div id="kits-vacio" class="vacio" hidden>Aun no hay kits. Crea uno para despachar grupos de materiales de una.</div>
+    </div>`;
+  if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); cont.appendChild(vistaConsumo); cont.appendChild(vistaKits); }
 
   // ---- Area de impresion ----
   const area = document.createElement('div');
@@ -445,7 +471,7 @@ alCambiarSesion((usuario) => {
     $('#app').hidden = true;
     estado.desuscribir.forEach((fn) => { try { fn(); } catch (e) {} });
     estado.desuscribir = [];
-    estado.materiales = []; estado.movimientos = []; estado.ordenes = [];
+    estado.materiales = []; estado.movimientos = []; estado.ordenes = []; estado.kits = [];
   }
 });
 
@@ -467,6 +493,11 @@ function iniciarSuscripciones() {
     estado.ordenes = items;
     renderOrdenes();
   }, (err) => console.error(err)));
+
+  estado.desuscribir.push(escucharKits((items) => {
+    estado.kits = items;
+    renderKits();
+  }, (err) => console.error(err)));
 }
 
 window.addEventListener('online', () => { $('#estado-conexion').classList.remove('offline'); $('#estado-conexion').innerHTML = '<span class="dot"></span> Conectado'; });
@@ -478,6 +509,7 @@ window.addEventListener('offline', () => { $('#estado-conexion').classList.add('
 const TITULOS = {
   dashboard: 'Panel general', inventario: 'Inventario', movimientos: 'Movimientos',
   ordenes: 'Ordenes', responsables: 'Responsables', consumo: 'Consumo por contrato / frente',
+  kits: 'Kits (plantillas de materiales)',
   importar: 'Importar PDF', reportes: 'Reportes PDF', acerca: 'Acerca de'
 };
 function activarNavegacion() {
@@ -1153,6 +1185,10 @@ function modalOrden(tipo, precarga) {
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
     </div>
     <label style="display:block;font-size:12px;color:var(--texto-dim);margin:14px 0 6px;font-weight:600">Materiales</label>
+    ${estado.kits.length ? `<div class="kit-cargar">
+      <select id="o-kit"><option value="">— Elegir un kit —</option>${estado.kits.map((k) => `<option value="${k.id}">${esc(k.nombre)} (${(k.items || []).length})</option>`).join('')}</select>
+      <button type="button" class="btn-ghost" id="o-cargar-kit">📦 Cargar kit</button>
+    </div>` : ''}
     <div class="orden-items" id="orden-items"></div>
     <button class="btn-ghost orden-add" id="o-add">＋ Agregar material</button>
     <div class="orden-total" id="o-total"></div>
@@ -1217,6 +1253,21 @@ function modalOrden(tipo, precarga) {
 
   // "Empezar de nuevo": descarta el borrador y reabre limpio.
   if ($('#o-nuevo')) $('#o-nuevo').addEventListener('click', () => { limpiarBorradorOrden(tipo); cerrarModal(); modalOrden(tipo); });
+
+  // Cargar un kit: agrega sus materiales a la orden (sin borrar lo ya puesto).
+  if ($('#o-cargar-kit')) $('#o-cargar-kit').addEventListener('click', () => {
+    const kit = estado.kits.find((k) => k.id === $('#o-kit').value);
+    if (!kit) { toast('Elige un kit de la lista', 'error'); return; }
+    const nuevos = (kit.items || [])
+      .filter((it) => estado.materiales.some((m) => m.id === it.materialId))
+      .map((it) => ({ _id: Date.now() + Math.random(), materialId: it.materialId, cantidad: it.cantidad, _filtro: '' }));
+    if (nuevos.length === 0) { toast('Los materiales de este kit ya no existen en el inventario', 'error'); return; }
+    estado.itemsOrden = estado.itemsOrden.filter((it) => it.materialId || (it.cantidad !== '' && it.cantidad != null));
+    estado.itemsOrden = estado.itemsOrden.concat(nuevos);
+    if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' });
+    render(); persistir();
+    toast('Kit "' + kit.nombre + '" cargado', 'ok');
+  });
 
   $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '' }); render(); persistir(); });
   $('#o-cancelar').addEventListener('click', cerrarModal);
@@ -1330,6 +1381,122 @@ function confirmarEliminarOrden(orden) {
       toast('Orden eliminada', 'ok');
       cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Si, eliminar'; }
+  });
+}
+
+/* ==================================================================
+   KITS (plantillas de materiales, editables por el usuario)
+   ================================================================== */
+function renderKits() {
+  if (!$('#cuerpo-kits')) return;
+  $('#kits-vacio').hidden = estado.kits.length !== 0;
+  $('#cuerpo-kits').innerHTML = estado.kits.map((k) => {
+    const resumen = (k.items || []).map((it) => esc(it.materialNombre) + ' (' + fmtNum(it.cantidad) + ')').join(', ');
+    return `
+    <tr>
+      <td><b>${esc(k.nombre)}</b><div style="font-size:11.5px;color:var(--texto-mute);margin-top:3px">${resumen || 'Sin materiales'}</div></td>
+      <td class="der">${(k.items || []).length}</td>
+      <td class="cen"><div class="acciones-cel">
+        <button class="btn-icon" title="Usar en una salida" data-usar-kit="${k.id}">📤</button>
+        <button class="btn-icon" title="Editar" data-editar-kit="${k.id}">✎</button>
+        <button class="btn-icon peligro" title="Eliminar" data-del-kit="${k.id}">🗑</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+  $('#cuerpo-kits').querySelectorAll('[data-editar-kit]').forEach((b) => b.addEventListener('click', () => modalKit(b.dataset.editarKit)));
+  $('#cuerpo-kits').querySelectorAll('[data-del-kit]').forEach((b) => b.addEventListener('click', () => confirmarEliminarKit(b.dataset.delKit)));
+  $('#cuerpo-kits').querySelectorAll('[data-usar-kit]').forEach((b) => b.addEventListener('click', () => usarKitEnSalida(b.dataset.usarKit)));
+}
+
+// Abre una nueva orden de salida precargada con los materiales del kit.
+function usarKitEnSalida(kitId) {
+  const kit = estado.kits.find((k) => k.id === kitId);
+  if (!kit) return;
+  const items = (kit.items || [])
+    .filter((it) => estado.materiales.some((m) => m.id === it.materialId))
+    .map((it) => ({ materialId: it.materialId, cantidad: it.cantidad }));
+  if (items.length === 0) { toast('Los materiales de este kit ya no existen en el inventario', 'error'); return; }
+  modalOrden('salida', { frente: '', proveedor: '', responsable: '', nota: '', items });
+}
+
+function modalKit(id) {
+  if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
+  const kit = id ? estado.kits.find((k) => k.id === id) : null;
+  estado.itemsKit = (kit && kit.items && kit.items.length)
+    ? kit.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }))
+    : [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
+
+  abrirModal(kit ? 'Editar kit' : 'Nuevo kit', `
+    <div class="campo full" style="margin-bottom:12px"><label>Nombre del kit *</label>
+      <input id="k-nombre" value="${esc(kit ? kit.nombre : '')}" placeholder="Ej: Kit herramientas basico" /></div>
+    <label style="display:block;font-size:12px;color:var(--texto-dim);margin:6px 0 6px;font-weight:600">Materiales del kit</label>
+    <div class="orden-items" id="kit-items"></div>
+    <button class="btn-ghost orden-add" id="k-add">＋ Agregar material</button>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="k-cancelar">Cancelar</button>
+      <button class="btn-primary" id="k-guardar">${kit ? 'Guardar cambios' : 'Crear kit'}</button>
+    </div>`, '640px');
+
+  const render = () => {
+    const contK = $('#kit-items');
+    contK.innerHTML = estado.itemsKit.map((it) => `
+      <div class="orden-item-row" data-row="${it._id}">
+        <div class="mat-picker">
+          <input type="text" class="mat-filtro" placeholder="🔎 Escribe para filtrar (nombre, codigo o categoria)" data-campo="filtro" value="${esc(it._filtro || '')}" />
+          <select data-campo="materialId">${opcionesMaterialAgrupadas(it.materialId, it._filtro)}</select>
+        </div>
+        <input type="number" step="any" min="0" placeholder="Cantidad" data-campo="cantidad" value="${it.cantidad}" />
+        <button class="btn-icon peligro" data-quitar="${it._id}" title="Quitar">✕</button>
+      </div>`).join('');
+    contK.querySelectorAll('.orden-item-row').forEach((row) => {
+      const rid = Number(row.dataset.row);
+      const item = estado.itemsKit.find((x) => x._id === rid);
+      const selEl = row.querySelector('select[data-campo="materialId"]');
+      const filtroEl = row.querySelector('.mat-filtro');
+      const cantEl = row.querySelector('input[data-campo="cantidad"]');
+      filtroEl.addEventListener('input', () => { item._filtro = filtroEl.value; selEl.innerHTML = opcionesMaterialAgrupadas(item.materialId, item._filtro); });
+      selEl.addEventListener('change', () => { item.materialId = selEl.value; });
+      cantEl.addEventListener('input', () => { item.cantidad = cantEl.value; });
+      row.querySelector('[data-quitar]').addEventListener('click', () => {
+        estado.itemsKit = estado.itemsKit.filter((x) => x._id !== rid);
+        if (estado.itemsKit.length === 0) estado.itemsKit.push({ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' });
+        render();
+      });
+    });
+  };
+  render();
+
+  $('#k-add').addEventListener('click', () => { estado.itemsKit.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '' }); render(); });
+  $('#k-cancelar').addEventListener('click', cerrarModal);
+  $('#k-guardar').addEventListener('click', async () => {
+    const nombre = $('#k-nombre').value.trim();
+    if (!nombre) { toast('Ponle un nombre al kit', 'error'); return; }
+    const items = estado.itemsKit
+      .filter((it) => it.materialId && Number(it.cantidad) > 0)
+      .map((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return { materialId: it.materialId, materialNombre: m ? m.nombre : '', cantidad: Number(it.cantidad), unidad: m ? m.unidad : 'unidad' }; });
+    if (items.length === 0) { toast('Agrega al menos un material con cantidad', 'error'); return; }
+    const btn = $('#k-guardar'); btn.disabled = true; btn.textContent = 'Guardando...';
+    try {
+      if (kit) { await actualizarKit(kit.id, { nombre, items }); toast('Kit actualizado', 'ok'); }
+      else { await agregarKit({ nombre, items }); toast('Kit creado', 'ok'); }
+      cerrarModal();
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = kit ? 'Guardar cambios' : 'Crear kit'; }
+  });
+}
+
+function confirmarEliminarKit(id) {
+  const k = estado.kits.find((x) => x.id === id);
+  if (!k) return;
+  abrirModal('Eliminar kit', `
+    <p style="color:var(--texto-dim);line-height:1.6">Vas a eliminar el kit <b style="color:#fff">${esc(k.nombre)}</b>. Esto NO afecta el inventario ni las ordenes ya generadas.</p>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="dk-cancelar">Cancelar</button>
+      <button class="btn-primary" id="dk-ok" style="background:linear-gradient(135deg,#ff5470,#c0392b);color:#fff">Si, eliminar</button>
+    </div>`);
+  $('#dk-cancelar').addEventListener('click', cerrarModal);
+  $('#dk-ok').addEventListener('click', async () => {
+    try { await eliminarKit(id); toast('Kit eliminado', 'ok'); cerrarModal(); }
+    catch (e) { toast('Error: ' + e.message, 'error'); }
   });
 }
 
@@ -1681,6 +1848,7 @@ $('#btn-nuevo-material').addEventListener('click', () => modalMaterial(null));
 $('#buscar-mov').addEventListener('input', renderMovimientos);
 $('#filtro-tipo-mov').addEventListener('change', renderMovimientos);
 $('#btn-nuevo-mov').addEventListener('click', () => modalMovimiento(null));
+if ($('#btn-nuevo-kit')) $('#btn-nuevo-kit').addEventListener('click', () => modalKit(null));
 
 $$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalOrden(b.dataset.nuevaOrden)));
 $('#sel-responsable').addEventListener('change', renderResponsable);
