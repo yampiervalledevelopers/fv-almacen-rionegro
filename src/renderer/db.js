@@ -408,4 +408,28 @@ export async function eliminarKit(id) {
   await deleteDoc(doc(db, COL_KITS, id));
 }
 
+/* ---------------- Categorias (tipos personalizados) ---------------- */
+
+const COL_CATEGORIAS = 'categorias';
+
+export function escucharCategorias(callback, onError) {
+  const q = query(collection(db, COL_CATEGORIAS), orderBy('nombre'));
+  return onSnapshot(q, (snap) => {
+    const items = [];
+    snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+    callback(items);
+  }, (err) => { if (onError) onError(err); });
+}
+
+export async function agregarCategoria(nombre) {
+  const n = String(nombre || '').trim();
+  if (!n) throw new Error('El nombre de la categoria no puede estar vacio.');
+  const ref = await addDoc(collection(db, COL_CATEGORIAS), { nombre: n, creado: serverTimestamp() });
+  return ref.id;
+}
+
+export async function eliminarCategoria(id) {
+  await deleteDoc(doc(db, COL_CATEGORIAS, id));
+}
+
 export { db };
