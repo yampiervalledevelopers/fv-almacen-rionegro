@@ -15,7 +15,8 @@ import {
   importarMateriales, registrarMovimiento, escucharMovimientos, obtenerMovimientos,
   registrarOrden, recibirOrden, escucharOrdenes,
   eliminarMovimiento, eliminarOrden,
-  escucharKits, agregarKit, actualizarKit, eliminarKit
+  escucharKits, agregarKit, actualizarKit, eliminarKit,
+  escucharCategorias, agregarCategoria, eliminarCategoria
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -27,6 +28,7 @@ const estado = {
   movimientos: [],
   ordenes: [],
   kits: [],
+  categorias: [],
   itemsImportados: [],
   itemsOrden: [],
   itemsKit: [],
@@ -195,6 +197,10 @@ function inyectarExtras() {
   tr.inv-tipo:hover > td, tr.inv-clase:hover > td { filter:brightness(1.15); }
   tr.inv-tipo .caret, tr.inv-clase .caret { display:inline-block; transition:transform .15s ease; color:var(--texto-mute); font-size:11px; margin-right:2px; }
   tr.inv-tipo.abierto .caret, tr.inv-clase.abierto .caret { transform:rotate(90deg); }
+  tr.inv-vacio-grupo > td { color:var(--texto-mute); font-size:12px; font-style:italic; padding:8px 12px 8px 26px; }
+  .cat-lista { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow:auto; }
+  .cat-item { display:flex; align-items:center; justify-content:space-between; gap:10px; background:rgba(255,255,255,0.03); border-radius:8px; padding:8px 12px; font-size:13px; }
+  .cat-base { font-size:10.5px; color:var(--texto-mute); border:1px solid rgba(255,255,255,0.12); border-radius:5px; padding:2px 7px; }
   .conteo { color:var(--texto-mute); font-weight:400; font-size:11.5px; }
   .ctx-menu { position:fixed; z-index:1000; background:#0f1830; border:1px solid rgba(255,255,255,0.12); border-radius:10px; padding:6px; box-shadow:0 12px 30px rgba(0,0,0,0.5); min-width:210px; }
   .ctx-menu .ctx-titulo { font-size:11.5px; color:var(--texto-mute); padding:6px 10px 8px; border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -355,6 +361,16 @@ function inyectarExtras() {
     tablaInv.parentElement.insertBefore(hintInv, tablaInv);
   }
 
+  // ---- Boton "Nueva categoria" junto a "Nuevo material" ----
+  const btnNuevoMat = $('#btn-nuevo-material');
+  if (btnNuevoMat) {
+    const btnCat = document.createElement('button');
+    btnCat.className = 'btn-ghost';
+    btnCat.id = 'btn-nueva-categoria';
+    btnCat.innerHTML = '🏷 Nueva categoria';
+    btnNuevoMat.insertAdjacentElement('afterend', btnCat);
+  }
+
   // ---- Boton "Nueva orden" en la barra de movimientos ----
   const barraMov = $('#btn-nuevo-mov');
   if (barraMov) {
@@ -475,7 +491,7 @@ alCambiarSesion((usuario) => {
     $('#app').hidden = true;
     estado.desuscribir.forEach((fn) => { try { fn(); } catch (e) {} });
     estado.desuscribir = [];
-    estado.materiales = []; estado.movimientos = []; estado.ordenes = []; estado.kits = [];
+    estado.materiales = []; estado.movimientos = []; estado.ordenes = []; estado.kits = []; estado.categorias = [];
   }
 });
 
@@ -501,6 +517,11 @@ function iniciarSuscripciones() {
   estado.desuscribir.push(escucharKits((items) => {
     estado.kits = items;
     renderKits();
+  }, (err) => console.error(err)));
+
+  estado.desuscribir.push(escucharCategorias((items) => {
+    estado.categorias = items;
+    renderInventario(); llenarFiltroCategorias(); renderListaCategorias();
   }, (err) => console.error(err)));
 }
 
@@ -595,7 +616,9 @@ function llenarFiltroCategorias() {
   const sel = $('#filtro-categoria');
   if (!sel) return;
   const actual = sel.value;
-  const cats = Array.from(new Set(estado.materiales.map((m) => m.categoria || 'Sin clasificar'))).sort();
+  const set = new Set(estado.materiales.map((m) => m.categoria || 'Sin clasificar'));
+  estado.categorias.forEach((c) => { if ((c.nombre || '').trim()) set.add(c.nombre.trim()); });
+  const cats = Array.from(set).sort((a, b) => a.localeCompare(b));
   sel.innerHTML = '<option value="">Todas las categorias</option>' + cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   sel.value = actual;
 }
@@ -617,7 +640,51 @@ function clasesExistentes() {
 function categoriasExistentes() {
   const s = new Set(CATEGORIAS);
   estado.materiales.forEach((m) => { if ((m.categoria || '').trim()) s.add(m.categoria.trim()); });
+  estado.categorias.forEach((c) => { if ((c.nombre || '').trim()) s.add(c.nombre.trim()); });
   return Array.from(s).sort((a, b) => a.localeCompare(b));
+}
+
+// Pinta la lista de categorias dentro del modal de categorias (si esta abierto).
+function renderListaCategorias() {
+  const cont = $('#cat-lista');
+  if (!cont) return;
+  const all = categoriasExistentes();
+  cont.innerHTML = all.map((nombre) => {
+    const cat = estado.categorias.find((c) => (c.nombre || '').trim() === nombre);
+    return `<div class="cat-item"><span>${esc(nombre)}</span>${cat
+      ? `<button class="btn-icon peligro" title="Eliminar categoria" data-del-cat="${cat.id}">🗑</button>`
+      : '<span class="cat-base">base</span>'}</div>`;
+  }).join('');
+  cont.querySelectorAll('[data-del-cat]').forEach((b) => b.addEventListener('click', async () => {
+    try { await eliminarCategoria(b.dataset.delCat); toast('Categoria eliminada', 'ok'); }
+    catch (e) { toast('Error: ' + e.message, 'error'); }
+  }));
+}
+
+// Modal para crear (y quitar) categorias personalizadas.
+function modalCategorias() {
+  abrirModal('Categorias (tipos)', `
+    <p style="color:var(--texto-dim);line-height:1.6;margin-bottom:12px">Crea categorias nuevas para clasificar tus materiales (por ejemplo "Cables y Conductores"). Quedan disponibles al crear o editar un material.</p>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input id="cat-nombre" placeholder="Nombre de la nueva categoria" style="flex:1" autocomplete="off" />
+      <button class="btn-primary" id="cat-add">Agregar</button>
+    </div>
+    <label style="display:block;font-size:12px;color:var(--texto-dim);margin-bottom:6px;font-weight:600">Categorias disponibles</label>
+    <div id="cat-lista" class="cat-lista"></div>
+    <div class="modal-acciones"><button class="btn-ghost" id="cat-cerrar">Cerrar</button></div>`);
+  renderListaCategorias();
+  const agregar = async () => {
+    const nombre = $('#cat-nombre').value.trim();
+    if (!nombre) { toast('Escribe el nombre de la categoria', 'error'); return; }
+    if (categoriasExistentes().some((c) => c.toLowerCase() === nombre.toLowerCase())) { toast('Esa categoria ya existe', 'error'); return; }
+    const btn = $('#cat-add'); btn.disabled = true;
+    try { await agregarCategoria(nombre); $('#cat-nombre').value = ''; toast('Categoria creada', 'ok'); }
+    catch (e) { toast('Error: ' + e.message, 'error'); }
+    finally { btn.disabled = false; const inp = $('#cat-nombre'); if (inp) inp.focus(); }
+  };
+  $('#cat-add').addEventListener('click', agregar);
+  $('#cat-nombre').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); agregar(); } });
+  $('#cat-cerrar').addEventListener('click', cerrarModal);
 }
 function filaMaterialHtml(m, clase, oculto) {
   return `
@@ -653,6 +720,8 @@ function renderInventario() {
     porTipo[tipo] = porTipo[tipo] || {};
     (porTipo[tipo][clase] = porTipo[tipo][clase] || []).push(m);
   }
+  // Incluir categorias creadas por el usuario aunque no tengan materiales aun.
+  estado.categorias.forEach((c) => { const n = (c.nombre || '').trim(); if (n && !porTipo[n]) porTipo[n] = {}; });
   const tipos = Object.keys(porTipo).sort((a, b) => a.localeCompare(b));
 
   let html = '';
@@ -661,6 +730,9 @@ function renderInventario() {
     const totalTipo = clases.reduce((s, c) => s + porTipo[tipo][c].length, 0);
     const tipoCerrado = invColapsado.tipos.has(tipo);
     html += `<tr class="inv-tipo ${tipoCerrado ? '' : 'abierto'}" data-toggle-tipo="${esc(tipo)}"><td colspan="8"><span class="caret">▸</span> ▦ ${esc(tipo)} <span class="conteo">(${totalTipo})</span></td></tr>`;
+    if (clases.length === 0) {
+      html += `<tr class="inv-vacio-grupo"${tipoCerrado ? ' hidden' : ''}><td colspan="8">Sin materiales todavia en esta categoria.</td></tr>`;
+    }
     for (const clase of clases) {
       const mats = porTipo[tipo][clase].slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
       const cKey = tipo + '||' + clase;
@@ -1883,6 +1955,7 @@ $('#buscar-mov').addEventListener('input', renderMovimientos);
 $('#filtro-tipo-mov').addEventListener('change', renderMovimientos);
 $('#btn-nuevo-mov').addEventListener('click', () => modalMovimiento(null));
 if ($('#btn-nuevo-kit')) $('#btn-nuevo-kit').addEventListener('click', () => modalKit(null));
+if ($('#btn-nueva-categoria')) $('#btn-nueva-categoria').addEventListener('click', modalCategorias);
 
 $$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalOrden(b.dataset.nuevaOrden)));
 $('#sel-responsable').addEventListener('change', renderResponsable);
