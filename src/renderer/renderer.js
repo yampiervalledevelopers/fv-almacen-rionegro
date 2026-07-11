@@ -254,6 +254,7 @@ function inyectarExtras() {
       <button class="btn-primary" data-nueva-orden="entrada">📥 Nueva entrada / pedido</button>
       <button class="btn-primary" data-nueva-orden="devolucion">🔄 Nueva devolucion</button>
     </div>
+    <div class="mov-hint">💡 Haz <b>doble clic</b> en una orden (o clic en la ▸) para desplegar los materiales que la componen.</div>
     <div class="panel sin-pad">
       <table class="tabla" id="tabla-ordenes">
         <thead><tr>
@@ -1118,14 +1119,16 @@ function renderOrdenes() {
   $('#cuerpo-ordenes').innerHTML = estado.ordenes.map((o) => {
     const est = estadoOrden(o);
     const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
+    const contrato = o.contrato || contratoDeFrente(o.frente);
+    const detalle = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td class="der"><b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad || '')}</td></tr>`).join('');
     return `
-    <tr>
-      <td class="codigo-cel">${esc(o.numero)}</td>
+    <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
+      <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
       <td><span class="estado-badge ${est}">${etiquetaEstado(est)}</span></td>
       <td>${esc(o.responsable || '-')}</td>
-      <td>${o.frente ? (esc(o.frente) + ((o.contrato || contratoDeFrente(o.frente)) ? ` <span style="color:var(--texto-mute)">(${esc(o.contrato || contratoDeFrente(o.frente))})</span>` : '')) : esc(o.proveedor || '-')}</td>
+      <td>${o.frente ? (esc(o.frente) + (contrato ? ` <span style="color:var(--texto-mute)">(${esc(contrato)})</span>` : '')) : esc(o.proveedor || '-')}</td>
       <td class="der">${(o.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
@@ -1133,8 +1136,30 @@ function renderOrdenes() {
         <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
       </div></td>
+    </tr>
+    <tr class="grupo-detalle" data-key="${o.id}" hidden>
+      <td colspan="8">
+        <table class="tabla-detalle">
+          <thead><tr><th>#</th><th>Material</th><th class="der">Cantidad</th></tr></thead>
+          <tbody>${detalle || '<tr><td colspan="3" style="color:var(--texto-mute)">Sin materiales.</td></tr>'}</tbody>
+        </table>
+        ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}
+      </td>
     </tr>`;
   }).join('');
+  // Expandir / colapsar el detalle con doble clic en la fila (o clic en la ▸).
+  const toggleOrd = (row) => {
+    const det = row.nextElementSibling;
+    if (det && det.classList.contains('grupo-detalle')) {
+      det.hidden = !det.hidden;
+      row.classList.toggle('abierto', !det.hidden);
+    }
+  };
+  $('#cuerpo-ordenes').querySelectorAll('tr.grupo-row').forEach((row) => {
+    row.addEventListener('dblclick', (e) => { if (e.target.closest('button')) return; toggleOrd(row); });
+    const caret = row.querySelector('.caret');
+    if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggleOrd(row); });
+  });
   $('#cuerpo-ordenes').querySelectorAll('[data-print-orden]').forEach((b) =>
     b.addEventListener('click', () => {
       const o = estado.ordenes.find((x) => x.id === b.dataset.printOrden);
