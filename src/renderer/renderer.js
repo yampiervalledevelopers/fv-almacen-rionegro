@@ -327,7 +327,7 @@ function inyectarExtras() {
     <div class="mov-hint">💡 Un kit es un grupo de materiales que sueles despachar juntos (ej. "Kit herramientas"). Al crear una orden puedes cargarlo con un clic.</div>
     <div class="panel sin-pad">
       <table class="tabla">
-        <thead><tr><th>Kit</th><th class="der">Materiales</th><th class="cen">Acciones</th></tr></thead>
+        <thead><tr><th>Kit</th><th class="der">Materiales / Herramientas</th><th class="cen">Acciones</th></tr></thead>
         <tbody id="cuerpo-kits"></tbody>
       </table>
       <div id="kits-vacio" class="vacio" hidden>Aun no hay kits. Crea uno para despachar grupos de materiales de una.</div>
@@ -1428,7 +1428,7 @@ function modalOrden(tipo, precarga) {
       <div class="campo"><label>Responsable</label><input id="o-responsable" placeholder="Nombre del responsable" /></div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
     </div>
-    <label style="display:block;font-size:12px;color:var(--texto-dim);margin:14px 0 6px;font-weight:600">Materiales</label>
+    <label style="display:block;font-size:12px;color:var(--texto-dim);margin:14px 0 6px;font-weight:600">Materiales / Herramientas</label>
     ${estado.kits.length ? `<div class="kit-cargar">
       <select id="o-kit"><option value="">— Elegir un kit —</option>${estado.kits.map((k) => `<option value="${k.id}">${esc(k.nombre)} (${(k.items || []).length})</option>`).join('')}</select>
       <button type="button" class="btn-ghost" id="o-cargar-kit">📦 Cargar kit</button>
@@ -1635,21 +1635,51 @@ function renderKits() {
   if (!$('#cuerpo-kits')) return;
   $('#kits-vacio').hidden = estado.kits.length !== 0;
   $('#cuerpo-kits').innerHTML = estado.kits.map((k) => {
-    const resumen = (k.items || []).map((it) => esc(it.materialNombre) + ' (' + fmtNum(it.cantidad) + ')').join(', ');
+    const detalle = (k.items || []).map((it) => `<tr><td>${esc(it.materialNombre)}</td><td class="der"><b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad || '')}</td></tr>`).join('');
     return `
-    <tr>
-      <td><b>${esc(k.nombre)}</b><div style="font-size:11.5px;color:var(--texto-mute);margin-top:3px">${resumen || 'Sin materiales'}</div></td>
+    <tr class="grupo-row" data-key="${k.id}" title="Doble clic para ver el contenido">
+      <td><span class="caret">▸</span> <b>${esc(k.nombre)}</b></td>
       <td class="der">${(k.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
         <button class="btn-icon" title="Usar en una salida" data-usar-kit="${k.id}">📤</button>
+        <button class="btn-icon" title="Duplicar" data-duplicar-kit="${k.id}">⧉</button>
         <button class="btn-icon" title="Editar" data-editar-kit="${k.id}">✎</button>
         <button class="btn-icon peligro" title="Eliminar" data-del-kit="${k.id}">🗑</button>
       </div></td>
+    </tr>
+    <tr class="grupo-detalle" data-key="${k.id}" hidden>
+      <td colspan="3">
+        <table class="tabla-detalle">
+          <thead><tr><th>Material / Herramienta</th><th class="der">Cantidad</th></tr></thead>
+          <tbody>${detalle || '<tr><td colspan="2" style="color:var(--texto-mute)">Sin materiales.</td></tr>'}</tbody>
+        </table>
+      </td>
     </tr>`;
   }).join('');
-  $('#cuerpo-kits').querySelectorAll('[data-editar-kit]').forEach((b) => b.addEventListener('click', () => modalKit(b.dataset.editarKit)));
-  $('#cuerpo-kits').querySelectorAll('[data-del-kit]').forEach((b) => b.addEventListener('click', () => confirmarEliminarKit(b.dataset.delKit)));
-  $('#cuerpo-kits').querySelectorAll('[data-usar-kit]').forEach((b) => b.addEventListener('click', () => usarKitEnSalida(b.dataset.usarKit)));
+  const cuerpo = $('#cuerpo-kits');
+  const toggleKit = (row) => {
+    const det = row.nextElementSibling;
+    if (det && det.classList.contains('grupo-detalle')) { det.hidden = !det.hidden; row.classList.toggle('abierto', !det.hidden); }
+  };
+  cuerpo.querySelectorAll('tr.grupo-row').forEach((row) => {
+    row.addEventListener('dblclick', (e) => { if (e.target.closest('button')) return; toggleKit(row); });
+    const caret = row.querySelector('.caret');
+    if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggleKit(row); });
+  });
+  cuerpo.querySelectorAll('[data-editar-kit]').forEach((b) => b.addEventListener('click', () => modalKit(b.dataset.editarKit)));
+  cuerpo.querySelectorAll('[data-del-kit]').forEach((b) => b.addEventListener('click', () => confirmarEliminarKit(b.dataset.delKit)));
+  cuerpo.querySelectorAll('[data-usar-kit]').forEach((b) => b.addEventListener('click', () => usarKitEnSalida(b.dataset.usarKit)));
+  cuerpo.querySelectorAll('[data-duplicar-kit]').forEach((b) => b.addEventListener('click', () => duplicarKit(b.dataset.duplicarKit)));
+}
+
+// Abre el modal de kit como NUEVO, precargado con el contenido de otro kit.
+function duplicarKit(id) {
+  const k = estado.kits.find((x) => x.id === id);
+  if (!k) return;
+  modalKit(null, {
+    nombre: (k.nombre || '') + ' (copia)',
+    items: (k.items || []).map((it) => ({ materialId: it.materialId, cantidad: it.cantidad }))
+  });
 }
 
 // Abre una nueva orden de salida precargada con los materiales del kit.
@@ -1663,17 +1693,18 @@ function usarKitEnSalida(kitId) {
   modalOrden('salida', { frente: '', proveedor: '', responsable: '', nota: '', items });
 }
 
-function modalKit(id) {
+function modalKit(id, prefill) {
   if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
   const kit = id ? estado.kits.find((k) => k.id === id) : null;
-  estado.itemsKit = (kit && kit.items && kit.items.length)
-    ? kit.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }))
+  const base = kit || prefill || null;
+  estado.itemsKit = (base && base.items && base.items.length)
+    ? base.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }))
     : [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
 
-  abrirModal(kit ? 'Editar kit' : 'Nuevo kit', `
+  abrirModal(kit ? 'Editar kit' : (prefill ? 'Duplicar kit' : 'Nuevo kit'), `
     <div class="campo full" style="margin-bottom:12px"><label>Nombre del kit *</label>
-      <input id="k-nombre" value="${esc(kit ? kit.nombre : '')}" placeholder="Ej: Kit herramientas basico" /></div>
-    <label style="display:block;font-size:12px;color:var(--texto-dim);margin:6px 0 6px;font-weight:600">Materiales del kit</label>
+      <input id="k-nombre" value="${esc(base ? base.nombre : '')}" placeholder="Ej: Kit herramientas basico" /></div>
+    <label style="display:block;font-size:12px;color:var(--texto-dim);margin:6px 0 6px;font-weight:600">Materiales / Herramientas del kit</label>
     <div class="orden-items" id="kit-items"></div>
     <button class="btn-ghost orden-add" id="k-add">＋ Agregar material</button>
     <div class="modal-acciones">
