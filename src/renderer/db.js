@@ -261,39 +261,90 @@ export async function registrarOrden(orden) {
   };
 }
 
-export async function recibirOrden(orden, recibidos, usuario) {
-  const items = (recibidos || []).filter((it) => it.materialId && (Number(it.cantidad) || 0) > 0);
-  if (items.length === 0) throw new Error('Ingresa al menos una cantidad recibida.');
-
+// Recibe un pedido. recepcion = { lineas: [{materialId, materialNombre, unidad,
+// pedido, recibido}], adiciones: [{nuevo, materialId?, materialNombre, unidad,
+// cantidad, categoria?, clase?, codigo?}] }. Suma al stock lo recibido y las
+// adiciones, crea materiales nuevos si aplica y guarda un resumen de recepcion.
+export async function recibirOrden(orden, recepcion, usuario) {
+  const lineas = (recepcion && recepcion.lineas) || [];
+  const adiciones = (recepcion && recepcion.adiciones) || [];
   const fecha = serverTimestamp();
   const batch = writeBatch(db);
 
-  for (const it of items) {
-    batch.update(doc(db, COL_MATERIALES, it.materialId), {
-      cantidad: increment(Number(it.cantidad) || 0),
-      actualizado: fecha
-    });
+  const incrementos = {};   // materialId existente -> cantidad a sumar
+  const movimientos = [];   // { materialId, materialNombre, cantidad, unidad, nota }
+  const regLineas = [];
+  const regAdiciones = [];
+  let hayFalta = false;
+  let hayAdicion = false;
+
+  // Lineas del pedido (pedido vs recibido)
+  for (const ln of lineas) {
+    const pedido = Number(ln.pedido) || 0;
+    const recibido = Number(ln.recibido) || 0;
+    if (recibido < pedido) hayFalta = true;
+    if (recibido > pedido) hayAdicion = true;
+    if (recibido > 0 && ln.materialId) {
+      incrementos[ln.materialId] = (incrementos[ln.materialId] || 0) + recibido;
+      movimientos.push({ materialId: ln.materialId, materialNombre: ln.materialNombre || '', cantidad: recibido, unidad: ln.unidad || 'unidad', nota: 'Recepcion de pedido ' + (orden.numero || '') });
+    }
+    regLineas.push({ materialId: ln.materialId || '', materialNombre: ln.materialNombre || '', unidad: ln.unidad || 'unidad', pedido, recibido });
+  }
+
+  // Adiciones (llego de mas o material nuevo)
+  for (const ad of adiciones) {
+    const cantidad = Number(ad.cantidad) || 0;
+    if (cantidad <= 0) continue;
+    hayAdicion = true;
+    if (ad.nuevo) {
+      const matRef = doc(collection(db, COL_MATERIALES));
+      batch.set(matRef, {
+        codigo: ad.codigo || '',
+        nombre: ad.materialNombre || '',
+        categoria: ad.categoria || 'Sin clasificar',
+        clase: ad.clase || '',
+        cantidad: cantidad,
+        unidad: ad.unidad || 'unidad',
+        minimo: 0,
+        ubicacion: '',
+        nota: 'Creado en recepcion de pedido ' + (orden.numero || ''),
+        creado: fecha,
+        actualizado: fecha
+      });
+      movimientos.push({ materialId: matRef.id, materialNombre: ad.materialNombre || '', cantidad, unidad: ad.unidad || 'unidad', nota: 'Material nuevo en recepcion ' + (orden.numero || '') });
+      regAdiciones.push({ materialId: matRef.id, materialNombre: ad.materialNombre || '', unidad: ad.unidad || 'unidad', cantidad, nuevo: true });
+    } else if (ad.materialId) {
+      incrementos[ad.materialId] = (incrementos[ad.materialId] || 0) + cantidad;
+      movimientos.push({ materialId: ad.materialId, materialNombre: ad.materialNombre || '', cantidad, unidad: ad.unidad || 'unidad', nota: 'Adicion en recepcion ' + (orden.numero || '') });
+      regAdiciones.push({ materialId: ad.materialId, materialNombre: ad.materialNombre || '', unidad: ad.unidad || 'unidad', cantidad, nuevo: false });
+    }
+  }
+
+  if (Object.keys(incrementos).length === 0 && regAdiciones.length === 0) {
+    throw new Error('Ingresa al menos una cantidad recibida.');
+  }
+
+  // Sumar al stock (agrupado por material para no escribir dos veces el mismo doc)
+  for (const matId in incrementos) {
+    batch.update(doc(db, COL_MATERIALES, matId), { cantidad: increment(incrementos[matId]), actualizado: fecha });
+  }
+  // Registrar movimientos de entrada
+  for (const mv of movimientos) {
     const movRef = doc(collection(db, COL_MOVIMIENTOS));
     batch.set(movRef, {
-      tipo: 'entrada',
-      materialId: it.materialId,
-      materialNombre: it.materialNombre || '',
-      cantidad: Number(it.cantidad) || 0,
-      unidad: it.unidad || 'unidad',
-      frente: '',
-      proveedor: orden.proveedor || '',
-      responsable: orden.responsable || '',
-      nota: 'Recepcion de pedido ' + (orden.numero || ''),
-      usuario: usuario || '',
-      fecha,
-      ordenId: orden.id,
-      ordenNumero: orden.numero || ''
+      tipo: 'entrada', materialId: mv.materialId, materialNombre: mv.materialNombre,
+      cantidad: mv.cantidad, unidad: mv.unidad, frente: '', contrato: '',
+      proveedor: orden.proveedor || '', responsable: orden.responsable || '',
+      nota: mv.nota, usuario: usuario || '', fecha, ordenId: orden.id, ordenNumero: orden.numero || ''
     });
   }
 
+  const resumen = (hayFalta && hayAdicion) ? 'mixto' : hayFalta ? 'falta' : hayAdicion ? 'adicion' : 'exacto';
+
   batch.update(doc(db, COL_ORDENES, orden.id), {
     estado: 'recibido',
-    fechaRecepcion: fecha
+    fechaRecepcion: fecha,
+    recepcion: { usuario: usuario || '', resumen, lineas: regLineas, adiciones: regAdiciones }
   });
 
   await batch.commit();

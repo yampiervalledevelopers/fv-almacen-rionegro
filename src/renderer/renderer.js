@@ -32,6 +32,7 @@ const estado = {
   itemsImportados: [],
   itemsOrden: [],
   itemsKit: [],
+  itemsAdicion: [],
   desuscribir: []
 };
 
@@ -181,6 +182,16 @@ function inyectarExtras() {
   .estado-badge.pendiente { background:rgba(255,176,32,0.18); color:#ffd08a; }
   .estado-badge.recibido { background:rgba(46,204,113,0.15); color:#7ee6a8; }
   .estado-badge.completado { background:rgba(120,160,220,0.15); color:#9fc2ef; }
+  .estado-badge.falta { background:rgba(255,84,112,0.18); color:#ff9db0; }
+  .estado-badge.adicion { background:rgba(46,204,113,0.15); color:#7ee6a8; }
+  .estado-badge.mixto { background:rgba(255,176,32,0.18); color:#ffd08a; }
+  .rec-sub { display:block; font-size:12px; color:var(--texto-dim); font-weight:700; margin:0 0 8px; }
+  .rec-row { display:grid; grid-template-columns:1fr 130px; gap:10px; align-items:center; margin-bottom:8px; }
+  .rec-row .rec-mat { align-self:center; }
+  .adic-row { margin-bottom:10px; }
+  .adic-linea { display:grid; grid-template-columns:1fr 120px 42px; gap:8px; align-items:end; }
+  .adic-nuevo { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; padding:10px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; }
+  .rec-adic-tit { font-size:12px; color:var(--texto-dim); margin:10px 0 6px; font-weight:600; }
   tr.grupo-row { cursor:pointer; }
   tr.grupo-row:hover { background:rgba(255,255,255,0.03); }
   tr.grupo-row .caret { display:inline-block; transition:transform .15s ease; color:var(--texto-mute); font-size:11px; margin-right:4px; }
@@ -1113,6 +1124,45 @@ function estadoOrden(o) {
 function etiquetaEstado(est) {
   return est === 'pendiente' ? 'Pendiente' : est === 'recibido' ? 'Recibido' : 'Completado';
 }
+// Etiqueta y clase del estado, considerando el resumen de recepcion.
+function estadoOrdenInfo(o) {
+  const est = estadoOrden(o);
+  const r = o.recepcion && o.recepcion.resumen;
+  if (r === 'falta') return { cls: 'falta', label: 'Recibido / falta' };
+  if (r === 'adicion') return { cls: 'adicion', label: 'Recibido / adicion' };
+  if (r === 'mixto') return { cls: 'mixto', label: 'Recibido / falta + adicion' };
+  return { cls: est, label: etiquetaEstado(est) };
+}
+// Contenido del detalle desplegable de una orden.
+function detalleOrdenHtml(o) {
+  if (o.recepcion) {
+    const rec = o.recepcion;
+    const filas = (rec.lineas || []).map((l) => {
+      const dif = (Number(l.recibido) || 0) - (Number(l.pedido) || 0);
+      const badge = dif < 0 ? `<span style="color:#ff9db0">Falta ${fmtNum(-dif)}</span>`
+        : dif > 0 ? `<span style="color:#7ee6a8">+${fmtNum(dif)}</span>`
+        : '<span style="color:var(--texto-mute)">OK</span>';
+      return `<tr><td>${esc(l.materialNombre)}</td><td class="der">${fmtNum(l.pedido)} ${esc(l.unidad || '')}</td><td class="der"><b>${fmtNum(l.recibido)}</b></td><td>${badge}</td></tr>`;
+    }).join('');
+    const adic = (rec.adiciones || []).map((a) =>
+      `<tr><td>${esc(a.materialNombre)}${a.nuevo ? ' <span class="cat-base">nuevo</span>' : ''}</td><td class="der"><b>${fmtNum(a.cantidad)}</b> ${esc(a.unidad || '')}</td></tr>`).join('');
+    return `
+      <table class="tabla-detalle">
+        <thead><tr><th>Material</th><th class="der">Pedido</th><th class="der">Recibido</th><th>Estado</th></tr></thead>
+        <tbody>${filas || '<tr><td colspan="4" style="color:var(--texto-mute)">Sin materiales.</td></tr>'}</tbody>
+      </table>
+      ${adic ? `<div class="rec-adic-tit">Adiciones (llegaron de mas o materiales nuevos)</div>
+      <table class="tabla-detalle"><thead><tr><th>Material</th><th class="der">Cantidad</th></tr></thead><tbody>${adic}</tbody></table>` : ''}
+      ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}`;
+  }
+  const detalle = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td class="der"><b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad || '')}</td></tr>`).join('');
+  return `
+    <table class="tabla-detalle">
+      <thead><tr><th>#</th><th>Material</th><th class="der">Cantidad</th></tr></thead>
+      <tbody>${detalle || '<tr><td colspan="3" style="color:var(--texto-mute)">Sin materiales.</td></tr>'}</tbody>
+    </table>
+    ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}`;
+}
 function renderOrdenes() {
   if (!$('#cuerpo-ordenes')) return;
   $('#ord-vacio').hidden = estado.ordenes.length !== 0;
@@ -1120,13 +1170,13 @@ function renderOrdenes() {
     const est = estadoOrden(o);
     const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
     const contrato = o.contrato || contratoDeFrente(o.frente);
-    const detalle = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td class="der"><b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad || '')}</td></tr>`).join('');
+    const info = estadoOrdenInfo(o);
     return `
     <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
-      <td><span class="estado-badge ${est}">${etiquetaEstado(est)}</span></td>
+      <td><span class="estado-badge ${info.cls}">${info.label}</span></td>
       <td>${esc(o.responsable || '-')}</td>
       <td>${o.frente ? (esc(o.frente) + (contrato ? ` <span style="color:var(--texto-mute)">(${esc(contrato)})</span>` : '')) : esc(o.proveedor || '-')}</td>
       <td class="der">${(o.items || []).length}</td>
@@ -1138,13 +1188,7 @@ function renderOrdenes() {
       </div></td>
     </tr>
     <tr class="grupo-detalle" data-key="${o.id}" hidden>
-      <td colspan="8">
-        <table class="tabla-detalle">
-          <thead><tr><th>#</th><th>Material</th><th class="der">Cantidad</th></tr></thead>
-          <tbody>${detalle || '<tr><td colspan="3" style="color:var(--texto-mute)">Sin materiales.</td></tr>'}</tbody>
-        </table>
-        ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}
-      </td>
+      <td colspan="8">${detalleOrdenHtml(o)}</td>
     </tr>`;
   }).join('');
   // Expandir / colapsar el detalle con doble clic en la fila (o clic en la ▸).
@@ -1203,33 +1247,102 @@ function repetirOrden(orden) {
 
 function modalRecibir(orden) {
   const items = orden.items || [];
+  estado.itemsAdicion = [];
   abrirModal('Recibir pedido — ' + orden.numero, `
-    <p style="color:var(--texto-dim);margin-bottom:14px;line-height:1.5">Verifica lo que llego al almacen. Ajusta las cantidades si llego diferente; al confirmar se sumaran al stock.</p>
+    <p style="color:var(--texto-dim);margin-bottom:12px;line-height:1.5">Ajusta la cantidad <b>recibida</b> de cada material (puede llegar menos o mas de lo pedido). Si llego algo que no estaba en el pedido, agregalo en <b>Adiciones</b>; alli tambien puedes crear un material nuevo.</p>
+
+    <label class="rec-sub">Materiales pedidos</label>
     <div id="recibir-items">
       ${items.map((it, i) => `
-        <div class="orden-item-row" data-i="${i}" style="grid-template-columns:1fr 130px">
-          <div style="align-self:center">${esc(it.materialNombre)} <span style="color:var(--texto-mute)">(pedido: ${fmtNum(it.cantidad)} ${esc(it.unidad)})</span></div>
-          <input type="number" step="any" min="0" value="${it.cantidad}" data-recib="${i}" />
+        <div class="rec-row" data-i="${i}">
+          <div class="rec-mat">${esc(it.materialNombre)} <span style="color:var(--texto-mute)">(pedido: ${fmtNum(it.cantidad)} ${esc(it.unidad)})</span></div>
+          <input type="number" step="any" min="0" value="${it.cantidad}" data-recib="${i}" title="Cantidad recibida" />
         </div>`).join('')}
     </div>
+
+    <label class="rec-sub" style="margin-top:16px">Adiciones (llego de mas o material nuevo)</label>
+    <div class="orden-items" id="adic-items"></div>
+    <button class="btn-ghost orden-add" id="adic-add">＋ Agregar adicion</button>
+
     <div class="modal-acciones">
       <button class="btn-ghost" id="rec-cancelar">Cancelar</button>
       <button class="btn-primary" id="rec-ok">Confirmar recepcion</button>
-    </div>`, '600px');
+    </div>
+    <datalist id="lista-categorias-rec">${categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+    <datalist id="lista-clases-rec">${clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>`, '660px');
+
+  const opcionesAdic = (sel, filtro) =>
+    '<option value="">— Elige del inventario —</option><option value="__nuevo__"' + (sel === '__nuevo__' ? ' selected' : '') + '>➕ Material nuevo...</option>' +
+    opcionesMaterialAgrupadas(sel, filtro, true);
+
+  const renderAdic = () => {
+    const cont = $('#adic-items');
+    cont.innerHTML = estado.itemsAdicion.map((it) => {
+      const nuevo = it.materialId === '__nuevo__';
+      return `
+      <div class="adic-row" data-row="${it._id}">
+        <div class="adic-linea">
+          <div class="mat-picker">
+            <input type="text" class="mat-filtro" placeholder="🔎 Filtrar inventario" data-campo="filtro" value="${esc(it._filtro || '')}"${nuevo ? ' style="display:none"' : ''} />
+            <select data-campo="materialId">${opcionesAdic(it.materialId, it._filtro)}</select>
+          </div>
+          <input type="number" step="any" min="0" placeholder="Cantidad" data-campo="cantidad" value="${it.cantidad}" />
+          <button class="btn-icon peligro" data-quitar="${it._id}" title="Quitar">✕</button>
+        </div>
+        <div class="adic-nuevo"${nuevo ? '' : ' hidden'}>
+          <input type="text" data-campo="nuevoNombre" placeholder="Nombre del material nuevo *" value="${esc(it.nuevoNombre || '')}" />
+          <select data-campo="nuevoUnidad">${opcionesSelect(UNIDADES, it.nuevoUnidad || 'unidad')}</select>
+          <input type="text" list="lista-categorias-rec" data-campo="nuevoCategoria" placeholder="Tipo (categoria)" value="${esc(it.nuevoCategoria || '')}" />
+          <input type="text" list="lista-clases-rec" data-campo="nuevoClase" placeholder="Clase (opcional)" value="${esc(it.nuevoClase || '')}" />
+        </div>
+      </div>`;
+    }).join('');
+    cont.querySelectorAll('.adic-row').forEach((row) => {
+      const id = Number(row.dataset.row);
+      const item = estado.itemsAdicion.find((x) => x._id === id);
+      const selEl = row.querySelector('select[data-campo="materialId"]');
+      const filtroEl = row.querySelector('.mat-filtro');
+      if (filtroEl) filtroEl.addEventListener('input', () => { item._filtro = filtroEl.value; selEl.innerHTML = opcionesAdic(item.materialId, item._filtro); });
+      selEl.addEventListener('change', () => { item.materialId = selEl.value; renderAdic(); });
+      row.querySelector('input[data-campo="cantidad"]').addEventListener('input', (e) => { item.cantidad = e.target.value; });
+      const nn = row.querySelector('[data-campo="nuevoNombre"]'); if (nn) nn.addEventListener('input', (e) => { item.nuevoNombre = e.target.value; });
+      const nu = row.querySelector('[data-campo="nuevoUnidad"]'); if (nu) nu.addEventListener('change', (e) => { item.nuevoUnidad = e.target.value; });
+      const nc = row.querySelector('[data-campo="nuevoCategoria"]'); if (nc) nc.addEventListener('input', (e) => { item.nuevoCategoria = e.target.value; });
+      const ncl = row.querySelector('[data-campo="nuevoClase"]'); if (ncl) ncl.addEventListener('input', (e) => { item.nuevoClase = e.target.value; });
+      row.querySelector('[data-quitar]').addEventListener('click', () => { estado.itemsAdicion = estado.itemsAdicion.filter((x) => x._id !== id); renderAdic(); });
+    });
+  };
+  renderAdic();
+
+  $('#adic-add').addEventListener('click', () => {
+    estado.itemsAdicion.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '', nuevoNombre: '', nuevoUnidad: 'unidad', nuevoCategoria: '', nuevoClase: '' });
+    renderAdic();
+  });
   $('#rec-cancelar').addEventListener('click', cerrarModal);
   $('#rec-ok').addEventListener('click', async () => {
-    const recibidos = items.map((it, i) => {
+    const lineas = items.map((it, i) => {
       const inp = $('#recibir-items [data-recib="' + i + '"]');
-      return {
-        materialId: it.materialId, materialNombre: it.materialNombre, unidad: it.unidad,
-        cantidad: parseFloat(inp ? inp.value : 0) || 0
-      };
+      return { materialId: it.materialId, materialNombre: it.materialNombre, unidad: it.unidad, pedido: Number(it.cantidad) || 0, recibido: parseFloat(inp ? inp.value : 0) || 0 };
     });
-    if (!recibidos.some((r) => r.cantidad > 0)) { toast('Ingresa al menos una cantidad recibida', 'error'); return; }
+    const adiciones = [];
+    for (const it of estado.itemsAdicion) {
+      const cantidad = parseFloat(it.cantidad) || 0;
+      if (cantidad <= 0) continue;
+      if (it.materialId === '__nuevo__') {
+        const nombre = (it.nuevoNombre || '').trim();
+        if (!nombre) { toast('Ponle nombre al material nuevo de las adiciones', 'error'); return; }
+        adiciones.push({ nuevo: true, materialNombre: nombre, unidad: it.nuevoUnidad || 'unidad', cantidad, categoria: (it.nuevoCategoria || '').trim() || 'Sin clasificar', clase: (it.nuevoClase || '').trim() });
+      } else if (it.materialId) {
+        const m = estado.materiales.find((x) => x.id === it.materialId);
+        adiciones.push({ nuevo: false, materialId: it.materialId, materialNombre: m ? m.nombre : '', unidad: m ? m.unidad : 'unidad', cantidad });
+      }
+    }
+    const total = lineas.reduce((s, l) => s + l.recibido, 0) + adiciones.reduce((s, a) => s + a.cantidad, 0);
+    if (total <= 0) { toast('Ingresa al menos una cantidad recibida', 'error'); return; }
     const btn = $('#rec-ok'); btn.disabled = true; btn.textContent = 'Guardando...';
     try {
-      await recibirOrden(orden, recibidos, nombreUsuario());
-      toast('Pedido recibido y sumado al stock', 'ok');
+      await recibirOrden(orden, { lineas, adiciones }, nombreUsuario());
+      toast('Recepcion registrada y stock actualizado', 'ok');
       cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar recepcion'; }
   });
@@ -1266,7 +1379,7 @@ function limpiarBorradorOrden(tipo) {
 // Opciones del <select> de material, agrupadas por categoria (optgroup) y
 // filtradas por el texto escrito. El material ya seleccionado se conserva
 // visible aunque no coincida con el filtro.
-function opcionesMaterialAgrupadas(sel, filtro) {
+function opcionesMaterialAgrupadas(sel, filtro, sinPlaceholder) {
   const q = normTxt(filtro);
   const grupos = {};
   for (const m of estado.materiales) {
@@ -1278,7 +1391,7 @@ function opcionesMaterialAgrupadas(sel, filtro) {
     (grupos[c] = grupos[c] || []).push(m);
   }
   const cats = Object.keys(grupos).sort((a, b) => a.localeCompare(b));
-  let html = '<option value="">— Elige material —</option>';
+  let html = sinPlaceholder ? '' : '<option value="">— Elige material —</option>';
   for (const c of cats) {
     html += `<optgroup label="${esc(c)}">`;
     grupos[c].sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
@@ -1819,6 +1932,37 @@ function docOrden(o, almacenista) {
   const t = TIPOS[o.tipo] || TIPOS.salida;
   const esProv = t.campo === 'proveedor';
   const contrato = o.contrato || contratoDeFrente(o.frente);
+
+  // Acta de recepcion: cuando el pedido ya fue recibido (pedido vs recibido).
+  if (o.recepcion) {
+    const rec = o.recepcion;
+    const filas = (rec.lineas || []).map((l, i) => {
+      const dif = (Number(l.recibido) || 0) - (Number(l.pedido) || 0);
+      const est = dif < 0 ? ('Falta ' + fmtNum(-dif)) : dif > 0 ? ('Llego +' + fmtNum(dif)) : 'Completo';
+      return `<tr><td>${i + 1}</td><td>${esc(l.materialNombre)}</td><td style="text-align:right">${fmtNum(l.pedido)}</td><td style="text-align:right">${fmtNum(l.recibido)}</td><td>${esc(l.unidad || '')}</td><td>${est}</td></tr>`;
+    }).join('');
+    const adic = (rec.adiciones || []).map((a, i) => `<tr><td>${i + 1}</td><td>${esc(a.materialNombre)}${a.nuevo ? ' (nuevo)' : ''}</td><td style="text-align:right">${fmtNum(a.cantidad)}</td><td>${esc(a.unidad || '')}</td></tr>`).join('');
+    const resumenTxt = { exacto: 'Recibido completo', falta: 'Recibido con faltantes', adicion: 'Recibido con adiciones', mixto: 'Recibido con faltantes y adiciones' }[rec.resumen || 'exacto'];
+    return `<div class="doc">
+      ${cabeceraDoc()}
+      <h2 class="doc-titulo">ACTA DE RECEPCION DE PEDIDO</h2>
+      <div class="doc-meta">
+        <div><b>N° Pedido:</b> ${esc(o.numero || '-')}</div>
+        <div><b>Fecha del pedido:</b> ${fmtFecha(o.fecha)}</div>
+        <div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>
+        <div><b>Resultado:</b> ${esc(resumenTxt)}</div>
+        <div><b>Responsable:</b> ${esc(o.responsable || '-')}</div>
+      </div>
+      <table class="doc-tabla">
+        <thead><tr><th>#</th><th>Material</th><th style="text-align:right">Pedido</th><th style="text-align:right">Recibido</th><th>Unidad</th><th>Estado</th></tr></thead>
+        <tbody>${filas || '<tr><td colspan="6">Sin materiales.</td></tr>'}</tbody>
+      </table>
+      ${adic ? `<h3 style="font-size:13px;margin:16px 0 6px;color:#0a1a3a">Adiciones (llegaron de mas o materiales nuevos)</h3>
+      <table class="doc-tabla"><thead><tr><th>#</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead><tbody>${adic}</tbody></table>` : ''}
+      ${o.nota ? `<p class="doc-nota"><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
+      ${firmasDoc(almacenista, o.responsable)}
+    </div>`;
+  }
   const metaLugar = esProv
     ? (`<div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>` + (o.frente ? `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente:</b> ${esc(o.frente)}</div>` : ''))
     : `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente de obra:</b> ${esc(o.frente || '-')}</div>`;
