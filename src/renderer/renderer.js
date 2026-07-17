@@ -67,6 +67,11 @@ function contratoDeFrente(frente) {
   for (const c in CONTRATOS) { if (CONTRATOS[c].includes(f)) return c; }
   return '';
 }
+// El contrato REAL se deriva siempre del frente (fuente de verdad). Solo si no
+// hay frente se usa el contrato que quedo guardado. Evita inconsistencias.
+function contratoReal(obj) {
+  return (obj && obj.frente) ? contratoDeFrente(obj.frente) : ((obj && obj.contrato) || '');
+}
 function frenteSelectHtml(id, sel) {
   let h = `<select id="${id}"><option value="">— Sin frente —</option>`;
   for (const c in CONTRATOS) {
@@ -638,7 +643,7 @@ function renderDashboard() {
     if (mv.tipo !== 'salida' && mv.tipo !== 'devolucion') continue;
     if (!mv.frente) continue;
     const q = (Number(mv.cantidad) || 0) * (mv.tipo === 'salida' ? 1 : -1);
-    const contrato = mv.contrato || contratoDeFrente(mv.frente) || 'Sin contrato';
+    const contrato = contratoDeFrente(mv.frente) || 'Sin contrato';
     porContrato[contrato] = (porContrato[contrato] || 0) + q;
     const kf = 'Frente ' + mv.frente;
     porFrente[kf] = (porFrente[kf] || 0) + q;
@@ -971,7 +976,7 @@ function renderMovimientos() {
         g = porOrden[mv.ordenNumero] = {
           key: 'ord-' + mv.ordenNumero, esOrden: true,
           ordenNumero: mv.ordenNumero, ordenId: mv.ordenId || '',
-          tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato,
+          tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: contratoDeFrente(mv.frente),
           proveedor: mv.proveedor, responsable: mv.responsable, usuario: mv.usuario,
           movimientos: []
         };
@@ -983,7 +988,7 @@ function renderMovimientos() {
       grupos.push({
         key: 'mov-' + mv.id, esOrden: false,
         ordenNumero: '', ordenId: '',
-        tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato,
+        tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: contratoDeFrente(mv.frente),
         proveedor: mv.proveedor, responsable: mv.responsable, usuario: mv.usuario,
         movimientos: [mv]
       });
@@ -1226,7 +1231,7 @@ function renderOrdenes() {
   $('#cuerpo-ordenes').innerHTML = estado.ordenes.map((o) => {
     const est = estadoOrden(o);
     const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
-    const contrato = o.contrato || contratoDeFrente(o.frente);
+    const contrato = contratoReal(o);
     const info = estadoOrdenInfo(o);
     return `
     <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
@@ -1869,11 +1874,11 @@ function renderResponsable() {
   for (const mv of lista) {
     if (mv.ordenNumero) {
       let g = porOrden[mv.ordenNumero];
-      if (!g) { g = porOrden[mv.ordenNumero] = { key: 'ord-' + mv.ordenNumero, esOrden: true, ordenNumero: mv.ordenNumero, tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato, proveedor: mv.proveedor, movimientos: [] }; grupos.push(g); }
+      if (!g) { g = porOrden[mv.ordenNumero] = { key: 'ord-' + mv.ordenNumero, esOrden: true, ordenNumero: mv.ordenNumero, tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: contratoDeFrente(mv.frente), proveedor: mv.proveedor, movimientos: [] }; grupos.push(g); }
       g.movimientos.push(mv);
       if (mv.fecha && String(mv.fecha) > String(g.fecha || '')) g.fecha = mv.fecha;
     } else {
-      grupos.push({ key: 'mov-' + mv.id, esOrden: false, ordenNumero: '', tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato, proveedor: mv.proveedor, movimientos: [mv] });
+      grupos.push({ key: 'mov-' + mv.id, esOrden: false, ordenNumero: '', tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: contratoDeFrente(mv.frente), proveedor: mv.proveedor, movimientos: [mv] });
     }
   }
   grupos.sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
@@ -2000,8 +2005,8 @@ function datosConsumo() {
     const dia = (mv.fecha || '').slice(0, 10);
     if (desde && (!dia || dia < desde)) return false;
     if (hasta && dia && dia > hasta) return false;
-    if (f) return mv.frente === f;
-    if (c) return (mv.contrato || contratoDeFrente(mv.frente)) === c;
+    if (f) return String(mv.frente).toUpperCase().trim() === String(f).toUpperCase().trim();
+    if (c) return contratoDeFrente(mv.frente) === c;
     return true;
   });
   const mapa = {};
@@ -2140,7 +2145,7 @@ function firmasDoc(almacenista, responsable) {
 function docOrden(o, almacenista) {
   const t = TIPOS[o.tipo] || TIPOS.salida;
   const esProv = t.campo === 'proveedor';
-  const contrato = o.contrato || contratoDeFrente(o.frente);
+  const contrato = contratoReal(o);
 
   // Acta de recepcion: cuando el pedido ya fue recibido (pedido vs recibido).
   if (o.recepcion) {
