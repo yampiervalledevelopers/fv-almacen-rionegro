@@ -303,11 +303,11 @@ function inyectarExtras() {
       <select id="sel-responsable" class="select" style="min-width:260px"></select>
       <button class="btn-primary" id="btn-imprimir-historial">🖨 Imprimir historial</button>
     </div>
+    <div class="mov-hint">💡 El historial se agrupa por orden. Haz <b>doble clic</b> en una fila (o clic en la ▸) para ver el detalle.</div>
     <div class="panel sin-pad">
       <table class="tabla">
         <thead><tr>
-          <th>Fecha</th><th>Tipo</th><th>Material</th><th class="der">Cantidad</th>
-          <th>Orden</th><th>Frente / Proveedor</th>
+          <th>Fecha</th><th>N° Orden / Material</th><th>Tipo</th><th class="cen">Items</th><th>Frente / Proveedor</th>
         </tr></thead>
         <tbody id="cuerpo-responsable"></tbody>
       </table>
@@ -1103,7 +1103,10 @@ function modalMovimiento(materialId) {
     <div class="form-grid">
       <div class="campo"><label>Cantidad *</label><input id="mv-cantidad" type="number" step="any" min="0" placeholder="0" /></div>
       <div class="campo" id="mv-campo-lugar"></div>
-      <div class="campo full"><label>Responsable</label><input id="mv-responsable" placeholder="Nombre de quien recibe / entrega" /></div>
+      <div class="campo full"><label>Responsable</label>
+        <input id="mv-responsable" list="lista-resp-mov" placeholder="Nombre de quien recibe / entrega" autocomplete="off" />
+        <datalist id="lista-resp-mov">${responsablesExistentes().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+      </div>
       <div class="campo full"><label>Nota</label><input id="mv-nota" placeholder="Opcional" /></div>
     </div>
     <div class="modal-acciones">
@@ -1461,7 +1464,10 @@ function modalOrden(tipo, precarga) {
     <div class="form-grid">
       ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
       <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', base ? (base.frente || '') : '')}</div>
-      <div class="campo"><label>Responsable</label><input id="o-responsable" placeholder="Nombre del responsable" /></div>
+      <div class="campo"><label>Responsable</label>
+        <input id="o-responsable" list="lista-resp-ord" placeholder="Nombre del responsable" autocomplete="off" />
+        <datalist id="lista-resp-ord">${responsablesExistentes().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+      </div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
     </div>
     <label style="display:block;font-size:12px;color:var(--texto-dim);margin:14px 0 6px;font-weight:600">Materiales / Herramientas</label>
@@ -1826,6 +1832,10 @@ function llenarResponsables() {
 function movimientosDeResponsable(nombre) {
   return estado.movimientos.filter((m) => (m.responsable || '').trim() === nombre);
 }
+// Nombres de responsables ya usados (para autocompletar y evitar duplicados).
+function responsablesExistentes() {
+  return Array.from(new Set(estado.movimientos.map((m) => (m.responsable || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+}
 function renderResponsable() {
   const cuerpo = $('#cuerpo-responsable');
   if (!cuerpo) return;
@@ -1833,16 +1843,53 @@ function renderResponsable() {
   if (!nombre) { cuerpo.innerHTML = ''; $('#resp-vacio').hidden = false; $('#resp-vacio').textContent = 'Elige un responsable para ver su historial completo.'; return; }
   const lista = movimientosDeResponsable(nombre);
   $('#resp-vacio').hidden = lista.length !== 0;
-  if (lista.length === 0) $('#resp-vacio').textContent = 'Este responsable no tiene movimientos.';
-  cuerpo.innerHTML = lista.map((mv) => `
-    <tr>
-      <td>${fmtFecha(mv.fecha)}</td>
-      <td><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
-      <td>${esc(mv.materialNombre)}</td>
-      <td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td>
-      <td class="codigo-cel">${esc(mv.ordenNumero || '-')}</td>
-      <td>${esc(mv.frente || mv.proveedor || '-')}</td>
-    </tr>`).join('');
+  if (lista.length === 0) { $('#resp-vacio').textContent = 'Este responsable no tiene movimientos.'; cuerpo.innerHTML = ''; return; }
+
+  // Agrupar por orden (los sueltos quedan como individuales), como en Movimientos.
+  const grupos = [];
+  const porOrden = {};
+  for (const mv of lista) {
+    if (mv.ordenNumero) {
+      let g = porOrden[mv.ordenNumero];
+      if (!g) { g = porOrden[mv.ordenNumero] = { key: 'ord-' + mv.ordenNumero, esOrden: true, ordenNumero: mv.ordenNumero, tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato, proveedor: mv.proveedor, movimientos: [] }; grupos.push(g); }
+      g.movimientos.push(mv);
+      if (mv.fecha && String(mv.fecha) > String(g.fecha || '')) g.fecha = mv.fecha;
+    } else {
+      grupos.push({ key: 'mov-' + mv.id, esOrden: false, ordenNumero: '', tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: mv.contrato, proveedor: mv.proveedor, movimientos: [mv] });
+    }
+  }
+  grupos.sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
+
+  cuerpo.innerHTML = grupos.map((g) => {
+    const lugar = g.frente ? (esc(g.frente) + (g.contrato ? ` <span style="color:var(--texto-mute)">(${esc(g.contrato)})</span>` : '')) : esc(g.proveedor || '-');
+    const idCol = g.esOrden
+      ? `<span class="caret">▸</span> <b>${esc(g.ordenNumero)}</b>`
+      : `<span class="caret">▸</span> <span style="color:var(--texto-mute)">Individual:</span> ${esc((g.movimientos[0] || {}).materialNombre || '-')}`;
+    const detalle = g.movimientos.map((mv) => `<tr><td>${esc(mv.materialNombre)}</td><td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td><td>${esc(mv.nota || '-')}</td></tr>`).join('');
+    return `
+      <tr class="grupo-row" data-key="${g.key}" title="Doble clic para ver el detalle">
+        <td>${fmtFecha(g.fecha)}</td>
+        <td class="codigo-cel">${idCol}</td>
+        <td><span class="tipo-badge ${g.tipo}">${(TIPOS[g.tipo] || {}).label || g.tipo}</span></td>
+        <td class="cen">${g.movimientos.length}</td>
+        <td>${lugar}</td>
+      </tr>
+      <tr class="grupo-detalle" data-key="${g.key}" hidden>
+        <td colspan="5">
+          <table class="tabla-detalle">
+            <thead><tr><th>Material</th><th class="der">Cantidad</th><th>Nota</th></tr></thead>
+            <tbody>${detalle}</tbody>
+          </table>
+        </td>
+      </tr>`;
+  }).join('');
+
+  cuerpo.querySelectorAll('tr.grupo-row').forEach((row) => {
+    const toggle = () => { const det = row.nextElementSibling; if (det && det.classList.contains('grupo-detalle')) { det.hidden = !det.hidden; row.classList.toggle('abierto', !det.hidden); } };
+    row.addEventListener('dblclick', toggle);
+    const caret = row.querySelector('.caret');
+    if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+  });
 }
 
 /* ==================================================================
