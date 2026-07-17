@@ -163,7 +163,8 @@ function inyectarExtras() {
   .gb-val { text-align:right; font-weight:bold; }
   .chk { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--texto-dim); }
   .chk input { width:auto; }
-  .doc { color:#111; font-family: Arial, Helvetica, sans-serif; padding:12px 20px; max-width:820px; margin:0 auto; }
+  .doc { color:#111; font-family: Arial, Helvetica, sans-serif; padding:12px 20px; max-width:820px; margin:0 auto; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  .gb-svg { display:block; width:100%; height:auto; max-width:720px; margin-top:2px; }
   .doc-head { display:flex; align-items:center; gap:16px; border-bottom:3px solid #0d6efd; padding-bottom:12px; }
   .doc-logo { width:88px; height:88px; object-fit:contain; }
   .doc-emp h1 { font-size:22px; margin:0; color:#0a1a3a; }
@@ -1972,9 +1973,24 @@ function graficoConsumoHtml(filas) {
     .filter((x) => x.neto > 0).sort((a, b) => b.neto - a.neto).slice(0, 20);
   if (datos.length === 0) return '';
   const max = Math.max.apply(null, datos.map((x) => x.neto).concat([1]));
-  const barras = datos.map((x) =>
-    `<div class="gb-row"><div class="gb-lab">${esc(x.nombre)}</div><div class="gb-track"><div class="gb-fill" style="width:${(x.neto / max * 100).toFixed(1)}%"></div></div><div class="gb-val">${fmtNum(x.neto)}</div></div>`).join('');
-  return `<div class="grafico-barras"><div class="gb-eje">Grafico: material (Y) · consumo neto (X)</div>${barras}</div>`;
+  // Grafico de barras horizontales en SVG (se imprime como vector, siempre
+  // visible completo). Texto en currentColor: claro en la app, oscuro en PDF.
+  const W = 720, labelW = 200, valW = 56, gap = 6;
+  const barMaxW = W - labelW - valW - gap;
+  const rowH = 22, padY = 8;
+  const H = padY * 2 + datos.length * rowH;
+  const barras = datos.map((x, i) => {
+    const y = padY + i * rowH;
+    const bw = Math.max(2, (x.neto / max) * barMaxW);
+    const nom = x.nombre.length > 32 ? (x.nombre.slice(0, 31) + '…') : x.nombre;
+    return `<text x="0" y="${y + 14}" font-size="11" fill="currentColor">${esc(nom)}</text>`
+      + `<rect x="${labelW}" y="${y + 4}" width="${bw.toFixed(1)}" height="${rowH - 8}" rx="3" fill="#0d6efd"></rect>`
+      + `<text x="${(labelW + bw + 5).toFixed(1)}" y="${y + 14}" font-size="11" font-weight="bold" fill="currentColor">${fmtNum(x.neto)}</text>`;
+  }).join('');
+  return `<div class="grafico-barras">
+    <div class="gb-eje">Grafico: material (Y) · consumo neto (X)</div>
+    <svg class="gb-svg" viewBox="0 0 ${W} ${H}" width="100%" preserveAspectRatio="xMinYMin meet" role="img" aria-label="Grafico de consumo por material">${barras}</svg>
+  </div>`;
 }
 function seccionConsumoHtml(titulo, filas, rangoTxt, conGrafico) {
   if (filas.length === 0) return '';
@@ -2209,7 +2225,20 @@ function imprimirHistorialResponsable() {
   if (!nombre) { toast('Elige un responsable primero', 'error'); return; }
   const lista = movimientosDeResponsable(nombre);
   if (lista.length === 0) { toast('Este responsable no tiene movimientos', 'error'); return; }
-  const filas = lista.map((m) => `<tr><td>${fmtFecha(m.fecha)}</td><td>${(TIPOS[m.tipo] || {}).label || m.tipo}</td><td>${esc(m.materialNombre)}</td><td style="text-align:right">${fmtNum(m.cantidad)} ${esc(m.unidad || '')}</td><td>${esc(m.ordenNumero || '-')}</td><td>${esc(m.frente || m.proveedor || '-')}</td></tr>`).join('');
+  const catDe = (mv) => { const m = estado.materiales.find((x) => x.id === mv.materialId); return m ? m.categoria : ''; };
+  const mats = lista.filter((mv) => !esHerramienta(catDe(mv)));
+  const herr = lista.filter((mv) => esHerramienta(catDe(mv)));
+  const seccion = (titulo, arr) => {
+    if (arr.length === 0) return '';
+    const filas = arr.map((m) => `<tr><td>${fmtFecha(m.fecha)}</td><td>${(TIPOS[m.tipo] || {}).label || m.tipo}</td><td>${esc(m.materialNombre)}</td><td style="text-align:right">${fmtNum(m.cantidad)} ${esc(m.unidad || '')}</td><td>${esc(m.ordenNumero || '-')}</td><td>${esc(m.frente || m.proveedor || '-')}</td></tr>`).join('');
+    return `
+      <h3 class="doc-sub">${esc(titulo)}</h3>
+      <div class="doc-rango">${arr.length} movimiento(s)</div>
+      <table class="doc-tabla">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Orden</th><th>Frente/Prov.</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>`;
+  };
   const html = `<div class="doc">
     ${cabeceraDoc()}
     <h2 class="doc-titulo">HISTORIAL DEL RESPONSABLE</h2>
@@ -2217,11 +2246,10 @@ function imprimirHistorialResponsable() {
       <div><b>Responsable:</b> ${esc(nombre)}</div>
       <div><b>Fecha de emision:</b> ${fmtFecha(new Date().toISOString())}</div>
       <div><b>Total de movimientos:</b> ${lista.length}</div>
+      <div><b>Materiales:</b> ${mats.length} · <b>Herramientas:</b> ${herr.length}</div>
     </div>
-    <table class="doc-tabla">
-      <thead><tr><th>Fecha</th><th>Tipo</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Orden</th><th>Frente/Prov.</th></tr></thead>
-      <tbody>${filas}</tbody>
-    </table>
+    ${seccion('Materiales', mats)}
+    ${seccion('Herramientas', herr)}
     ${firmasDoc(nombreUsuario(), nombre)}
   </div>`;
   imprimir(html, 'Historial_' + nombre);
