@@ -647,6 +647,18 @@ function materialesFiltrados() {
 function clasesExistentes() {
   return Array.from(new Set(estado.materiales.map((m) => (m.clase || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
 }
+// Clases que pertenecen a una categoria (tipo). Si no hay categoria, todas.
+function clasesDeCategoria(cat) {
+  const c = (cat || '').trim().toLowerCase();
+  const s = new Set();
+  estado.materiales.forEach((m) => {
+    if (!c || (m.categoria || '').trim().toLowerCase() === c) {
+      const cl = (m.clase || '').trim();
+      if (cl) s.add(cl);
+    }
+  });
+  return Array.from(s).sort((a, b) => a.localeCompare(b));
+}
 // Categorias (tipos) disponibles: las de la lista base + las ya usadas en el
 // inventario. Permite elegir una existente o escribir una nueva.
 function categoriasExistentes() {
@@ -826,7 +838,7 @@ function modalMaterial(id, prefill) {
   const m = id ? estado.materiales.find((x) => x.id === id) : null;
   const b = m || prefill || {};
   const editando = !!m;
-  const listaClases = clasesExistentes();
+  const listaClases = clasesDeCategoria(b.categoria);
   abrirModal(editando ? 'Editar material' : (prefill ? 'Duplicar material' : 'Nuevo material'), `
     <div class="form-grid">
       <div class="campo"><label>Codigo</label><input id="f-codigo" value="${esc(b.codigo || '')}" placeholder="Opcional" /></div>
@@ -857,6 +869,13 @@ function modalMaterial(id, prefill) {
     cantidad: $('#f-cantidad').value, unidad: $('#f-unidad').value, minimo: $('#f-minimo').value,
     ubicacion: $('#f-ubicacion').value.trim(), nota: $('#f-nota').value.trim()
   });
+  // La lista de clases (subgrupos) depende del Tipo elegido.
+  const refrescarClases = () => {
+    const dl = $('#lista-clases');
+    if (dl) dl.innerHTML = clasesDeCategoria($('#f-categoria').value).map((c) => `<option value="${esc(c)}"></option>`).join('');
+  };
+  if ($('#f-categoria')) { $('#f-categoria').addEventListener('input', refrescarClases); $('#f-categoria').addEventListener('change', refrescarClases); }
+
   const guardar = async (cerrar) => {
     const datos = leerDatos();
     if (!datos.nombre) { toast('El nombre del material es obligatorio', 'error'); return; }
@@ -868,8 +887,7 @@ function modalMaterial(id, prefill) {
       $('#f-codigo').value = '';
       $('#f-nombre').value = '';
       $('#f-cantidad').value = '';
-      const dl = $('#lista-clases');
-      if (dl) dl.innerHTML = clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
+      refrescarClases();
       const dlc = $('#lista-categorias');
       if (dlc) dlc.innerHTML = categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
       $('#f-nombre').focus();
