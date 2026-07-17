@@ -16,7 +16,7 @@ import {
   registrarOrden, recibirOrden, escucharOrdenes,
   eliminarMovimiento, eliminarOrden,
   escucharKits, agregarKit, actualizarKit, eliminarKit,
-  escucharCategorias, agregarCategoria, eliminarCategoria
+  escucharCategorias, agregarCategoria, actualizarCategoria, eliminarCategoria
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -699,12 +699,22 @@ function renderListaCategorias() {
   const all = categoriasExistentes();
   cont.innerHTML = all.map((nombre) => {
     const cat = estado.categorias.find((c) => (c.nombre || '').trim() === nombre);
-    return `<div class="cat-item"><span>${esc(nombre)}</span>${cat
-      ? `<button class="btn-icon peligro" title="Eliminar categoria" data-del-cat="${cat.id}">🗑</button>`
-      : '<span class="cat-base">base</span>'}</div>`;
+    const herr = esHerramienta(nombre);
+    const derecha = cat
+      ? `<label class="chk" title="Marcar/desmarcar como herramienta"><input type="checkbox" data-herr-cat="${cat.id}" ${cat.esHerramienta ? 'checked' : ''} /> herr.</label>
+         <button class="btn-icon peligro" title="Eliminar categoria" data-del-cat="${cat.id}">🗑</button>`
+      : '<span class="cat-base">base</span>';
+    return `<div class="cat-item">
+      <span>${esc(nombre)}${herr ? ' <span class="cat-base">🛠 herramienta</span>' : ''}</span>
+      <div style="display:flex;align-items:center;gap:8px">${derecha}</div>
+    </div>`;
   }).join('');
   cont.querySelectorAll('[data-del-cat]').forEach((b) => b.addEventListener('click', async () => {
     try { await eliminarCategoria(b.dataset.delCat); toast('Categoria eliminada', 'ok'); }
+    catch (e) { toast('Error: ' + e.message, 'error'); }
+  }));
+  cont.querySelectorAll('[data-herr-cat]').forEach((c) => c.addEventListener('change', async () => {
+    try { await actualizarCategoria(c.dataset.herrCat, { esHerramienta: c.checked }); toast(c.checked ? 'Marcada como herramienta' : 'Marcada como material', 'ok'); }
     catch (e) { toast('Error: ' + e.message, 'error'); }
   }));
 }
@@ -713,10 +723,11 @@ function renderListaCategorias() {
 function modalCategorias() {
   abrirModal('Categorias (tipos)', `
     <p style="color:var(--texto-dim);line-height:1.6;margin-bottom:12px">Crea categorias nuevas para clasificar tus materiales (por ejemplo "Cables y Conductores"). Quedan disponibles al crear o editar un material.</p>
-    <div style="display:flex;gap:8px;margin-bottom:16px">
+    <div style="display:flex;gap:8px;margin-bottom:8px">
       <input id="cat-nombre" placeholder="Nombre de la nueva categoria" style="flex:1" autocomplete="off" />
       <button class="btn-primary" id="cat-add">Agregar</button>
     </div>
+    <label class="chk" style="margin-bottom:16px"><input type="checkbox" id="cat-es-herr" /> 🛠 Es herramienta (marca esta categoria como herramienta)</label>
     <label style="display:block;font-size:12px;color:var(--texto-dim);margin-bottom:6px;font-weight:600">Categorias disponibles</label>
     <div id="cat-lista" class="cat-lista"></div>
     <div class="modal-acciones"><button class="btn-ghost" id="cat-cerrar">Cerrar</button></div>`);
@@ -725,8 +736,14 @@ function modalCategorias() {
     const nombre = $('#cat-nombre').value.trim();
     if (!nombre) { toast('Escribe el nombre de la categoria', 'error'); return; }
     if (categoriasExistentes().some((c) => c.toLowerCase() === nombre.toLowerCase())) { toast('Esa categoria ya existe', 'error'); return; }
+    const esHerr = !!(($('#cat-es-herr') || {}).checked);
     const btn = $('#cat-add'); btn.disabled = true;
-    try { await agregarCategoria(nombre); $('#cat-nombre').value = ''; toast('Categoria creada', 'ok'); }
+    try {
+      await agregarCategoria(nombre, esHerr);
+      $('#cat-nombre').value = '';
+      const chk = $('#cat-es-herr'); if (chk) chk.checked = false;
+      toast('Categoria creada', 'ok');
+    }
     catch (e) { toast('Error: ' + e.message, 'error'); }
     finally { btn.disabled = false; const inp = $('#cat-nombre'); if (inp) inp.focus(); }
   };
@@ -1872,7 +1889,14 @@ function llenarFrentesConsumo() {
   if (frentes.includes(fActual)) selF.value = fActual;
 }
 // Una "herramienta" es un material cuya categoria contiene "herramient".
-function esHerramienta(categoria) { return /herramient/i.test(String(categoria || '')); }
+// Es herramienta si el nombre de la categoria contiene "herramient" O si la
+// categoria fue marcada como herramienta por el usuario.
+function esHerramienta(categoria) {
+  const nom = String(categoria || '').trim();
+  if (/herramient/i.test(nom)) return true;
+  const low = nom.toLowerCase();
+  return estado.categorias.some((c) => c.esHerramienta && (c.nombre || '').trim().toLowerCase() === low);
+}
 function fmtFechaCorta(iso) {
   const p = String(iso || '').slice(0, 10).split('-');
   return p.length === 3 ? (p[2] + '/' + p[1] + '/' + p[0]) : (iso || '');

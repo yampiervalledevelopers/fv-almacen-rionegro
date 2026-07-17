@@ -472,11 +472,18 @@ export function escucharCategorias(callback, onError) {
   }, (err) => { if (onError) onError(err); });
 }
 
-export async function agregarCategoria(nombre) {
+export async function agregarCategoria(nombre, esHerramienta) {
   const n = String(nombre || '').trim();
   if (!n) throw new Error('El nombre de la categoria no puede estar vacio.');
-  const ref = await addDoc(collection(db, COL_CATEGORIAS), { nombre: n, creado: serverTimestamp() });
+  const ref = await addDoc(collection(db, COL_CATEGORIAS), { nombre: n, esHerramienta: !!esHerramienta, creado: serverTimestamp() });
   return ref.id;
+}
+
+export async function actualizarCategoria(id, datos) {
+  const cambios = {};
+  if (datos.nombre !== undefined) cambios.nombre = String(datos.nombre).trim();
+  if (datos.esHerramienta !== undefined) cambios.esHerramienta = !!datos.esHerramienta;
+  await updateDoc(doc(db, COL_CATEGORIAS, id), cambios);
 }
 
 export async function eliminarCategoria(id) {
