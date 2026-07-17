@@ -140,11 +140,29 @@ function inyectarExtras() {
   // ---- Estilos nuevos (impresion + componentes) ----
   const css = `
   #print-area { display: none; }
+  @page { margin: 14mm 12mm; }
   @media print {
     body { background: #fff !important; }
     .app, .login-wrap, .modal-wrap, .toast { display: none !important; }
     #print-area { display: block !important; }
+    .doc { max-width: none !important; padding: 0 !important; }
+    .doc-tabla { page-break-inside: auto; }
+    .doc-tabla tr, .doc-tabla td, .doc-tabla th { page-break-inside: avoid; break-inside: avoid; }
+    .doc-tabla thead { display: table-header-group; }
+    .doc-firmas, .grafico-barras, .gb-row { page-break-inside: avoid; break-inside: avoid; }
+    .doc-sub { page-break-after: avoid; }
   }
+  .doc-sub { font-size:14px; color:#0a1a3a; margin:18px 0 4px; border-bottom:1px solid #cbd5e1; padding-bottom:4px; }
+  .doc-rango { font-size:11.5px; color:#555; margin-bottom:8px; }
+  .grafico-barras { margin:8px 0 4px; font-size:12px; }
+  .gb-eje { font-size:11px; opacity:.7; margin-bottom:6px; }
+  .gb-row { display:grid; grid-template-columns:170px 1fr 72px; gap:8px; align-items:center; margin-bottom:5px; }
+  .gb-lab { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .gb-track { background:rgba(120,120,120,0.25); border-radius:4px; height:14px; }
+  .gb-fill { background:#0d6efd; height:14px; border-radius:4px; }
+  .gb-val { text-align:right; font-weight:bold; }
+  .chk { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; color:var(--texto-dim); }
+  .chk input { width:auto; }
   .doc { color:#111; font-family: Arial, Helvetica, sans-serif; padding:12px 20px; max-width:820px; margin:0 auto; }
   .doc-head { display:flex; align-items:center; gap:16px; border-bottom:3px solid #0d6efd; padding-bottom:12px; }
   .doc-logo { width:88px; height:88px; object-fit:contain; }
@@ -303,9 +321,27 @@ function inyectarExtras() {
     <div class="barra-acciones" style="flex-wrap:wrap">
       <select id="cons-contrato" class="select"></select>
       <select id="cons-frente" class="select"></select>
+      <select id="cons-periodo" class="select">
+        <option value="todo">Todo el historico</option>
+        <option value="hoy">Hoy</option>
+        <option value="semana">Ultimos 7 dias</option>
+        <option value="mes">Este mes</option>
+        <option value="trimestre">Este trimestre</option>
+        <option value="anio">Este año</option>
+        <option value="personalizado">Personalizado</option>
+      </select>
+      <input type="date" id="cons-desde" class="select" title="Desde" />
+      <input type="date" id="cons-hasta" class="select" title="Hasta" />
+      <select id="cons-tipo-item" class="select">
+        <option value="todo">Materiales + Herramientas</option>
+        <option value="materiales">Solo materiales</option>
+        <option value="herramientas">Solo herramientas</option>
+      </select>
+      <label class="chk"><input type="checkbox" id="cons-grafico" /> Grafico</label>
       <button class="btn-primary" id="btn-imprimir-consumo">🖨 Imprimir consumo</button>
     </div>
     <div class="cards" id="cons-cards"></div>
+    <div id="cons-grafico-cont"></div>
     <div class="panel sin-pad">
       <table class="tabla">
         <thead><tr>
@@ -1820,6 +1856,7 @@ function llenarConsumo() {
   selC.innerHTML = '<option value="">Todos los contratos</option>' + Object.keys(CONTRATOS).map((c) => `<option value="${c}">${c}</option>`).join('');
   if (Object.keys(CONTRATOS).includes(cActual)) selC.value = cActual;
   llenarFrentesConsumo();
+  aplicarPeriodoConsumo();
   renderConsumo();
 }
 function llenarFrentesConsumo() {
@@ -1834,12 +1871,70 @@ function llenarFrentesConsumo() {
   selF.innerHTML = '<option value="">Todos los frentes</option>' + frentes.map((f) => `<option value="${f}">Frente ${f}</option>`).join('');
   if (frentes.includes(fActual)) selF.value = fActual;
 }
+// Una "herramienta" es un material cuya categoria contiene "herramient".
+function esHerramienta(categoria) { return /herramient/i.test(String(categoria || '')); }
+function fmtFechaCorta(iso) {
+  const p = String(iso || '').slice(0, 10).split('-');
+  return p.length === 3 ? (p[2] + '/' + p[1] + '/' + p[0]) : (iso || '');
+}
+function rangoDePeriodo(periodo) {
+  const hoy = new Date();
+  const z = (n) => String(n).padStart(2, '0');
+  const iso = (dt) => dt.getFullYear() + '-' + z(dt.getMonth() + 1) + '-' + z(dt.getDate());
+  const y = hoy.getFullYear(), m = hoy.getMonth(), d = hoy.getDate();
+  const hasta = iso(hoy);
+  if (periodo === 'hoy') return { desde: iso(hoy), hasta };
+  if (periodo === 'semana') return { desde: iso(new Date(y, m, d - 6)), hasta };
+  if (periodo === 'mes') return { desde: iso(new Date(y, m, 1)), hasta };
+  if (periodo === 'trimestre') return { desde: iso(new Date(y, Math.floor(m / 3) * 3, 1)), hasta };
+  if (periodo === 'anio') return { desde: iso(new Date(y, 0, 1)), hasta };
+  return null;
+}
+function aplicarPeriodoConsumo() {
+  const per = (($('#cons-periodo') || {}).value) || 'todo';
+  const dEl = $('#cons-desde'), hEl = $('#cons-hasta');
+  if (!dEl || !hEl) return;
+  if (per === 'personalizado') { dEl.disabled = false; hEl.disabled = false; }
+  else if (per === 'todo') { dEl.value = ''; hEl.value = ''; dEl.disabled = true; hEl.disabled = true; }
+  else { const r = rangoDePeriodo(per); if (r) { dEl.value = r.desde; hEl.value = r.hasta; } dEl.disabled = true; hEl.disabled = true; }
+}
+function rangoTextoConsumo(desde, hasta) {
+  if (!desde && !hasta) return 'Historico completo';
+  return 'Del ' + (desde ? fmtFechaCorta(desde) : 'el inicio') + ' al ' + (hasta ? fmtFechaCorta(hasta) : 'hoy');
+}
+function graficoConsumoHtml(filas) {
+  const datos = filas.map((r) => ({ nombre: r.nombre, neto: (r.salidas - r.devoluciones) }))
+    .filter((x) => x.neto > 0).sort((a, b) => b.neto - a.neto).slice(0, 20);
+  if (datos.length === 0) return '';
+  const max = Math.max.apply(null, datos.map((x) => x.neto).concat([1]));
+  const barras = datos.map((x) =>
+    `<div class="gb-row"><div class="gb-lab">${esc(x.nombre)}</div><div class="gb-track"><div class="gb-fill" style="width:${(x.neto / max * 100).toFixed(1)}%"></div></div><div class="gb-val">${fmtNum(x.neto)}</div></div>`).join('');
+  return `<div class="grafico-barras"><div class="gb-eje">Grafico: material (Y) · consumo neto (X)</div>${barras}</div>`;
+}
+function seccionConsumoHtml(titulo, filas, rangoTxt, conGrafico) {
+  if (filas.length === 0) return '';
+  const filasHtml = filas.map((r) => `<tr><td>${esc(r.nombre)}</td><td style="text-align:right">${fmtNum(r.salidas)}</td><td style="text-align:right">${fmtNum(r.devoluciones)}</td><td style="text-align:right">${fmtNum(r.salidas - r.devoluciones)}</td><td>${esc(r.unidad || '')}</td></tr>`).join('');
+  const totalNeto = filas.reduce((s, r) => s + (r.salidas - r.devoluciones), 0);
+  return `
+    <h3 class="doc-sub">${esc(titulo)}</h3>
+    <div class="doc-rango">${esc(rangoTxt)} · ${filas.length} item(s) · Consumo neto total: <b>${fmtNum(totalNeto)}</b></div>
+    ${conGrafico ? graficoConsumoHtml(filas) : ''}
+    <table class="doc-tabla">
+      <thead><tr><th>Material</th><th style="text-align:right">Salidas</th><th style="text-align:right">Devoluciones</th><th style="text-align:right">Consumo neto</th><th>Unidad</th></tr></thead>
+      <tbody>${filasHtml}</tbody>
+    </table>`;
+}
 function datosConsumo() {
   const c = ($('#cons-contrato') || {}).value || '';
   const f = ($('#cons-frente') || {}).value || '';
+  const desde = (($('#cons-desde') || {}).value) || '';
+  const hasta = (($('#cons-hasta') || {}).value) || '';
   const movs = estado.movimientos.filter((mv) => {
     if (mv.tipo !== 'salida' && mv.tipo !== 'devolucion') return false;
     if (!mv.frente) return false;
+    const dia = (mv.fecha || '').slice(0, 10);
+    if (desde && (!dia || dia < desde)) return false;
+    if (hasta && dia && dia > hasta) return false;
     if (f) return mv.frente === f;
     if (c) return (mv.contrato || contratoDeFrente(mv.frente)) === c;
     return true;
@@ -1856,21 +1951,33 @@ function datosConsumo() {
   }
   const filas = Object.keys(mapa).map((k) => mapa[k]).sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
   const alcance = f ? ('Frente ' + f + (contratoDeFrente(f) ? ' (' + contratoDeFrente(f) + ')' : '')) : (c || 'Todos los contratos');
-  return { filas, alcance };
+  return { filas, alcance, desde, hasta };
+}
+function filasPorTipoItem(filas, tipoItem) {
+  if (tipoItem === 'materiales') return filas.filter((r) => !esHerramienta(r.categoria));
+  if (tipoItem === 'herramientas') return filas.filter((r) => esHerramienta(r.categoria));
+  return filas;
 }
 function renderConsumo() {
   const cuerpo = $('#cuerpo-consumo');
   if (!cuerpo) return;
   const { filas } = datosConsumo();
-  $('#cons-vacio').hidden = filas.length !== 0;
-  if (filas.length === 0) $('#cons-vacio').textContent = 'No hay consumo registrado para esa seleccion.';
-  const totalNeto = filas.reduce((s, r) => s + (r.salidas - r.devoluciones), 0);
-  $('#cons-cards').innerHTML = filas.length === 0 ? '' :
-    `${cardHtml('Materiales', filas.length, '▦')}${cardHtml('Consumo neto total', fmtNum(totalNeto), '∑')}`;
-  cuerpo.innerHTML = filas.map((r) => {
+  const tipoItem = (($('#cons-tipo-item') || {}).value) || 'todo';
+  const fil = filasPorTipoItem(filas, tipoItem);
+  $('#cons-vacio').hidden = fil.length !== 0;
+  if (fil.length === 0) $('#cons-vacio').textContent = 'No hay consumo para esa seleccion.';
+  const totalNeto = fil.reduce((s, r) => s + (r.salidas - r.devoluciones), 0);
+  const nMat = fil.filter((r) => !esHerramienta(r.categoria)).length;
+  const nHer = fil.filter((r) => esHerramienta(r.categoria)).length;
+  $('#cons-cards').innerHTML = fil.length === 0 ? '' :
+    `${cardHtml('Items', fil.length, '▦')}${cardHtml('Materiales', nMat, '▦')}${cardHtml('Herramientas', nHer, '🛠')}${cardHtml('Consumo neto', fmtNum(totalNeto), '∑')}`;
+  const gcont = $('#cons-grafico-cont');
+  if (gcont) gcont.innerHTML = ((($('#cons-grafico') || {}).checked) && fil.length) ? `<div class="panel">${graficoConsumoHtml(fil)}</div>` : '';
+  cuerpo.innerHTML = fil.map((r) => {
     const neto = r.salidas - r.devoluciones;
+    const tag = esHerramienta(r.categoria) ? '🛠' : '▦';
     return `<tr>
-      <td>${esc(r.nombre)}</td>
+      <td>${tag} ${esc(r.nombre)}</td>
       <td><span class="chip">${esc(r.categoria || 'Sin clasificar')}</span></td>
       <td class="der">${fmtNum(r.salidas)}</td>
       <td class="der">${fmtNum(r.devoluciones)}</td>
@@ -1880,21 +1987,27 @@ function renderConsumo() {
   }).join('');
 }
 function imprimirConsumo() {
-  const { filas, alcance } = datosConsumo();
-  if (filas.length === 0) { toast('No hay consumo para imprimir en esa seleccion', 'error'); return; }
-  const filasHtml = filas.map((r) => `<tr><td>${esc(r.nombre)}</td><td style="text-align:right">${fmtNum(r.salidas)}</td><td style="text-align:right">${fmtNum(r.devoluciones)}</td><td style="text-align:right">${fmtNum(r.salidas - r.devoluciones)}</td><td>${esc(r.unidad || '')}</td></tr>`).join('');
+  const { filas, alcance, desde, hasta } = datosConsumo();
+  const tipoItem = (($('#cons-tipo-item') || {}).value) || 'todo';
+  const conGrafico = !!(($('#cons-grafico') || {}).checked);
+  const rangoTxt = rangoTextoConsumo(desde, hasta);
+  const mats = filas.filter((r) => !esHerramienta(r.categoria));
+  const herr = filas.filter((r) => esHerramienta(r.categoria));
+  let secciones = '';
+  if (tipoItem === 'materiales') secciones = seccionConsumoHtml('Consumo de materiales', mats, rangoTxt, conGrafico);
+  else if (tipoItem === 'herramientas') secciones = seccionConsumoHtml('Consumo de herramientas', herr, rangoTxt, conGrafico);
+  else secciones = seccionConsumoHtml('Consumo de materiales', mats, rangoTxt, conGrafico) + seccionConsumoHtml('Consumo de herramientas', herr, rangoTxt, conGrafico);
+  if (!secciones) { toast('No hay consumo para imprimir en esa seleccion', 'error'); return; }
   const html = `<div class="doc">
     ${cabeceraDoc()}
-    <h2 class="doc-titulo">CONSUMO DE MATERIALES</h2>
+    <h2 class="doc-titulo">REPORTE DE CONSUMO</h2>
     <div class="doc-meta">
       <div><b>Alcance:</b> ${esc(alcance)}</div>
-      <div><b>Fecha de emision:</b> ${fmtFecha(new Date().toISOString())}</div>
-      <div><b>Materiales:</b> ${filas.length}</div>
+      <div><b>Periodo:</b> ${esc(rangoTxt)}</div>
+      <div><b>Emitido:</b> ${fmtFecha(new Date().toISOString())}</div>
+      <div><b>Almacenista:</b> ${esc(nombreUsuario())}</div>
     </div>
-    <table class="doc-tabla">
-      <thead><tr><th>Material</th><th style="text-align:right">Salidas</th><th style="text-align:right">Devoluciones</th><th style="text-align:right">Consumo neto</th><th>Unidad</th></tr></thead>
-      <tbody>${filasHtml}</tbody>
-    </table>
+    ${secciones}
     ${firmasDoc(nombreUsuario(), '')}
   </div>`;
   imprimir(html, 'Consumo_' + (alcance.replace(/\s+/g, '_')));
@@ -2162,5 +2275,10 @@ $('#sel-responsable').addEventListener('change', renderResponsable);
 $('#btn-imprimir-historial').addEventListener('click', imprimirHistorialResponsable);
 $('#cons-contrato').addEventListener('change', () => { llenarFrentesConsumo(); renderConsumo(); });
 $('#cons-frente').addEventListener('change', renderConsumo);
+if ($('#cons-periodo')) $('#cons-periodo').addEventListener('change', () => { aplicarPeriodoConsumo(); renderConsumo(); });
+if ($('#cons-desde')) $('#cons-desde').addEventListener('change', renderConsumo);
+if ($('#cons-hasta')) $('#cons-hasta').addEventListener('change', renderConsumo);
+if ($('#cons-tipo-item')) $('#cons-tipo-item').addEventListener('change', renderConsumo);
+if ($('#cons-grafico')) $('#cons-grafico').addEventListener('change', renderConsumo);
 $('#btn-imprimir-consumo').addEventListener('click', imprimirConsumo);
 llenarConsumo();
