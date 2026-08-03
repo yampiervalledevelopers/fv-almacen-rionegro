@@ -19,7 +19,8 @@ import {
   orderBy,
   serverTimestamp,
   writeBatch,
-  increment
+  increment,
+  arrayUnion
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
 import { firebaseApp } from './firebase-config.js';
@@ -497,6 +498,29 @@ export async function agregarCategoria(nombre) {
 
 export async function eliminarCategoria(id) {
   await deleteDoc(doc(db, COL_CATEGORIAS, id));
+}
+
+/* ---------------- Herramientas: despacho/devolucion ---------------- */
+
+export async function actualizarHerramientaDespacho(materialId, responsable, frente, tipo) {
+  const ref = doc(db, COL_MATERIALES, materialId);
+  if (tipo === 'salida') {
+    await updateDoc(ref, {
+      estadoHerr: 'en_uso',
+      responsableActual: responsable,
+      frenteActual: frente,
+      historial: arrayUnion({ tipo: 'salida', responsable, frente, fecha: new Date().toISOString() }),
+      actualizado: serverTimestamp()
+    });
+  } else if (tipo === 'devolucion') {
+    await updateDoc(ref, {
+      estadoHerr: 'disponible',
+      responsableActual: '',
+      frenteActual: '',
+      historial: arrayUnion({ tipo: 'devolucion', responsable, frente, fecha: new Date().toISOString() }),
+      actualizado: serverTimestamp()
+    });
+  }
 }
 
 export { db };
