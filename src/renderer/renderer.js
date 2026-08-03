@@ -209,6 +209,10 @@ function inyectarExtras() {
   .estado-badge.falta { background:rgba(255,84,112,0.18); color:#ff9db0; }
   .estado-badge.adicion { background:rgba(46,204,113,0.15); color:#7ee6a8; }
   .estado-badge.mixto { background:rgba(255,176,32,0.18); color:#ffd08a; }
+  .estado-badge.disponible { background:rgba(46,204,113,0.15); color:#7ee6a8; }
+  .estado-badge.en_uso { background:rgba(77,163,255,0.18); color:#9fc2ef; }
+  .estado-badge.mantenimiento { background:rgba(255,176,32,0.18); color:#ffd08a; }
+  .estado-badge.baja { background:rgba(255,84,112,0.18); color:#ff9db0; }
   .rec-sub { display:block; font-size:12px; color:var(--texto-dim); font-weight:700; margin:0 0 8px; }
   .rec-row { display:grid; grid-template-columns:1fr 130px; gap:10px; align-items:center; margin-bottom:8px; }
   .rec-row .rec-mat { align-self:center; }
@@ -267,14 +271,19 @@ function inyectarExtras() {
   btnKits.className = 'menu-item';
   btnKits.dataset.vista = 'kits';
   btnKits.innerHTML = '<span class="ic">📦</span> Kits';
+  const btnHerr = document.createElement('button');
+  btnHerr.className = 'menu-item';
+  btnHerr.dataset.vista = 'herramientas';
+  btnHerr.innerHTML = '<span class="ic">🔧</span> Herramientas';
   if (menu && itemMov) {
-    // Insertar en orden: Movimientos -> Ordenes -> Kits -> Responsables -> Consumo
+    // Insertar en orden: Movimientos -> Ordenes -> Kits -> Herramientas -> Responsables -> Consumo
     itemMov.insertAdjacentElement('afterend', btnConsumo);
     itemMov.insertAdjacentElement('afterend', btnResp);
+    itemMov.insertAdjacentElement('afterend', btnHerr);
     itemMov.insertAdjacentElement('afterend', btnKits);
     itemMov.insertAdjacentElement('afterend', btnOrdenes);
   } else if (menu) {
-    menu.appendChild(btnOrdenes); menu.appendChild(btnKits); menu.appendChild(btnResp); menu.appendChild(btnConsumo);
+    menu.appendChild(btnOrdenes); menu.appendChild(btnKits); menu.appendChild(btnHerr); menu.appendChild(btnResp); menu.appendChild(btnConsumo);
   }
 
   // ---- Vistas nuevas ----
@@ -374,7 +383,33 @@ function inyectarExtras() {
       </table>
       <div id="kits-vacio" class="vacio" hidden>Aun no hay kits. Crea uno para despachar grupos de materiales de una.</div>
     </div>`;
-  if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); cont.appendChild(vistaConsumo); cont.appendChild(vistaKits); }
+  const vistaHerr = document.createElement('section');
+  vistaHerr.className = 'vista';
+  vistaHerr.id = 'vista-herramientas';
+  vistaHerr.hidden = true;
+  vistaHerr.innerHTML = `
+    <div class="barra-acciones" style="flex-wrap:wrap">
+      <input type="text" id="buscar-herr" class="select" placeholder="Buscar por serial o nombre..." style="min-width:220px" />
+      <select id="filtro-estado-herr" class="select">
+        <option value="">Todos los estados</option>
+        <option value="disponible">Disponible</option>
+        <option value="en_uso">En uso</option>
+        <option value="mantenimiento">Mantenimiento</option>
+        <option value="baja">Baja</option>
+      </select>
+    </div>
+    <div class="mov-hint">🔧 Haz <b>doble clic</b> en una herramienta para ver su trazabilidad completa (historial de asignaciones).</div>
+    <div class="panel sin-pad">
+      <table class="tabla" id="tabla-herramientas">
+        <thead><tr>
+          <th>Serial</th><th>Herramienta</th><th>Marca/Modelo</th><th>Estado</th>
+          <th>Responsable actual</th><th>Frente actual</th><th class="cen">Acciones</th>
+        </tr></thead>
+        <tbody id="cuerpo-herramientas"></tbody>
+      </table>
+      <div id="herr-vacio" class="vacio" hidden>No hay herramientas registradas. Marca un material como herramienta al crearlo o editarlo.</div>
+    </div>`;
+  if (cont) { cont.appendChild(vistaOrdenes); cont.appendChild(vistaResp); cont.appendChild(vistaConsumo); cont.appendChild(vistaKits); cont.appendChild(vistaHerr); }
 
   // ---- Area de impresion ----
   const area = document.createElement('div');
@@ -446,6 +481,12 @@ function inyectarExtras() {
     filtroTipo.insertAdjacentElement('afterend', selF);
     selF.addEventListener('change', renderMovimientos);
   }
+
+  // ---- Filtros de herramientas ----
+  const buscarHerr = $('#buscar-herr');
+  const filtroEstadoHerr = $('#filtro-estado-herr');
+  if (buscarHerr) buscarHerr.addEventListener('input', renderHerramientas);
+  if (filtroEstadoHerr) filtroEstadoHerr.addEventListener('change', renderHerramientas);
 
   // ---- Graficas de consumo en el Panel general ----
   const vistaDash = $('#vista-dashboard');
@@ -555,7 +596,7 @@ function iniciarSuscripciones() {
 
   estado.desuscribir.push(escucharMateriales((items) => {
     estado.materiales = items;
-    renderInventario(); renderDashboard(); llenarFiltroCategorias();
+    renderInventario(); renderDashboard(); llenarFiltroCategorias(); renderHerramientas();
   }, (err) => { console.error(err); toast('Error de conexion: ' + err.message, 'error'); }));
 
   estado.desuscribir.push(escucharMovimientos((items) => {
@@ -588,7 +629,7 @@ window.addEventListener('offline', () => { $('#estado-conexion').classList.add('
 const TITULOS = {
   dashboard: 'Panel general', inventario: 'Inventario', movimientos: 'Movimientos',
   ordenes: 'Ordenes', responsables: 'Responsables', consumo: 'Consumo por contrato / frente',
-  kits: 'Kits (plantillas de materiales)',
+  kits: 'Kits (plantillas de materiales)', herramientas: 'Herramientas',
   importar: 'Importar PDF', reportes: 'Reportes PDF', acerca: 'Acerca de'
 };
 function activarNavegacion() {
@@ -881,6 +922,7 @@ function modalMaterial(id, prefill) {
   const b = m || prefill || {};
   const editando = !!m;
   const listaClases = clasesDeCategoria(b.categoria);
+  const esHerr = !!b.esHerramienta;
   abrirModal(editando ? 'Editar material' : (prefill ? 'Duplicar material' : 'Nuevo material'), `
     <div class="form-grid">
       <div class="campo"><label>Codigo</label><input id="f-codigo" value="${esc(b.codigo || '')}" placeholder="Opcional" /></div>
@@ -898,6 +940,22 @@ function modalMaterial(id, prefill) {
       <div class="campo"><label>Stock minimo (alerta)</label><input id="f-minimo" type="number" step="any" min="0" value="${b.minimo != null ? b.minimo : 0}" /></div>
       <div class="campo full"><label>Ubicacion en almacen</label><input id="f-ubicacion" value="${esc(b.ubicacion || '')}" placeholder="Ej: Estante A-3" /></div>
       <div class="campo full"><label>Nota</label><textarea id="f-nota" placeholder="Opcional">${esc(b.nota || '')}</textarea></div>
+      <div class="campo full"><label class="chk"><input type="checkbox" id="f-es-herramienta" ${esHerr ? 'checked' : ''} /> Es herramienta (activa ficha de trazabilidad)</label></div>
+      <div id="campos-herr" style="${esHerr ? '' : 'display:none'}">
+        <div class="form-grid">
+          <div class="campo"><label>Serial *</label><input id="f-serial" value="${esc(b.serial || '')}" placeholder="Numero de serie" /></div>
+          <div class="campo"><label>Marca</label><input id="f-marca" value="${esc(b.marca || '')}" placeholder="Marca" /></div>
+          <div class="campo"><label>Modelo</label><input id="f-modelo" value="${esc(b.modelo || '')}" placeholder="Modelo" /></div>
+          <div class="campo"><label>Estado</label>
+            <select id="f-estado-herr">
+              <option value="disponible" ${(b.estadoHerr || 'disponible') === 'disponible' ? 'selected' : ''}>Disponible</option>
+              <option value="en_uso" ${b.estadoHerr === 'en_uso' ? 'selected' : ''}>En uso</option>
+              <option value="mantenimiento" ${b.estadoHerr === 'mantenimiento' ? 'selected' : ''}>Mantenimiento</option>
+              <option value="baja" ${b.estadoHerr === 'baja' ? 'selected' : ''}>Baja</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="m-cancelar">Cancelar</button>
@@ -905,12 +963,28 @@ function modalMaterial(id, prefill) {
       <button class="btn-primary" id="m-guardar">${editando ? 'Guardar cambios' : 'Agregar material'}</button>
     </div>`);
 
-  const leerDatos = () => ({
-    codigo: $('#f-codigo').value.trim(), nombre: $('#f-nombre').value.trim(),
-    categoria: $('#f-categoria').value.trim() || 'Sin clasificar', clase: $('#f-clase').value.trim(),
-    cantidad: $('#f-cantidad').value, unidad: $('#f-unidad').value, minimo: $('#f-minimo').value,
-    ubicacion: $('#f-ubicacion').value.trim(), nota: $('#f-nota').value.trim()
-  });
+  // Toggle campos herramienta
+  const chkHerr = $('#f-es-herramienta');
+  const camposHerr = $('#campos-herr');
+  if (chkHerr) chkHerr.addEventListener('change', () => { camposHerr.style.display = chkHerr.checked ? '' : 'none'; });
+
+  const leerDatos = () => {
+    const esH = $('#f-es-herramienta').checked;
+    const datos = {
+      codigo: $('#f-codigo').value.trim(), nombre: $('#f-nombre').value.trim(),
+      categoria: $('#f-categoria').value.trim() || 'Sin clasificar', clase: $('#f-clase').value.trim(),
+      cantidad: $('#f-cantidad').value, unidad: $('#f-unidad').value, minimo: $('#f-minimo').value,
+      ubicacion: $('#f-ubicacion').value.trim(), nota: $('#f-nota').value.trim(),
+      esHerramienta: esH
+    };
+    if (esH) {
+      datos.serial = $('#f-serial').value.trim();
+      datos.marca = $('#f-marca').value.trim();
+      datos.modelo = $('#f-modelo').value.trim();
+      datos.estadoHerr = $('#f-estado-herr').value;
+    }
+    return datos;
+  };
   // La lista de clases (subgrupos) depende del Tipo elegido.
   const refrescarClases = () => {
     const dl = $('#lista-clases');
@@ -921,6 +995,7 @@ function modalMaterial(id, prefill) {
   const guardar = async (cerrar) => {
     const datos = leerDatos();
     if (!datos.nombre) { toast('El nombre del material es obligatorio', 'error'); return; }
+    if (datos.esHerramienta && !datos.serial) { toast('El serial es obligatorio para herramientas', 'error'); return; }
     try {
       if (m) { await actualizarMaterial(m.id, datos); toast('Material actualizado', 'ok'); }
       else { await agregarMaterial(datos); toast('Material agregado', 'ok'); }
@@ -929,6 +1004,9 @@ function modalMaterial(id, prefill) {
       $('#f-codigo').value = '';
       $('#f-nombre').value = '';
       $('#f-cantidad').value = '';
+      $('#f-serial').value = '';
+      $('#f-marca').value = '';
+      $('#f-modelo').value = '';
       refrescarClases();
       const dlc = $('#lista-categorias');
       if (dlc) dlc.innerHTML = categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
@@ -1692,6 +1770,93 @@ function confirmarEliminarOrden(orden) {
       cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Si, eliminar'; }
   });
+}
+
+/* ==================================================================
+   HERRAMIENTAS (vista separada con trazabilidad)
+   ================================================================== */
+function renderHerramientas() {
+  const tbody = $('#cuerpo-herramientas');
+  if (!tbody) return;
+  const buscar = ($('#buscar-herr') && $('#buscar-herr').value || '').toLowerCase().trim();
+  const filtroEstado = ($('#filtro-estado-herr') && $('#filtro-estado-herr').value) || '';
+  let herramientas = estado.materiales.filter((m) => m.esHerramienta);
+  if (buscar) {
+    herramientas = herramientas.filter((h) =>
+      (h.serial || '').toLowerCase().includes(buscar) ||
+      (h.nombre || '').toLowerCase().includes(buscar) ||
+      (h.marca || '').toLowerCase().includes(buscar) ||
+      (h.modelo || '').toLowerCase().includes(buscar)
+    );
+  }
+  if (filtroEstado) herramientas = herramientas.filter((h) => h.estadoHerr === filtroEstado);
+
+  const vacio = $('#herr-vacio');
+  if (vacio) vacio.hidden = herramientas.length > 0;
+  if (herramientas.length === 0) { tbody.innerHTML = ''; return; }
+
+  const estadoLabel = (e) => {
+    const labels = { disponible: 'Disponible', en_uso: 'En uso', mantenimiento: 'Mantenimiento', baja: 'Baja' };
+    return labels[e] || e || 'Disponible';
+  };
+
+  tbody.innerHTML = herramientas.map((h) => `
+    <tr data-herr-id="${h.id}" style="cursor:pointer">
+      <td><b>${esc(h.serial || '-')}</b></td>
+      <td>${esc(h.nombre)}</td>
+      <td>${esc(h.marca || '')}${h.modelo ? ' / ' + esc(h.modelo) : ''}</td>
+      <td><span class="estado-badge ${esc(h.estadoHerr || 'disponible')}">${estadoLabel(h.estadoHerr)}</span></td>
+      <td>${esc(h.responsableActual || '-')}</td>
+      <td>${h.frenteActual ? 'Frente ' + esc(h.frenteActual) : '-'}</td>
+      <td class="cen">
+        <button class="btn-ghost btn-sm" data-herr-traza="${h.id}" title="Ver trazabilidad">📋</button>
+        <button class="btn-ghost btn-sm" data-herr-editar="${h.id}" title="Editar">✏️</button>
+      </td>
+    </tr>`).join('');
+
+  // Eventos
+  tbody.querySelectorAll('[data-herr-traza]').forEach((btn) => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); modalTrazabilidad(btn.dataset.herrTraza); });
+  });
+  tbody.querySelectorAll('[data-herr-editar]').forEach((btn) => {
+    btn.addEventListener('click', (e) => { e.stopPropagation(); modalMaterial(btn.dataset.herrEditar); });
+  });
+  tbody.querySelectorAll('[data-herr-id]').forEach((tr) => {
+    tr.addEventListener('dblclick', () => modalTrazabilidad(tr.dataset.herrId));
+  });
+}
+
+function modalTrazabilidad(id) {
+  const h = estado.materiales.find((x) => x.id === id);
+  if (!h) return;
+  const historial = h.historial || [];
+  const filas = historial.length > 0
+    ? historial.map((ev, i) => `<tr>
+        <td>${i + 1}</td>
+        <td>${esc(ev.fecha || '-')}</td>
+        <td>${esc(ev.accion || '-')}</td>
+        <td>${esc(ev.responsable || '-')}</td>
+        <td>${ev.frente ? 'Frente ' + esc(ev.frente) : '-'}</td>
+        <td>${esc(ev.nota || '')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="6" style="text-align:center;color:var(--texto-mute)">Sin historial registrado</td></tr>';
+
+  abrirModal('Trazabilidad: ' + (h.nombre || ''), `
+    <div style="margin-bottom:12px">
+      <p style="color:var(--texto-dim);margin:0 0 4px"><b>Serial:</b> ${esc(h.serial || '-')} &nbsp; <b>Marca:</b> ${esc(h.marca || '-')} &nbsp; <b>Modelo:</b> ${esc(h.modelo || '-')}</p>
+      <p style="color:var(--texto-dim);margin:0"><b>Estado:</b> <span class="estado-badge ${esc(h.estadoHerr || 'disponible')}">${esc(h.estadoHerr || 'disponible')}</span>
+        &nbsp; <b>Responsable:</b> ${esc(h.responsableActual || '-')} &nbsp; <b>Frente:</b> ${h.frenteActual ? 'Frente ' + esc(h.frenteActual) : '-'}</p>
+    </div>
+    <div class="panel sin-pad" style="max-height:320px;overflow:auto">
+      <table class="tabla tabla-detalle">
+        <thead><tr><th>#</th><th>Fecha</th><th>Accion</th><th>Responsable</th><th>Frente</th><th>Nota</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>
+    <div class="modal-acciones" style="margin-top:14px">
+      <button class="btn-ghost" id="traza-cerrar">Cerrar</button>
+    </div>`);
+  $('#traza-cerrar').addEventListener('click', cerrarModal);
 }
 
 /* ==================================================================
