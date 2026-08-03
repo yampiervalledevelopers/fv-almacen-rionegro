@@ -64,7 +64,7 @@ export function escucharMateriales(callback, onError) {
 }
 
 export async function agregarMaterial(datos) {
-  const ref = await addDoc(collection(db, COL_MATERIALES), {
+  const base = {
     codigo: datos.codigo || '',
     nombre: datos.nombre || '',
     categoria: datos.categoria || 'Sin clasificar',
@@ -74,9 +74,20 @@ export async function agregarMaterial(datos) {
     minimo: Number(datos.minimo) || 0,
     ubicacion: datos.ubicacion || '',
     nota: datos.nota || '',
+    esHerramienta: !!datos.esHerramienta,
     creado: serverTimestamp(),
     actualizado: serverTimestamp()
-  });
+  };
+  if (datos.esHerramienta) {
+    base.serial = datos.serial || '';
+    base.marca = datos.marca || '';
+    base.modelo = datos.modelo || '';
+    base.estadoHerr = datos.estadoHerr || 'disponible';
+    base.responsableActual = datos.responsableActual || '';
+    base.frenteActual = datos.frenteActual || '';
+    base.historial = datos.historial || [];
+  }
+  const ref = await addDoc(collection(db, COL_MATERIALES), base);
   return ref.id;
 }
 
@@ -88,6 +99,11 @@ export async function actualizarMaterial(id, cambios) {
   ['cantidad', 'minimo'].forEach((k) => {
     if (cambios[k] !== undefined) limpio[k] = Number(cambios[k]) || 0;
   });
+  if (cambios.esHerramienta !== undefined) limpio.esHerramienta = !!cambios.esHerramienta;
+  ['serial', 'marca', 'modelo', 'estadoHerr', 'responsableActual', 'frenteActual'].forEach((k) => {
+    if (cambios[k] !== undefined) limpio[k] = cambios[k];
+  });
+  if (cambios.historial !== undefined) limpio.historial = cambios.historial;
   limpio.actualizado = serverTimestamp();
   await updateDoc(doc(db, COL_MATERIALES, id), limpio);
 }
