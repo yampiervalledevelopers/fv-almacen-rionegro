@@ -16,7 +16,8 @@ import {
   registrarOrden, recibirOrden, escucharOrdenes,
   eliminarMovimiento, eliminarOrden,
   escucharKits, agregarKit, actualizarKit, eliminarKit,
-  escucharCategorias, agregarCategoria, eliminarCategoria
+  escucharCategorias, agregarCategoria, eliminarCategoria,
+  actualizarHerramientaDespacho
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -1312,17 +1313,20 @@ function renderOrdenes() {
     const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
     const contrato = contratoReal(o);
     const info = estadoOrdenInfo(o);
+    const tieneHerr = o.items && o.items.some((it) => estado.materiales.find((m) => m.id === it.materialId && m.esHerramienta));
+    const badgeDevol = (tieneHerr && o.tipo === 'salida' && est === 'completado') ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
     return `
     <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
-      <td><span class="estado-badge ${info.cls}">${info.label}</span></td>
+      <td><span class="estado-badge ${info.cls}">${info.label}</span>${badgeDevol}</td>
       <td>${esc(o.responsable || '-')}</td>
       <td>${o.frente ? (esc(o.frente) + (contrato ? ` <span style="color:var(--texto-mute)">(${esc(contrato)})</span>` : '')) : esc(o.proveedor || '-')}</td>
       <td class="der">${(o.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
+        ${(tieneHerr && o.tipo === 'salida' && est === 'completado') ? `<button class="btn-icon" title="Devolver herramientas" data-devolver-herr="${o.id}">🔁</button>` : ''}
         <button class="btn-icon" title="Repetir esta orden" data-repetir="${o.id}">🔁</button>
         <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
@@ -1365,6 +1369,66 @@ function renderOrdenes() {
       const o = estado.ordenes.find((x) => x.id === b.dataset.repetir);
       if (o) repetirOrden(o);
     }));
+  $('#cuerpo-ordenes').querySelectorAll('[data-devolver-herr]').forEach((b) =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); modalDevolverHerramientas(b.dataset.devolverHerr); }));
+}
+
+// Abre un modal para devolver herramientas de una orden de salida.
+function modalDevolverHerramientas(ordenId) {
+  const orden = estado.ordenes.find((o) => o.id === ordenId);
+  if (!orden) { toast('No se encontro la orden', 'error'); return; }
+  const herrItems = (orden.items || []).filter((it) => {
+    const m = estado.materiales.find((x) => x.id === it.materialId);
+    return m && m.esHerramienta;
+  });
+  if (herrItems.length === 0) { toast('Esta orden no tiene herramientas para devolver', 'error'); return; }
+
+  const checkboxes = herrItems.map((it, i) => {
+    const m = estado.materiales.find((x) => x.id === it.materialId);
+    return `<label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;color:var(--texto-dim);font-size:13px">
+      <input type="checkbox" checked data-devherr-idx="${i}" style="width:auto;flex:none" />
+      <span>${esc(it.materialNombre)}${m && m.serial ? ' <b>[' + esc(m.serial) + ']</b>' : ''} — ${fmtNum(it.cantidad)} ${esc(it.unidad)}</span>
+    </label>`;
+  }).join('');
+
+  abrirModal('Devolver herramientas — ' + (orden.numero || ''), `
+    <p style="color:var(--texto-dim);margin-bottom:12px;line-height:1.5">Selecciona las herramientas que se devuelven al almacen. Se actualizara su estado a <b>disponible</b> y se registrara el movimiento de devolucion.</p>
+    <div id="devherr-lista" style="margin-bottom:14px">${checkboxes}</div>
+    <div class="modal-acciones">
+      <button class="btn-ghost" id="devherr-cancelar">Cancelar</button>
+      <button class="btn-primary" id="devherr-ok">Confirmar devolucion</button>
+    </div>`);
+
+  $('#devherr-cancelar').addEventListener('click', cerrarModal);
+  $('#devherr-ok').addEventListener('click', async () => {
+    const btn = $('#devherr-ok'); btn.disabled = true; btn.textContent = 'Procesando...';
+    try {
+      const checks = Array.from($('#devherr-lista').querySelectorAll('input[type="checkbox"]'));
+      let count = 0;
+      for (let i = 0; i < herrItems.length; i++) {
+        if (!checks[i] || !checks[i].checked) continue;
+        const it = herrItems[i];
+        await actualizarHerramientaDespacho(it.materialId, orden.responsable || '', orden.frente || '', 'devolucion');
+        await registrarMovimiento({
+          tipo: 'devolucion',
+          materialId: it.materialId,
+          materialNombre: it.materialNombre,
+          cantidad: Number(it.cantidad) || 1,
+          unidad: it.unidad || 'unidad',
+          frente: orden.frente || '',
+          contrato: contratoDeFrente(orden.frente || ''),
+          proveedor: '',
+          responsable: orden.responsable || '',
+          nota: 'Devolucion de herramienta (orden ' + (orden.numero || '') + ')',
+          usuario: nombreUsuario()
+        });
+        count++;
+      }
+      if (count === 0) { toast('No seleccionaste ninguna herramienta', 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; return; }
+      toast('Herramientas devueltas y estado actualizado', 'ok');
+      cerrarModal();
+    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; }
+  });
 }
 
 // Abre "Nueva orden" precargada con los materiales de una orden existente,
@@ -1687,6 +1751,17 @@ function modalOrden(tipo, precarga) {
         nota: $('#o-nota').value.trim(),
         usuario: nombreUsuario(), items
       });
+      // Actualizar estado de herramientas despachadas
+      if (tipo === 'salida') {
+        const responsable = $('#o-responsable').value.trim();
+        const frente = (($('#o-frente') || {}).value || '').trim();
+        for (const it of items) {
+          const mat = estado.materiales.find((x) => x.id === it.materialId);
+          if (mat && mat.esHerramienta) {
+            await actualizarHerramientaDespacho(it.materialId, responsable, frente, 'salida');
+          }
+        }
+      }
       limpiarBorradorOrden(tipo);
       cerrarModal();
       toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
@@ -2361,7 +2436,29 @@ function docOrden(o, almacenista) {
   const metaLugar = esProv
     ? (`<div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>` + (o.frente ? `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente:</b> ${esc(o.frente)}</div>` : ''))
     : `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente de obra:</b> ${esc(o.frente || '-')}</div>`;
-  const filas = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad)}</td></tr>`).join('');
+  const itemsMat = (o.items || []).filter((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return !m || !m.esHerramienta; });
+  const itemsHerr = (o.items || []).filter((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return m && m.esHerramienta; });
+  const filasMat = itemsMat.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad)}</td></tr>`).join('');
+  const filasHerr = itemsHerr.map((it, i) => {
+    const m = estado.materiales.find((x) => x.id === it.materialId);
+    return `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td>${esc(m ? m.serial || '' : '')}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td></tr>`;
+  }).join('');
+  const tablaMateriales = itemsMat.length > 0 ? `
+    <h3 class="doc-sub">MATERIALES</h3>
+    <table class="doc-tabla">
+      <thead><tr><th>#</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
+      <tbody>${filasMat}</tbody>
+    </table>` : '';
+  const tablaHerramientas = itemsHerr.length > 0 ? `
+    <h3 class="doc-sub">HERRAMIENTAS — ⚠️ REQUIERE DEVOLUCIÓN</h3>
+    <table class="doc-tabla">
+      <thead><tr><th>#</th><th>Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th></tr></thead>
+      <tbody>${filasHerr}</tbody>
+    </table>
+    <div style="border:3px solid #c0392b;border-radius:10px;padding:16px 20px;margin:14px 0;text-align:center;color:#c0392b;font-size:16px;font-weight:bold;line-height:1.5">
+      ⚠️ LAS HERRAMIENTAS LISTADAS ARRIBA REQUIEREN DEVOLUCIÓN<br>
+      <span style="font-size:13px;font-weight:normal">POR FAVOR RECLAMAR EN ALMACÉN AL FINALIZAR LA LABOR</span>
+    </div>` : '';
   return `<div class="doc">
     ${cabeceraDoc()}
     <h2 class="doc-titulo">${t.titulo}</h2>
@@ -2371,10 +2468,8 @@ function docOrden(o, almacenista) {
       ${metaLugar}
       <div><b>Responsable:</b> ${esc(o.responsable || '-')}</div>
     </div>
-    <table class="doc-tabla">
-      <thead><tr><th>#</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
-      <tbody>${filas}</tbody>
-    </table>
+    ${tablaMateriales}
+    ${tablaHerramientas}
     ${o.nota ? `<p class="doc-nota"><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
     ${firmasDoc(almacenista, o.responsable)}
   </div>`;
