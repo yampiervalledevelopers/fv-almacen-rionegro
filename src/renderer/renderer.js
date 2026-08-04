@@ -1438,10 +1438,47 @@ function modalDevolverHerramientas(ordenId) {
       const totalHerr = herrItems.length;
       const nuevoEstado = (count >= totalHerr) ? 'devolucion_completada' : 'devolucion_parcial';
       await actualizarEstadoOrden(orden.id, nuevoEstado);
-      toast(count >= totalHerr ? 'Todas las herramientas devueltas — orden completada' : 'Devolucion parcial — quedan herramientas pendientes', 'ok');
+      // Generar e imprimir la orden de devolucion con solo lo devuelto.
+      const devueltas = [];
+      for (let i = 0; i < herrItems.length; i++) {
+        if (checks[i] && checks[i].checked) devueltas.push(herrItems[i]);
+      }
       cerrarModal();
+      toast(count >= totalHerr ? 'Todas las herramientas devueltas — orden completada' : 'Devolucion parcial — quedan herramientas pendientes', 'ok');
+      imprimirOrdenDevolucion(orden, devueltas);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; }
   });
+}
+
+// Genera e imprime el documento de devolucion de herramientas.
+function imprimirOrdenDevolucion(orden, itemsDevueltos) {
+  const contrato = contratoReal(orden);
+  const filas = itemsDevueltos.map((it, i) => {
+    const m = estado.materiales.find((x) => x.id === it.materialId);
+    return `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td>${esc(m && m.serial ? m.serial : '-')}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad || '')}</td></tr>`;
+  }).join('');
+  const html = `<div class="doc">
+    ${cabeceraDoc()}
+    <h2 class="doc-titulo">ORDEN DE DEVOLUCION DE HERRAMIENTAS</h2>
+    <div class="doc-meta">
+      <div><b>Orden original:</b> ${esc(orden.numero || '-')}</div>
+      <div><b>Fecha de devolucion:</b> ${fmtFecha(new Date().toISOString())}</div>
+      <div><b>Contrato:</b> ${esc(contrato || '-')}</div>
+      <div><b>Frente de obra:</b> ${esc(orden.frente || '-')}</div>
+      <div><b>Responsable:</b> ${esc(orden.responsable || '-')}</div>
+      <div><b>Items devueltos:</b> ${itemsDevueltos.length}</div>
+    </div>
+    <table class="doc-tabla">
+      <thead><tr><th>#</th><th>Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    <div style="border:2px solid #2ecc71;border-radius:10px;padding:14px 18px;margin:18px 0;text-align:center;color:#27ae60;font-size:14px;font-weight:bold;line-height:1.5">
+      ✅ HERRAMIENTAS RECIBIDAS EN ALMACEN<br>
+      <span style="font-size:12px;font-weight:normal;color:#333">Estado actualizado a DISPONIBLE en el sistema</span>
+    </div>
+    ${firmasDoc(nombreUsuario(), orden.responsable)}
+  </div>`;
+  imprimir(html, 'Devolucion_' + (orden.numero || 'herramientas'));
 }
 
 // Abre "Nueva orden" precargada con los materiales de una orden existente,
