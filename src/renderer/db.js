@@ -523,4 +523,8 @@ export async function actualizarHerramientaDespacho(materialId, responsable, fre
   }
 }
 
+export async function actualizarEstadoOrden(ordenId, nuevoEstado) {
+  await updateDoc(doc(db, 'ordenes', ordenId), { estado: nuevoEstado });
+}
+
 export { db };

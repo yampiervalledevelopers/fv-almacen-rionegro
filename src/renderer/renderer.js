@@ -17,7 +17,8 @@ import {
   eliminarMovimiento, eliminarOrden,
   escucharKits, agregarKit, actualizarKit, eliminarKit,
   escucharCategorias, agregarCategoria, eliminarCategoria,
-  actualizarHerramientaDespacho
+  actualizarHerramientaDespacho,
+  actualizarEstadoOrden
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -214,6 +215,8 @@ function inyectarExtras() {
   .estado-badge.en_uso { background:rgba(77,163,255,0.18); color:#9fc2ef; }
   .estado-badge.mantenimiento { background:rgba(255,176,32,0.18); color:#ffd08a; }
   .estado-badge.baja { background:rgba(255,84,112,0.18); color:#ff9db0; }
+  .estado-badge.devolucion_completada { background:rgba(46,204,113,0.15); color:#7ee6a8; }
+  .estado-badge.devolucion_parcial { background:rgba(255,176,32,0.18); color:#ffd08a; }
   .rec-sub { display:block; font-size:12px; color:var(--texto-dim); font-weight:700; margin:0 0 8px; }
   .rec-row { display:grid; grid-template-columns:1fr 130px; gap:10px; align-items:center; margin-bottom:8px; }
   .rec-row .rec-mat { align-self:center; }
@@ -1264,11 +1267,17 @@ function estadoOrden(o) {
   return o.estado || (o.tipo === 'entrada' ? 'recibido' : 'completado');
 }
 function etiquetaEstado(est) {
-  return est === 'pendiente' ? 'Pendiente' : est === 'recibido' ? 'Recibido' : 'Completado';
+  if (est === 'pendiente') return 'Pendiente';
+  if (est === 'recibido') return 'Recibido';
+  if (est === 'devolucion_completada') return 'Devolucion completada';
+  if (est === 'devolucion_parcial') return 'Devolucion parcial';
+  return 'Completado';
 }
 // Etiqueta y clase del estado, considerando el resumen de recepcion.
 function estadoOrdenInfo(o) {
   const est = estadoOrden(o);
+  if (est === 'devolucion_completada') return { cls: 'devolucion_completada', label: 'Devolucion completada' };
+  if (est === 'devolucion_parcial') return { cls: 'devolucion_parcial', label: 'Devolucion parcial' };
   const r = o.recepcion && o.recepcion.resumen;
   if (r === 'falta') return { cls: 'falta', label: 'Recibido / falta' };
   if (r === 'adicion') return { cls: 'adicion', label: 'Recibido / adicion' };
@@ -1314,7 +1323,7 @@ function renderOrdenes() {
     const contrato = contratoReal(o);
     const info = estadoOrdenInfo(o);
     const tieneHerr = o.items && o.items.some((it) => estado.materiales.find((m) => m.id === it.materialId && m.esHerramienta));
-    const badgeDevol = (tieneHerr && o.tipo === 'salida' && est === 'completado') ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
+    const badgeDevol = (tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
     return `
     <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
@@ -1326,7 +1335,7 @@ function renderOrdenes() {
       <td class="der">${(o.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
-        ${(tieneHerr && o.tipo === 'salida' && est === 'completado') ? `<button class="btn-icon" title="Devolver herramientas" data-devolver-herr="${o.id}">🔁</button>` : ''}
+        ${(tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? `<button class="btn-icon" title="Devolver herramientas" data-devolver-herr="${o.id}">🔁</button>` : ''}
         <button class="btn-icon" title="Repetir esta orden" data-repetir="${o.id}">🔁</button>
         <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
@@ -1425,7 +1434,11 @@ function modalDevolverHerramientas(ordenId) {
         count++;
       }
       if (count === 0) { toast('No seleccionaste ninguna herramienta', 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; return; }
-      toast('Herramientas devueltas y estado actualizado', 'ok');
+      // Actualizar el estado de la orden segun si se devolvieron todas o quedan pendientes.
+      const totalHerr = herrItems.length;
+      const nuevoEstado = (count >= totalHerr) ? 'devolucion_completada' : 'devolucion_parcial';
+      await actualizarEstadoOrden(orden.id, nuevoEstado);
+      toast(count >= totalHerr ? 'Todas las herramientas devueltas — orden completada' : 'Devolucion parcial — quedan herramientas pendientes', 'ok');
       cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; }
   });
