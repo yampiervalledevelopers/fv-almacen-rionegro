@@ -1330,7 +1330,7 @@ function renderOrdenes() {
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
       <td><span class="estado-badge ${info.cls}">${info.label}</span>${badgeDevol}</td>
-      <td>${esc(o.responsable || '-')}</td>
+      <td>${ordenResponsablesTexto(o)}</td>
       <td>${o.frente ? (esc(o.frente) + (contrato ? ` <span style="color:var(--texto-mute)">(${esc(contrato)})</span>` : '')) : esc(o.proveedor || '-')}</td>
       <td class="der">${(o.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
@@ -1610,10 +1610,16 @@ function normTxt(s) {
 function claveBorradorOrden(tipo) { return 'fviecom_borrador_orden_' + tipo; }
 function guardarBorradorOrden(tipo) {
   try {
+    const respRows = Array.from(document.querySelectorAll('#o-responsables-list .resp-row'));
+    const responsables = respRows.map((row) => ({
+      nombre: (row.querySelector('.resp-nombre') || {}).value || '',
+      whatsapp: (row.querySelector('.resp-whatsapp') || {}).value || ''
+    })).filter((r) => r.nombre || r.whatsapp);
     const d = {
       frente: (($('#o-frente') || {}).value) || '',
       proveedor: (($('#o-proveedor') || {}).value) || '',
-      responsable: (($('#o-responsable') || {}).value) || '',
+      responsable: responsables.length > 0 ? responsables[0].nombre : '',
+      responsables: responsables,
       nota: (($('#o-nota') || {}).value) || '',
       items: (estado.itemsOrden || []).map((it) => ({ materialId: it.materialId || '', cantidad: it.cantidad || '' })),
       ts: Date.now()
@@ -1680,8 +1686,9 @@ function modalOrden(tipo, precarga) {
     <div class="form-grid">
       ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
       <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', base ? (base.frente || '') : '')}</div>
-      <div class="campo"><label>Responsable</label>
-        <input id="o-responsable" list="lista-resp-ord" placeholder="Nombre del responsable" autocomplete="off" />
+      <div class="campo full"><label style="font-weight:600">Responsable(s)</label>
+        <div id="o-responsables-list"></div>
+        <button type="button" class="btn-ghost" id="o-add-resp" style="margin-top:6px;font-size:12px">＋ Agregar responsable</button>
         <datalist id="lista-resp-ord">${responsablesExistentes().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
       </div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
@@ -1699,10 +1706,44 @@ function modalOrden(tipo, precarga) {
       <button class="btn-primary" id="o-guardar">Generar e imprimir</button>
     </div>`, '640px');
 
+  // --- Multi-responsables: estado local para filas de responsable ---
+  let responsablesOrden = [];
+  if (base && Array.isArray(base.responsables) && base.responsables.length) {
+    responsablesOrden = base.responsables.map((r, i) => ({ _id: Date.now() + i, nombre: r.nombre || '', whatsapp: r.whatsapp || '' }));
+  } else if (base && base.responsable) {
+    responsablesOrden = [{ _id: Date.now(), nombre: base.responsable, whatsapp: base.whatsappResponsable || '' }];
+  } else {
+    responsablesOrden = [{ _id: Date.now(), nombre: '', whatsapp: '' }];
+  }
+
+  const renderResponsables = () => {
+    const cont = $('#o-responsables-list');
+    cont.innerHTML = responsablesOrden.map((r) => `
+      <div class="resp-row" data-resp="${r._id}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <input type="text" class="resp-nombre" list="lista-resp-ord" placeholder="Nombre del responsable" value="${esc(r.nombre)}" autocomplete="off" style="flex:2" />
+        <input type="text" class="resp-whatsapp" placeholder="WhatsApp (ej: 573001234567)" value="${esc(r.whatsapp)}" style="flex:1.2" />
+        <button type="button" class="btn-icon peligro resp-quitar" title="Quitar" style="flex:none">✕</button>
+      </div>`).join('');
+    cont.querySelectorAll('.resp-row').forEach((row) => {
+      const id = Number(row.dataset.resp);
+      const item = responsablesOrden.find((x) => x._id === id);
+      const nomEl = row.querySelector('.resp-nombre');
+      const waEl = row.querySelector('.resp-whatsapp');
+      nomEl.addEventListener('input', () => { item.nombre = nomEl.value; persistir(); });
+      waEl.addEventListener('input', () => { item.whatsapp = waEl.value; persistir(); });
+      row.querySelector('.resp-quitar').addEventListener('click', () => {
+        responsablesOrden = responsablesOrden.filter((x) => x._id !== id);
+        if (responsablesOrden.length === 0) responsablesOrden.push({ _id: Date.now(), nombre: '', whatsapp: '' });
+        renderResponsables(); persistir();
+      });
+    });
+  };
+  renderResponsables();
+  $('#o-add-resp').addEventListener('click', () => { responsablesOrden.push({ _id: Date.now() + Math.random(), nombre: '', whatsapp: '' }); renderResponsables(); persistir(); });
+
   // Restaurar los textos (del borrador o de la orden copiada).
   if (base) {
     if ($('#o-proveedor')) $('#o-proveedor').value = base.proveedor || '';
-    if ($('#o-responsable')) $('#o-responsable').value = base.responsable || '';
     if ($('#o-nota')) $('#o-nota').value = base.nota || '';
   }
 
@@ -1748,7 +1789,7 @@ function modalOrden(tipo, precarga) {
   render();
 
   // Guardar el borrador cuando cambian los campos de cabecera.
-  ['o-frente', 'o-responsable', 'o-proveedor', 'o-nota'].forEach((cid) => {
+  ['o-frente', 'o-proveedor', 'o-nota'].forEach((cid) => {
     const el = $('#' + cid);
     if (el) { el.addEventListener('change', persistir); el.addEventListener('input', persistir); }
   });
@@ -1790,6 +1831,10 @@ function modalOrden(tipo, precarga) {
     if ((tipo === 'salida' || tipo === 'devolucion') && !frenteVal) {
       if (!confirm('Estas generando esta orden SIN frente de obra. Deseas continuar?')) return;
     }
+    // Obtener responsables del formulario
+    const respFinales = responsablesOrden.filter((r) => r.nombre.trim());
+    const responsablePrincipal = respFinales.length > 0 ? respFinales[0].nombre.trim() : '';
+    const responsablesArr = respFinales.map((r) => ({ nombre: r.nombre.trim(), whatsapp: r.whatsapp.trim() }));
     const btn = $('#o-guardar'); btn.disabled = true; btn.textContent = 'Generando...';
     try {
       const orden = await registrarOrden({
@@ -1797,18 +1842,18 @@ function modalOrden(tipo, precarga) {
         frente: frenteVal,
         contrato: contratoDeFrente(frenteVal),
         proveedor: proveedorVal,
-        responsable: $('#o-responsable').value.trim(),
+        responsable: responsablePrincipal,
+        responsables: responsablesArr,
         nota: $('#o-nota').value.trim(),
         usuario: nombreUsuario(), items
       });
       // Actualizar estado de herramientas despachadas
       if (tipo === 'salida') {
-        const responsable = $('#o-responsable').value.trim();
         const frente = (($('#o-frente') || {}).value || '').trim();
         for (const it of items) {
           const mat = estado.materiales.find((x) => x.id === it.materialId);
           if (mat && mat.esHerramienta) {
-            await actualizarHerramientaDespacho(it.materialId, responsable, frente, 'salida');
+            await actualizarHerramientaDespacho(it.materialId, responsablePrincipal, frente, 'salida');
           }
         }
       }
@@ -2189,7 +2234,7 @@ function renderResponsable() {
 
   // --- Seccion: Herramientas en posesion actualmente ---
   if (herrEnPosesion.length > 0) {
-    html += `<tr><td colspan="5" style="padding:14px 12px 8px;background:rgba(255,84,112,0.08);border-left:4px solid #ff5470">
+    html += `<tr><td colspan="6" style="padding:14px 12px 8px;background:rgba(255,84,112,0.08);border-left:4px solid #ff5470">
       <b style="font-size:14px;color:#ff9db0">🔧 HERRAMIENTAS EN POSESION ACTUAL (${herrEnPosesion.length})</b>
       <span style="font-size:11px;color:var(--texto-mute);margin-left:8px">Pendientes de devolucion</span>
     </td></tr>`;
@@ -2199,8 +2244,9 @@ function renderResponsable() {
       <td>${esc(h.serial || '-')}${h.marca ? ' · ' + esc(h.marca) : ''}${h.modelo ? ' / ' + esc(h.modelo) : ''}</td>
       <td>${h.frenteActual ? 'Frente ' + esc(h.frenteActual) : '-'}</td>
       <td style="font-size:11px;color:var(--texto-mute)">${esc(h.ubicacion || '')}</td>
+      <td><button class="btn-ghost btn-devolver-directa" data-devolver-id="${h.id}" data-devolver-nombre="${esc(nombre)}" data-devolver-frente="${esc(h.frenteActual || '')}" style="font-size:11px;padding:3px 8px;white-space:nowrap">↩ Devolver</button></td>
     </tr>`).join('');
-    html += `<tr><td colspan="5" style="padding:4px"></td></tr>`;
+    html += `<tr><td colspan="6" style="padding:4px"></td></tr>`;
   }
 
   // --- Seccion: Historial de Herramientas (por fecha) ---
@@ -2248,6 +2294,37 @@ function renderResponsable() {
   }
 
   cuerpo.innerHTML = html;
+
+  // Evento para devolucion directa desde la vista de responsable
+  cuerpo.querySelectorAll('.btn-devolver-directa').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      const materialId = btn.dataset.devolverId;
+      const responsable = btn.dataset.devolverNombre;
+      const frente = btn.dataset.devolverFrente;
+      const mat = estado.materiales.find((m) => m.id === materialId);
+      if (!mat) { toast('Herramienta no encontrada', 'error'); return; }
+      if (!confirm('Devolver "' + (mat.nombre || '') + '" al almacen?')) return;
+      btn.disabled = true; btn.textContent = 'Procesando...';
+      try {
+        await actualizarHerramientaDespacho(materialId, responsable, frente, 'devolucion');
+        await registrarMovimiento({
+          tipo: 'devolucion',
+          materialId: materialId,
+          materialNombre: mat.nombre || '',
+          cantidad: 1,
+          unidad: mat.unidad || 'unidad',
+          frente: frente,
+          contrato: contratoDeFrente(frente),
+          proveedor: '',
+          responsable: responsable,
+          nota: 'Devolucion directa desde vista de responsable',
+          usuario: nombreUsuario()
+        });
+        toast('Herramienta "' + (mat.nombre || '') + '" devuelta al almacen', 'ok');
+        renderResponsable();
+      } catch (err) { toast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = '↩ Devolver'; }
+    });
+  });
 }
 
 /* ==================================================================
@@ -2610,10 +2687,26 @@ function cabeceraDoc() {
   </div>`;
 }
 function firmasDoc(almacenista, responsable) {
+  // Soporta multiples responsables: si se pasa un array, genera una firma por cada uno.
+  const resps = Array.isArray(responsable) ? responsable : (responsable ? [responsable] : ['-']);
+  const firmasResp = resps.map((r) => {
+    const nombre = typeof r === 'object' ? (r.nombre || '-') : (r || '-');
+    return `<div class="doc-firma"><div class="linea"></div><div class="rol">Responsable</div><div class="nombre">${esc(nombre)}</div></div>`;
+  }).join('');
   return `<div class="doc-firmas">
     <div class="doc-firma"><div class="linea"></div><div class="rol">Almacenista</div><div class="nombre">${esc(almacenista || '-')}</div></div>
-    <div class="doc-firma"><div class="linea"></div><div class="rol">Responsable</div><div class="nombre">${esc(responsable || '-')}</div></div>
+    ${firmasResp}
   </div>`;
+}
+// Helpers para mostrar responsables (retrocompatible con ordenes antiguas que solo tienen string).
+function ordenResponsablesLista(o) {
+  if (Array.isArray(o.responsables) && o.responsables.length > 0) return o.responsables;
+  return o.responsable ? [o.responsable] : [];
+}
+function ordenResponsablesTexto(o) {
+  const lista = ordenResponsablesLista(o);
+  if (lista.length === 0) return esc('-');
+  return lista.map((r) => esc(typeof r === 'object' ? r.nombre : r)).join(', ');
 }
 function docOrden(o, almacenista) {
   const t = TIPOS[o.tipo] || TIPOS.salida;
@@ -2638,7 +2731,7 @@ function docOrden(o, almacenista) {
         <div><b>Fecha del pedido:</b> ${fmtFecha(o.fecha)}</div>
         <div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>
         <div><b>Resultado:</b> ${esc(resumenTxt)}</div>
-        <div><b>Responsable:</b> ${esc(o.responsable || '-')}</div>
+        <div><b>Responsable(s):</b> ${ordenResponsablesTexto(o)}</div>
       </div>
       <table class="doc-tabla">
         <thead><tr><th>#</th><th>Material</th><th style="text-align:right">Pedido</th><th style="text-align:right">Recibido</th><th>Unidad</th><th>Estado</th></tr></thead>
@@ -2647,7 +2740,7 @@ function docOrden(o, almacenista) {
       ${adic ? `<h3 style="font-size:13px;margin:16px 0 6px;color:#0a1a3a">Adiciones (llegaron de mas o materiales nuevos)</h3>
       <table class="doc-tabla"><thead><tr><th>#</th><th>Material</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead><tbody>${adic}</tbody></table>` : ''}
       ${o.nota ? `<p class="doc-nota"><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
-      ${firmasDoc(almacenista, o.responsable)}
+      ${firmasDoc(almacenista, ordenResponsablesLista(o))}
     </div>`;
   }
   const metaLugar = esProv
@@ -2683,12 +2776,12 @@ function docOrden(o, almacenista) {
       <div><b>N° Orden:</b> ${esc(o.numero || '-')}</div>
       <div><b>Fecha:</b> ${fmtFecha(o.fecha)}</div>
       ${metaLugar}
-      <div><b>Responsable:</b> ${esc(o.responsable || '-')}</div>
+      <div><b>Responsable(s):</b> ${ordenResponsablesTexto(o)}</div>
     </div>
     ${tablaMateriales}
     ${tablaHerramientas}
     ${o.nota ? `<p class="doc-nota"><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
-    ${firmasDoc(almacenista, o.responsable)}
+    ${firmasDoc(almacenista, ordenResponsablesLista(o))}
   </div>`;
 }
 function imprimirMovimiento(id) {
