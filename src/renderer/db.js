@@ -261,6 +261,7 @@ export async function registrarOrden(orden) {
     contrato: orden.contrato || '',
     proveedor: orden.proveedor || '',
     responsable: orden.responsable || '',
+    responsables: Array.isArray(orden.responsables) ? orden.responsables : [],
     nota: orden.nota || '',
     usuario: orden.usuario || '',
     fecha,
@@ -273,6 +274,7 @@ export async function registrarOrden(orden) {
     id: ordenRef.id, numero, tipo, estado: estadoOrden,
     frente: orden.frente || '', contrato: orden.contrato || '',
     proveedor: orden.proveedor || '', responsable: orden.responsable || '',
+    responsables: Array.isArray(orden.responsables) ? orden.responsables : [],
     nota: orden.nota || '', usuario: orden.usuario || '',
     fecha: new Date().toISOString(), items
   };
