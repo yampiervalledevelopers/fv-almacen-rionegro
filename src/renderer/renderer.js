@@ -322,11 +322,11 @@ function inyectarExtras() {
       <select id="sel-responsable" class="select" style="min-width:260px"></select>
       <button class="btn-primary" id="btn-imprimir-historial">🖨 Imprimir historial</button>
     </div>
-    <div class="mov-hint">💡 El historial se agrupa por orden. Haz <b>doble clic</b> en una fila (o clic en la ▸) para ver el detalle.</div>
+    <div class="mov-hint">💡 El historial separa <b>herramientas</b> de <b>materiales</b> y se organiza por fecha. Las herramientas en posesion se muestran primero con su estado actual.</div>
     <div class="panel sin-pad">
       <table class="tabla">
         <thead><tr>
-          <th>Fecha</th><th>N° Orden / Material</th><th>Tipo</th><th class="cen">Items</th><th>Frente / Proveedor</th>
+          <th>Estado / Tipo</th><th>Material / Herramienta</th><th>Detalle</th><th>Orden / Frente</th><th>Info</th>
         </tr></thead>
         <tbody id="cuerpo-responsable"></tbody>
       </table>
@@ -1388,9 +1388,9 @@ function modalDevolverHerramientas(ordenId) {
   if (!orden) { toast('No se encontro la orden', 'error'); return; }
   const herrItems = (orden.items || []).filter((it) => {
     const m = estado.materiales.find((x) => x.id === it.materialId);
-    return m && m.esHerramienta;
+    return m && m.esHerramienta && m.estadoHerr === 'en_uso';
   });
-  if (herrItems.length === 0) { toast('Esta orden no tiene herramientas para devolver', 'error'); return; }
+  if (herrItems.length === 0) { toast('Esta orden no tiene herramientas pendientes por devolver', 'error'); return; }
 
   const checkboxes = herrItems.map((it, i) => {
     const m = estado.materiales.find((x) => x.id === it.materialId);
@@ -2159,51 +2159,95 @@ function renderResponsable() {
   $('#resp-vacio').hidden = lista.length !== 0;
   if (lista.length === 0) { $('#resp-vacio').textContent = 'Este responsable no tiene movimientos.'; cuerpo.innerHTML = ''; return; }
 
-  // Agrupar por orden (los sueltos quedan como individuales), como en Movimientos.
-  const grupos = [];
-  const porOrden = {};
-  for (const mv of lista) {
-    if (mv.ordenNumero) {
-      let g = porOrden[mv.ordenNumero];
-      if (!g) { g = porOrden[mv.ordenNumero] = { key: 'ord-' + mv.ordenNumero, esOrden: true, ordenNumero: mv.ordenNumero, tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: contratoDeFrente(mv.frente), proveedor: mv.proveedor, movimientos: [] }; grupos.push(g); }
-      g.movimientos.push(mv);
-      if (mv.fecha && String(mv.fecha) > String(g.fecha || '')) g.fecha = mv.fecha;
-    } else {
-      grupos.push({ key: 'mov-' + mv.id, esOrden: false, ordenNumero: '', tipo: mv.tipo, fecha: mv.fecha, frente: mv.frente, contrato: contratoDeFrente(mv.frente), proveedor: mv.proveedor, movimientos: [mv] });
+  // Helper para estado de herramienta
+  const estadoHerramientaLabel = (e) => {
+    const labels = { disponible: '✅ Disponible', en_uso: '🔧 En uso', mantenimiento: '⚠️ Mantenimiento', baja: '❌ Baja' };
+    return labels[e] || e || '✅ Disponible';
+  };
+
+  // Separar movimientos en materiales y herramientas
+  const matDe = (mv) => estado.materiales.find((x) => x.id === mv.materialId);
+  const movsMat = lista.filter((mv) => { const m = matDe(mv); return !m || !m.esHerramienta; });
+  const movsHerr = lista.filter((mv) => { const m = matDe(mv); return m && m.esHerramienta; });
+
+  // Agrupar por fecha (YYYY-MM-DD)
+  const agruparPorFecha = (movs) => {
+    const porFecha = {};
+    for (const mv of movs) {
+      const dia = (mv.fecha || '').slice(0, 10) || 'Sin fecha';
+      if (!porFecha[dia]) porFecha[dia] = [];
+      porFecha[dia].push(mv);
+    }
+    return Object.keys(porFecha).sort((a, b) => b.localeCompare(a)).map((dia) => ({ dia, movs: porFecha[dia] }));
+  };
+
+  // Herramientas actualmente en posesion (en_uso asignadas a este responsable)
+  const herrEnPosesion = estado.materiales.filter((m) => m.esHerramienta && (m.responsableActual || '').trim() === nombre && m.estadoHerr === 'en_uso');
+
+  // Construir HTML
+  let html = '';
+
+  // --- Seccion: Herramientas en posesion actualmente ---
+  if (herrEnPosesion.length > 0) {
+    html += `<tr><td colspan="5" style="padding:14px 12px 8px;background:rgba(255,84,112,0.08);border-left:4px solid #ff5470">
+      <b style="font-size:14px;color:#ff9db0">🔧 HERRAMIENTAS EN POSESION ACTUAL (${herrEnPosesion.length})</b>
+      <span style="font-size:11px;color:var(--texto-mute);margin-left:8px">Pendientes de devolucion</span>
+    </td></tr>`;
+    html += herrEnPosesion.map((h) => `<tr style="background:rgba(255,84,112,0.04)">
+      <td style="padding-left:18px"><span class="estado-badge ${esc(h.estadoHerr || 'disponible')}">${estadoHerramientaLabel(h.estadoHerr)}</span></td>
+      <td><b>${esc(h.nombre)}</b></td>
+      <td>${esc(h.serial || '-')}${h.marca ? ' · ' + esc(h.marca) : ''}${h.modelo ? ' / ' + esc(h.modelo) : ''}</td>
+      <td>${h.frenteActual ? 'Frente ' + esc(h.frenteActual) : '-'}</td>
+      <td style="font-size:11px;color:var(--texto-mute)">${esc(h.ubicacion || '')}</td>
+    </tr>`).join('');
+    html += `<tr><td colspan="5" style="padding:4px"></td></tr>`;
+  }
+
+  // --- Seccion: Historial de Herramientas (por fecha) ---
+  if (movsHerr.length > 0) {
+    html += `<tr><td colspan="5" style="padding:14px 12px 8px;background:rgba(77,163,255,0.08);border-left:4px solid #4da3ff">
+      <b style="font-size:14px;color:#9fc2ef">🔧 HISTORIAL DE HERRAMIENTAS (${movsHerr.length} movimientos)</b>
+    </td></tr>`;
+    const gruposFecha = agruparPorFecha(movsHerr);
+    for (const gf of gruposFecha) {
+      html += `<tr><td colspan="5" style="padding:8px 12px 4px;font-size:12px;font-weight:700;color:var(--texto-dim);background:rgba(77,163,255,0.04)">📅 ${fmtFecha(gf.dia)}</td></tr>`;
+      for (const mv of gf.movs) {
+        const m = matDe(mv);
+        const estadoBadge = m ? `<span class="estado-badge ${esc(m.estadoHerr || 'disponible')}">${estadoHerramientaLabel(m.estadoHerr)}</span>` : '';
+        html += `<tr>
+          <td style="padding-left:18px"><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
+          <td><b>${esc(mv.materialNombre)}</b>${m && m.serial ? ' <span style="color:var(--texto-mute)">[' + esc(m.serial) + ']</span>' : ''}</td>
+          <td style="text-align:right"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td>
+          <td>${esc(mv.ordenNumero || '-')}</td>
+          <td>${estadoBadge}</td>
+        </tr>`;
+      }
+    }
+    html += `<tr><td colspan="5" style="padding:4px"></td></tr>`;
+  }
+
+  // --- Seccion: Historial de Materiales (por fecha) ---
+  if (movsMat.length > 0) {
+    html += `<tr><td colspan="5" style="padding:14px 12px 8px;background:rgba(46,204,113,0.08);border-left:4px solid #2ecc71">
+      <b style="font-size:14px;color:#7ee6a8">📦 HISTORIAL DE MATERIALES (${movsMat.length} movimientos)</b>
+    </td></tr>`;
+    const gruposFecha = agruparPorFecha(movsMat);
+    for (const gf of gruposFecha) {
+      html += `<tr><td colspan="5" style="padding:8px 12px 4px;font-size:12px;font-weight:700;color:var(--texto-dim);background:rgba(46,204,113,0.04)">📅 ${fmtFecha(gf.dia)}</td></tr>`;
+      for (const mv of gf.movs) {
+        const lugar = mv.frente ? esc(mv.frente) : esc(mv.proveedor || '-');
+        html += `<tr>
+          <td style="padding-left:18px"><span class="tipo-badge ${mv.tipo}">${(TIPOS[mv.tipo] || {}).label || mv.tipo}</span></td>
+          <td><b>${esc(mv.materialNombre)}</b></td>
+          <td style="text-align:right"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td>
+          <td>${esc(mv.ordenNumero || '-')}</td>
+          <td>${lugar}</td>
+        </tr>`;
+      }
     }
   }
-  grupos.sort((a, b) => String(b.fecha || '').localeCompare(String(a.fecha || '')));
 
-  cuerpo.innerHTML = grupos.map((g) => {
-    const lugar = g.frente ? (esc(g.frente) + (g.contrato ? ` <span style="color:var(--texto-mute)">(${esc(g.contrato)})</span>` : '')) : esc(g.proveedor || '-');
-    const idCol = g.esOrden
-      ? `<span class="caret">▸</span> <b>${esc(g.ordenNumero)}</b>`
-      : `<span class="caret">▸</span> <span style="color:var(--texto-mute)">Individual:</span> ${esc((g.movimientos[0] || {}).materialNombre || '-')}`;
-    const detalle = g.movimientos.map((mv) => `<tr><td>${esc(mv.materialNombre)}</td><td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td><td>${esc(mv.nota || '-')}</td></tr>`).join('');
-    return `
-      <tr class="grupo-row" data-key="${g.key}" title="Doble clic para ver el detalle">
-        <td>${fmtFecha(g.fecha)}</td>
-        <td class="codigo-cel">${idCol}</td>
-        <td><span class="tipo-badge ${g.tipo}">${(TIPOS[g.tipo] || {}).label || g.tipo}</span></td>
-        <td class="cen">${g.movimientos.length}</td>
-        <td>${lugar}</td>
-      </tr>
-      <tr class="grupo-detalle" data-key="${g.key}" hidden>
-        <td colspan="5">
-          <table class="tabla-detalle">
-            <thead><tr><th>Material</th><th class="der">Cantidad</th><th>Nota</th></tr></thead>
-            <tbody>${detalle}</tbody>
-          </table>
-        </td>
-      </tr>`;
-  }).join('');
-
-  cuerpo.querySelectorAll('tr.grupo-row').forEach((row) => {
-    const toggle = () => { const det = row.nextElementSibling; if (det && det.classList.contains('grupo-detalle')) { det.hidden = !det.hidden; row.classList.toggle('abierto', !det.hidden); } };
-    row.addEventListener('dblclick', toggle);
-    const caret = row.querySelector('.caret');
-    if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
-  });
+  cuerpo.innerHTML = html;
 }
 
 /* ==================================================================
@@ -2394,7 +2438,7 @@ function imprimirConsumo() {
    ================================================================== */
 let docNombreActual = 'Documento_FVIECOM';
 
-// Muestra el documento y ofrece: Imprimir, Guardar como PDF, Compartir por Gmail.
+// Muestra el documento y ofrece: Imprimir, Guardar como PDF, Compartir por Gmail, WhatsApp.
 function imprimir(html, nombre) {
   const area = $('#print-area');
   if (!area) return;
@@ -2406,16 +2450,19 @@ function imprimir(html, nombre) {
       <button class="btn-primary" id="doc-imprimir">🖨️ Imprimir</button>
       <button class="btn-primary" id="doc-guardar">💾 Guardar como PDF</button>
       <button class="btn-primary" id="doc-compartir">📧 Compartir por Gmail</button>
+      <button class="btn-primary" id="doc-whatsapp" style="background:#25d366;border-color:#25d366">📱 WhatsApp</button>
     </div>
     <p style="color:var(--texto-mute);font-size:11.5px;margin-top:14px;line-height:1.6">
       💡 <b>Guardar como PDF</b>: se abre la ventana de impresion; en <b>Destino</b> elige <b>"Guardar como PDF"</b>.<br>
-      💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envias tu.
+      💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envias tu.<br>
+      💡 <b>WhatsApp</b>: se abre WhatsApp con el texto del documento listo para enviar al responsable.
     </p>
     <div class="modal-acciones"><button class="btn-ghost" id="doc-cerrar">Cerrar</button></div>
   `);
   $('#doc-imprimir').addEventListener('click', () => window.print());
   $('#doc-guardar').addEventListener('click', () => { toast('En "Destino" elige "Guardar como PDF"', 'ok'); setTimeout(() => window.print(), 500); });
   $('#doc-compartir').addEventListener('click', compartirPorGmail);
+  $('#doc-whatsapp').addEventListener('click', compartirPorWhatsApp);
   $('#doc-cerrar').addEventListener('click', cerrarModal);
 }
 
@@ -2430,6 +2477,126 @@ function compartirPorGmail() {
     '&su=' + encodeURIComponent(asunto) + '&body=' + encodeURIComponent(cuerpo);
   window.open(url, '_blank');
   toast('Abriendo Gmail... adjunta el PDF y envialo tu', 'ok');
+}
+
+// Abre WhatsApp con el texto del documento formateado para enviar como mensaje.
+function compartirPorWhatsApp() {
+  const area = $('#print-area');
+  if (!area) { toast('No hay documento para compartir', 'error'); return; }
+
+  // Extraer informacion del documento generado
+  const nl = String.fromCharCode(10);
+  let texto = '';
+
+  // Header
+  texto += '📋 *FVIECOM S.A.S*' + nl;
+  texto += 'FV Ingenieria Electrica y Telecomunicaciones' + nl;
+  texto += 'Proyecto: Aeropuerto Intl. Jose Maria Cordova - Rionegro' + nl;
+  texto += '━━━━━━━━━━━━━━━━━━━━' + nl + nl;
+
+  // Titulo del documento
+  const titulo = area.querySelector('.doc-titulo');
+  if (titulo) {
+    texto += '📄 *' + titulo.textContent.trim() + '*' + nl + nl;
+  }
+
+  // Metadata
+  const meta = area.querySelector('.doc-meta');
+  if (meta) {
+    const divs = meta.querySelectorAll('div');
+    for (const d of divs) {
+      const t = d.textContent.trim();
+      if (t) texto += '▪️ ' + t + nl;
+    }
+    texto += nl;
+  }
+
+  // Secciones de materiales y herramientas
+  const subs = area.querySelectorAll('.doc-sub');
+  const tablas = area.querySelectorAll('.doc-tabla');
+  if (subs.length > 0) {
+    for (let s = 0; s < subs.length; s++) {
+      const subTitulo = subs[s].textContent.trim();
+      const esHerrSeccion = /herramienta/i.test(subTitulo);
+      texto += (esHerrSeccion ? '🔧' : '📦') + ' *' + subTitulo + '*' + nl;
+      texto += '─────────────────────' + nl;
+      // Buscar la tabla correspondiente
+      if (tablas[s]) {
+        const filas = tablas[s].querySelectorAll('tbody tr');
+        for (const fila of filas) {
+          const celdas = fila.querySelectorAll('td');
+          if (celdas.length >= 3) {
+            const num = celdas[0] ? celdas[0].textContent.trim() : '';
+            const nombre = celdas[1] ? celdas[1].textContent.trim() : '';
+            const cant = celdas[2] ? celdas[2].textContent.trim() : '';
+            const extra = celdas[3] ? celdas[3].textContent.trim() : '';
+            texto += num + '. ' + nombre + ' - ' + cant + (extra ? ' ' + extra : '') + nl;
+          }
+        }
+      }
+      texto += nl;
+    }
+  } else if (tablas.length > 0) {
+    // Sin subsecciones pero con tablas
+    texto += '📦 *ITEMS*' + nl;
+    texto += '─────────────────────' + nl;
+    const filas = tablas[0].querySelectorAll('tbody tr');
+    for (const fila of filas) {
+      const celdas = fila.querySelectorAll('td');
+      if (celdas.length >= 3) {
+        const num = celdas[0] ? celdas[0].textContent.trim() : '';
+        const nombre = celdas[1] ? celdas[1].textContent.trim() : '';
+        const cant = celdas[2] ? celdas[2].textContent.trim() : '';
+        texto += num + '. ' + nombre + ' - ' + cant + nl;
+      }
+    }
+    texto += nl;
+  }
+
+  // Buscar herramientas en posesion del responsable para incluir estado
+  const metaTexto = meta ? meta.textContent : '';
+  const respMatch = metaTexto.match(/Responsable:\s*([^\n]+)/);
+  const respNombre = respMatch ? respMatch[1].trim() : '';
+  if (respNombre) {
+    const herrResp = estado.materiales.filter((m) => m.esHerramienta && (m.responsableActual || '').trim() === respNombre && m.estadoHerr === 'en_uso');
+    if (herrResp.length > 0) {
+      texto += '⚠️ *HERRAMIENTAS PENDIENTES DE DEVOLUCION*' + nl;
+      texto += '─────────────────────' + nl;
+      const estadoEmoji = { disponible: '✅', en_uso: '🔧', mantenimiento: '⚠️', baja: '❌' };
+      for (let i = 0; i < herrResp.length; i++) {
+        const h = herrResp[i];
+        const emoji = estadoEmoji[h.estadoHerr] || '🔧';
+        texto += (i + 1) + '. ' + emoji + ' ' + h.nombre + nl;
+        texto += '   Serial: ' + (h.serial || '-') + nl;
+        if (h.marca || h.modelo) texto += '   ' + (h.marca || '') + (h.modelo ? ' / ' + h.modelo : '') + nl;
+        texto += '   Estado: ' + (h.estadoHerr || 'disponible').replace('_', ' ') + nl;
+        if (h.frenteActual) texto += '   Frente: ' + h.frenteActual + nl;
+      }
+      texto += nl;
+    }
+  }
+
+  // Aviso de devolucion si tiene herramientas
+  const avisoDevol = area.querySelector('[style*="c0392b"]');
+  if (avisoDevol) {
+    texto += '🚨 *' + avisoDevol.textContent.trim().replace(/\s+/g, ' ') + '*' + nl + nl;
+  }
+
+  // Nota si existe
+  const nota = area.querySelector('.doc-nota');
+  if (nota) {
+    texto += '📝 ' + nota.textContent.trim() + nl + nl;
+  }
+
+  // Footer
+  texto += '━━━━━━━━━━━━━━━━━━━━' + nl;
+  texto += '📅 Fecha: ' + new Date().toLocaleDateString('es-CO') + nl;
+  texto += '👤 Generado por: ' + nombreUsuario() + nl;
+  texto += '🏢 FVIECOM S.A.S - Almacen Rionegro' + nl;
+
+  const url = 'https://wa.me/?text=' + encodeURIComponent(texto);
+  window.open(url, '_blank');
+  toast('Abriendo WhatsApp... elige el contacto y envia', 'ok');
 }
 
 function cabeceraDoc() {
