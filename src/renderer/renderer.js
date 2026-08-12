@@ -1730,6 +1730,13 @@ function modalOrden(tipo, precarga) {
       const nomEl = row.querySelector('.resp-nombre');
       const waEl = row.querySelector('.resp-whatsapp');
       nomEl.addEventListener('input', () => { item.nombre = nomEl.value; persistir(); });
+      nomEl.addEventListener('change', () => {
+        item.nombre = nomEl.value;
+        // Autocompletar el WhatsApp si hay uno guardado en memoria.
+        const waGuardado = buscarWhatsappResp(nomEl.value);
+        if (waGuardado && !waEl.value) { waEl.value = waGuardado; item.whatsapp = waGuardado; }
+        persistir();
+      });
       waEl.addEventListener('input', () => { item.whatsapp = waEl.value; persistir(); });
       row.querySelector('.resp-quitar').addEventListener('click', () => {
         responsablesOrden = responsablesOrden.filter((x) => x._id !== id);
@@ -1858,6 +1865,7 @@ function modalOrden(tipo, precarga) {
         }
       }
       limpiarBorradorOrden(tipo);
+      guardarDirectorioResp(responsablesOrden);
       cerrarModal();
       toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
       imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero);
@@ -2192,8 +2200,30 @@ function movimientosDeResponsable(nombre) {
   return estado.movimientos.filter((m) => (m.responsable || '').trim() === nombre);
 }
 // Nombres de responsables ya usados (para autocompletar y evitar duplicados).
+// Directorio de responsables con memoria (localStorage): nombre → whatsapp.
+// Se actualiza cada vez que se guarda una orden con responsables.
+const CLAVE_DIR_RESP = 'fviecom_directorio_responsables';
+function leerDirectorioResp() {
+  try { return JSON.parse(localStorage.getItem(CLAVE_DIR_RESP) || '{}'); } catch (e) { return {}; }
+}
+function guardarDirectorioResp(responsables) {
+  const dir = leerDirectorioResp();
+  (responsables || []).forEach((r) => {
+    const nom = (r.nombre || '').trim();
+    const wa = (r.whatsapp || '').trim();
+    if (nom) { if (wa) dir[nom] = wa; else if (!dir[nom]) dir[nom] = ''; }
+  });
+  try { localStorage.setItem(CLAVE_DIR_RESP, JSON.stringify(dir)); } catch (e) { /* ignore */ }
+}
+function buscarWhatsappResp(nombre) {
+  const dir = leerDirectorioResp();
+  const nom = (nombre || '').trim();
+  return dir[nom] || '';
+}
 function responsablesExistentes() {
-  return Array.from(new Set(estado.movimientos.map((m) => (m.responsable || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  const fromMov = estado.movimientos.map((m) => (m.responsable || '').trim()).filter(Boolean);
+  const fromDir = Object.keys(leerDirectorioResp());
+  return Array.from(new Set([...fromMov, ...fromDir])).sort((a, b) => a.localeCompare(b));
 }
 function renderResponsable() {
   const cuerpo = $('#cuerpo-responsable');
