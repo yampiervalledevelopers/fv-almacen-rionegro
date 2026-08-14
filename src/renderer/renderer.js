@@ -1951,7 +1951,7 @@ function modalOrden(tipo, precarga) {
     const cont = $('#o-responsables-list');
     cont.innerHTML = responsablesOrden.map((r) => `
       <div class="resp-row" data-resp="${r._id}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-        <input type="text" class="resp-nombre" list="lista-resp-ord" placeholder="Nombre del responsable" value="${esc(r.nombre)}" autocomplete="off" style="flex:2" />
+        <input type="text" class="resp-nombre" list="lista-resp-ord" placeholder="Nombre del responsable" value="${esc(r.nombre)}" style="flex:2" />
         <input type="text" class="resp-whatsapp" placeholder="WhatsApp (ej: 573001234567)" value="${esc(r.whatsapp)}" style="flex:1.2" />
         <button type="button" class="btn-icon peligro resp-quitar" title="Quitar" style="flex:none">✕</button>
       </div>`).join('');
