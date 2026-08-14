@@ -342,7 +342,6 @@ function inyectarExtras() {
     .tabla thead th, .tabla tbody td { padding:6px 4px; font-size:11px; }
     .acciones-cel { flex-wrap:wrap; }
   }
-  .btn-menu-hamburger { display:none !important; }
   /* --- Filtro tipo material en responsables --- */
   #filtro-tipo-resp { min-width:160px; }
   /* --- Campo fecha en modales --- */
