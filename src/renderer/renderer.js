@@ -1013,6 +1013,8 @@ function filaMaterialHtml(m, clase, oculto) {
 // Estado de grupos plegados en el inventario (por Tipo y por Clase).
 // Estado de grupos en el inventario. Se guarda qué está ABIERTO (por defecto todo cerrado).
 const invAbierto = { tipos: new Set(), clases: new Set() };
+// Estado de dias abiertos en Movimientos (por defecto todo cerrado).
+const movDiasAbiertos = new Set();
 
 function renderInventario() {
   if (!$('#cuerpo-inventario')) return;
@@ -1300,40 +1302,65 @@ function renderMovimientos() {
     return;
   }
 
-  cuerpo.innerHTML = filtrados.map((g) => {
-    const lugar = g.frente
-      ? (esc(g.frente) + (g.contrato ? ` <span style="color:var(--texto-mute)">(${esc(g.contrato)})</span>` : ''))
-      : esc(g.proveedor || '-');
-    const idCol = g.esOrden
-      ? `<span class="caret">▸</span> <b>${esc(g.ordenNumero)}</b>`
-      : `<span class="caret">▸</span> <span style="color:var(--texto-mute)">Individual:</span> ${esc((g.movimientos[0] || {}).materialNombre || '-')}`;
-    const acciones = g.esOrden
-      ? `<button class="btn-icon" title="Imprimir orden" data-print-grupo="${g.key}">🖨</button>
-         <button class="btn-icon peligro" title="Eliminar orden" data-del-grupo="${g.key}">🗑</button>`
-      : `<button class="btn-icon" title="Imprimir comprobante" data-print-mov="${g.movimientos[0].id}">🖨</button>
-         <button class="btn-icon peligro" title="Eliminar movimiento" data-del-mov="${g.movimientos[0].id}">🗑</button>`;
-    const detalle = g.movimientos.map((mv) => `
-      <tr><td>${esc(mv.materialNombre)}</td><td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td><td>${esc(mv.nota || '-')}</td></tr>`).join('');
-    return `
-      <tr class="grupo-row" data-key="${g.key}" title="Doble clic para ver el detalle">
-        <td>${fmtFecha(g.fecha)}</td>
-        <td class="codigo-cel">${idCol}</td>
-        <td><span class="tipo-badge ${g.tipo}">${(TIPOS[g.tipo] || {}).label || g.tipo}</span></td>
-        <td class="cen">${g.movimientos.length}</td>
-        <td>${lugar}</td>
-        <td>${esc(g.responsable || '-')}</td>
-        <td>${esc(g.usuario || '-')}</td>
-        <td class="cen"><div class="acciones-cel">${acciones}</div></td>
-      </tr>
-      <tr class="grupo-detalle" data-key="${g.key}" hidden>
-        <td colspan="8">
-          <table class="tabla-detalle">
-            <thead><tr><th>Material</th><th class="der">Cantidad</th><th>Nota</th></tr></thead>
-            <tbody>${detalle}</tbody>
-          </table>
-        </td>
-      </tr>`;
-  }).join('');
+  // Agrupar los grupos por dia (YYYY-MM-DD) para mostrar encabezados de fecha.
+  const porDia = {};
+  for (const g of filtrados) {
+    const dia = (g.fecha || '').slice(0, 10) || 'Sin fecha';
+    if (!porDia[dia]) porDia[dia] = [];
+    porDia[dia].push(g);
+  }
+  const dias = Object.keys(porDia).sort((a, b) => b.localeCompare(a));
+
+  let html = '';
+  for (const dia of dias) {
+    const grupos = porDia[dia];
+    const diaAbierto = movDiasAbiertos.has(dia);
+    const fechaLabel = dia === 'Sin fecha' ? 'Sin fecha' : fmtFechaCorta(dia);
+    html += `<tr class="inv-tipo ${diaAbierto ? 'abierto' : ''}" data-toggle-dia="${esc(dia)}"><td colspan="8"><span class="caret">▸</span> 📅 ${esc(fechaLabel)} <span class="conteo">(${grupos.length} orden(es))</span></td></tr>`;
+    for (const g of grupos) {
+      mapa[g.key] = g;
+      const lugar = g.frente
+        ? (esc(g.frente) + (g.contrato ? ` <span style="color:var(--texto-mute)">(${esc(g.contrato)})</span>` : ''))
+        : esc(g.proveedor || '-');
+      const idCol = g.esOrden
+        ? `<span class="caret">▸</span> <b>${esc(g.ordenNumero)}</b>`
+        : `<span class="caret">▸</span> <span style="color:var(--texto-mute)">Individual:</span> ${esc((g.movimientos[0] || {}).materialNombre || '-')}`;
+      const acciones = g.esOrden
+        ? `<button class="btn-icon" title="Imprimir orden" data-print-grupo="${g.key}">🖨</button>
+           <button class="btn-icon peligro" title="Eliminar orden" data-del-grupo="${g.key}">🗑</button>`
+        : `<button class="btn-icon" title="Imprimir comprobante" data-print-mov="${g.movimientos[0].id}">🖨</button>
+           <button class="btn-icon peligro" title="Eliminar movimiento" data-del-mov="${g.movimientos[0].id}">🗑</button>`;
+      const detalle = g.movimientos.map((mv) => `
+        <tr><td>${esc(mv.materialNombre)}</td><td class="der"><b>${fmtNum(mv.cantidad)}</b> ${esc(mv.unidad || '')}</td><td>${esc(mv.nota || '-')}</td></tr>`).join('');
+      html += `
+        <tr class="grupo-row" data-key="${g.key}" title="Doble clic para ver el detalle"${diaAbierto ? '' : ' hidden'}>
+          <td>${fmtFecha(g.fecha)}</td>
+          <td class="codigo-cel">${idCol}</td>
+          <td><span class="tipo-badge ${g.tipo}">${(TIPOS[g.tipo] || {}).label || g.tipo}</span></td>
+          <td class="cen">${g.movimientos.length}</td>
+          <td>${lugar}</td>
+          <td>${esc(g.responsable || '-')}</td>
+          <td>${esc(g.usuario || '-')}</td>
+          <td class="cen"><div class="acciones-cel">${acciones}</div></td>
+        </tr>
+        <tr class="grupo-detalle" data-key="${g.key}" hidden>
+          <td colspan="8">
+            <table class="tabla-detalle">
+              <thead><tr><th>Material</th><th class="der">Cantidad</th><th>Nota</th></tr></thead>
+              <tbody>${detalle}</tbody>
+            </table>
+          </td>
+        </tr>`;
+    }
+  }
+  cuerpo.innerHTML = html;
+
+  // Toggle dias
+  cuerpo.querySelectorAll('[data-toggle-dia]').forEach((el) => el.addEventListener('click', () => {
+    const d = el.dataset.toggleDia;
+    if (movDiasAbiertos.has(d)) movDiasAbiertos.delete(d); else movDiasAbiertos.add(d);
+    renderMovimientos();
+  }));
 
   // Expandir / colapsar el detalle con doble clic en la fila (o clic en la ▸).
   const toggle = (row) => {
