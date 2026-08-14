@@ -1011,7 +1011,8 @@ function filaMaterialHtml(m, clase, oculto) {
     </tr>`;
 }
 // Estado de grupos plegados en el inventario (por Tipo y por Clase).
-const invColapsado = { tipos: new Set(), clases: new Set() };
+// Estado de grupos en el inventario. Se guarda qué está ABIERTO (por defecto todo cerrado).
+const invAbierto = { tipos: new Set(), clases: new Set() };
 
 function renderInventario() {
   if (!$('#cuerpo-inventario')) return;
@@ -1034,7 +1035,7 @@ function renderInventario() {
   for (const tipo of tipos) {
     const clases = Object.keys(porTipo[tipo]).sort((a, b) => a.localeCompare(b));
     const totalTipo = clases.reduce((s, c) => s + porTipo[tipo][c].length, 0);
-    const tipoCerrado = invColapsado.tipos.has(tipo);
+    const tipoCerrado = !invAbierto.tipos.has(tipo);
     html += `<tr class="inv-tipo ${tipoCerrado ? '' : 'abierto'}" data-toggle-tipo="${esc(tipo)}"><td colspan="8"><span class="caret">▸</span> ▦ ${esc(tipo)} <span class="conteo">(${totalTipo})</span></td></tr>`;
     if (clases.length === 0) {
       html += `<tr class="inv-vacio-grupo"${tipoCerrado ? ' hidden' : ''}><td colspan="8">Sin materiales todavia en esta categoria.</td></tr>`;
@@ -1042,7 +1043,7 @@ function renderInventario() {
     for (const clase of clases) {
       const mats = porTipo[tipo][clase].slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
       const cKey = tipo + '||' + clase;
-      const claseCerrada = invColapsado.clases.has(cKey);
+      const claseCerrada = !invAbierto.clases.has(cKey);
       html += `<tr class="inv-clase ${claseCerrada ? '' : 'abierto'}" data-toggle-clase="${esc(cKey)}"${tipoCerrado ? ' hidden' : ''}><td colspan="8"><span class="caret">▸</span> ${esc(clase)} <span class="conteo">(${mats.length})</span></td></tr>`;
       const filasOcultas = tipoCerrado || claseCerrada;
       html += mats.map((m) => filaMaterialHtml(m, clase, filasOcultas)).join('');
@@ -1054,12 +1055,12 @@ function renderInventario() {
   // Plegar / desplegar grupos
   cuerpo.querySelectorAll('[data-toggle-tipo]').forEach((el) => el.addEventListener('click', () => {
     const t = el.dataset.toggleTipo;
-    if (invColapsado.tipos.has(t)) invColapsado.tipos.delete(t); else invColapsado.tipos.add(t);
+    if (invAbierto.tipos.has(t)) invAbierto.tipos.delete(t); else invAbierto.tipos.add(t);
     renderInventario();
   }));
   cuerpo.querySelectorAll('[data-toggle-clase]').forEach((el) => el.addEventListener('click', () => {
     const c = el.dataset.toggleClase;
-    if (invColapsado.clases.has(c)) invColapsado.clases.delete(c); else invColapsado.clases.add(c);
+    if (invAbierto.clases.has(c)) invAbierto.clases.delete(c); else invAbierto.clases.add(c);
     renderInventario();
   }));
   cuerpo.querySelectorAll('[data-editar]').forEach((b) => b.addEventListener('click', () => modalMaterial(b.dataset.editar)));
