@@ -471,6 +471,7 @@ function inyectarExtras() {
   vistaResp.innerHTML = `
     <div class="barra-acciones" style="flex-wrap:wrap">
       <select id="sel-responsable" class="select" style="min-width:260px"></select>
+      <input type="search" id="buscar-resp" class="input-buscar" placeholder="Buscar material o herramienta..." disabled />
       <select id="filtro-tipo-resp" class="select">
         <option value="">Todos los tipos</option>
         <option value="materiales">Solo materiales</option>
@@ -1676,6 +1677,10 @@ function imprimirOrdenDevolucion(orden, itemsDevueltos) {
     </div>
     ${firmasDoc(nombreUsuario(), orden.responsable)}
   </div>`;
+  const waTexto = '✅ *Devolución de la orden (' + (orden.numero || '-') + ')*\n\n'
+    + itemsDevueltos.map((it) => '• ' + it.materialNombre).join('\n')
+    + '\n\n✅ Devuelto exitosamente';
+  window._devolucionWhatsAppTexto = waTexto;
   imprimir(html, 'Devolucion_' + (orden.numero || 'herramientas'));
 }
 
@@ -2430,8 +2435,11 @@ function renderResponsable() {
   const cuerpo = $('#cuerpo-responsable');
   if (!cuerpo) return;
   const nombre = $('#sel-responsable').value;
-  if (!nombre) { cuerpo.innerHTML = ''; $('#resp-vacio').hidden = false; $('#resp-vacio').textContent = 'Elige un responsable para ver su historial completo.'; return; }
+  const buscarEl = $('#buscar-resp');
+  if (buscarEl) buscarEl.disabled = !nombre;
+  if (!nombre) { cuerpo.innerHTML = ''; $('#resp-vacio').hidden = false; $('#resp-vacio').textContent = 'Elige un responsable para ver su historial completo.'; if (buscarEl) buscarEl.value = ''; return; }
   const lista = movimientosDeResponsable(nombre);
+  const qResp = normTxt(buscarEl ? buscarEl.value : '');
   $('#resp-vacio').hidden = lista.length !== 0;
   if (lista.length === 0) { $('#resp-vacio').textContent = 'Este responsable no tiene movimientos.'; cuerpo.innerHTML = ''; return; }
 
@@ -2444,10 +2452,11 @@ function renderResponsable() {
     return labels[e] || e || '✅ Disponible';
   };
 
-  // Separar movimientos en materiales y herramientas
+  // Separar movimientos en materiales y herramientas (filtrados por texto del buscador)
   const matDe = (mv) => estado.materiales.find((x) => x.id === mv.materialId);
-  const movsMat = filtroTipo === 'herramientas' ? [] : lista.filter((mv) => { const m = matDe(mv); return !m || !m.esHerramienta; });
-  const movsHerr = filtroTipo === 'materiales' ? [] : lista.filter((mv) => { const m = matDe(mv); return m && m.esHerramienta; });
+  const pasaTexto = (mv) => !qResp || normTxt((mv.materialNombre || '') + ' ' + (mv.nota || '') + ' ' + (mv.ordenNumero || '')).includes(qResp);
+  const movsMat = filtroTipo === 'herramientas' ? [] : lista.filter((mv) => { const m = matDe(mv); return (!m || !m.esHerramienta) && pasaTexto(mv); });
+  const movsHerr = filtroTipo === 'materiales' ? [] : lista.filter((mv) => { const m = matDe(mv); return m && m.esHerramienta && pasaTexto(mv); });
 
   // Agrupar por fecha (YYYY-MM-DD)
   const agruparPorFecha = (movs) => {
@@ -2556,9 +2565,49 @@ function renderResponsable() {
         });
         toast('Herramienta "' + (mat.nombre || '') + '" devuelta al almacen', 'ok');
         renderResponsable();
+        // Generar la orden de devolucion e imprimir/compartir
+        const ordenAsociada = estado.ordenes.find((o) => (o.items || []).some((it) => it.materialId === materialId));
+        const pseudoOrden = { numero: ordenAsociada ? ordenAsociada.numero : 'DEV-' + Date.now().toString(36), frente: frente, responsable: responsable };
+        const itemsDevueltos = [{ materialId, materialNombre: mat.nombre, cantidad: 1, unidad: mat.unidad || 'unidad' }];
+        imprimirOrdenDevolucionWhatsApp(pseudoOrden, itemsDevueltos);
       } catch (err) { toast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = '↩ Devolver'; }
     });
   });
+}
+
+// Genera el doc de devolucion y abre el modal de imprimir/compartir.
+// El texto de WhatsApp es un resumen corto con emoji ✅.
+function imprimirOrdenDevolucionWhatsApp(orden, itemsDevueltos) {
+  const contrato = contratoReal(orden);
+  const filas = itemsDevueltos.map((it, i) => {
+    const m = estado.materiales.find((x) => x.id === it.materialId);
+    return `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td>${esc(m && m.serial ? m.serial : '-')}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad || '')}</td></tr>`;
+  }).join('');
+  const html = `<div class="doc">
+    ${cabeceraDoc()}
+    <h2 class="doc-titulo">ORDEN DE DEVOLUCION DE HERRAMIENTAS</h2>
+    <div class="doc-meta">
+      <div><b>Orden original:</b> ${esc(orden.numero || '-')}</div>
+      <div><b>Fecha de devolucion:</b> ${fmtFecha(new Date().toISOString())}</div>
+      <div><b>Contrato:</b> ${esc(contrato || '-')}</div>
+      <div><b>Frente de obra:</b> ${esc(orden.frente || '-')}</div>
+      <div><b>Responsable:</b> ${esc(orden.responsable || '-')}</div>
+    </div>
+    <table class="doc-tabla">
+      <thead><tr><th>#</th><th>Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+    <div style="border:2px solid #2ecc71;border-radius:10px;padding:14px 18px;margin:18px 0;text-align:center;color:#27ae60;font-size:14px;font-weight:bold;line-height:1.5">
+      ✅ HERRAMIENTAS RECIBIDAS EN ALMACEN
+    </div>
+    ${firmasDoc(nombreUsuario(), orden.responsable)}
+  </div>`;
+  // Guardar texto especial para WhatsApp de devoluciones
+  const waTexto = '✅ *Devolución de la orden (' + (orden.numero || '-') + ')*\n\n'
+    + itemsDevueltos.map((it) => '• ' + it.materialNombre).join('\n')
+    + '\n\n✅ Devuelto exitosamente';
+  window._devolucionWhatsAppTexto = waTexto;
+  imprimir(html, 'Devolucion_' + (orden.numero || 'herramienta'));
 }
 
 /* ==================================================================
@@ -2792,6 +2841,15 @@ function compartirPorGmail() {
 
 // Abre WhatsApp con el texto del documento formateado para enviar como mensaje.
 function compartirPorWhatsApp() {
+  // Si hay texto especial de devolucion, usarlo directamente.
+  if (window._devolucionWhatsAppTexto) {
+    const texto = window._devolucionWhatsAppTexto;
+    window._devolucionWhatsAppTexto = null;
+    const url = 'https://wa.me/?text=' + encodeURIComponent(texto);
+    window.open(url, '_blank');
+    toast('Abriendo WhatsApp...', 'ok');
+    return;
+  }
   const area = $('#print-area');
   if (!area) { toast('No hay documento para compartir', 'error'); return; }
 
@@ -3175,6 +3233,7 @@ if ($('#btn-nueva-categoria')) $('#btn-nueva-categoria').addEventListener('click
 $$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalOrden(b.dataset.nuevaOrden)));
 $('#sel-responsable').addEventListener('change', renderResponsable);
 $('#filtro-tipo-resp').addEventListener('change', renderResponsable);
+if ($('#buscar-resp')) $('#buscar-resp').addEventListener('input', renderResponsable);
 $('#btn-imprimir-historial').addEventListener('click', imprimirHistorialResponsable);
 $('#cons-contrato').addEventListener('change', () => { llenarFrentesConsumo(); renderConsumo(); });
 $('#cons-frente').addEventListener('change', renderConsumo);
