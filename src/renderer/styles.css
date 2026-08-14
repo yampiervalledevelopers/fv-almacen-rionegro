@@ -331,3 +331,10 @@ button { font-family: inherit; cursor: pointer; }
   .cards { grid-template-columns: repeat(2, 1fr); }
   .grid-2, .cards-reportes { grid-template-columns: 1fr; }
 }
+
+@media (max-width: 900px) {
+  body { overflow: auto; }
+  .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
+  .sidebar { position: fixed; left: -280px; top: 0; bottom: 0; width: 264px; z-index: 60; transition: left 0.25s ease; }
+  .contenido { overflow-y: visible; padding: 0 12px 30px; }
+}
