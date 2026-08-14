@@ -2,6 +2,7 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; script-src 'self' https://www.gstatic.com; connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss://*.firebaseio.com https://www.gstatic.com https://firestore.googleapis.com; img-src 'self' data:; style-src 'self' 'unsafe-inline';" />
   <title>Inventario FVIECOM</title>
@@ -203,7 +204,10 @@
     <div class="modal">
       <div class="modal-head">
         <h3 id="modal-titulo">Titulo</h3>
-        <button class="modal-cerrar" id="modal-cerrar">✕</button>
+        <div class="modal-controles">
+          <button class="modal-minimizar" id="modal-minimizar" title="Minimizar / Restaurar">▬</button>
+          <button class="modal-cerrar" id="modal-cerrar">✕</button>
+        </div>
       </div>
       <div class="modal-body" id="modal-body"></div>
     </div>

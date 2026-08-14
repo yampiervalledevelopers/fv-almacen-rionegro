@@ -162,6 +162,11 @@ export async function registrarMovimiento(mov) {
   const tipo = ['entrada', 'salida', 'devolucion'].includes(mov.tipo) ? mov.tipo : 'salida';
   const delta = deltaStock(tipo, cantidad);
 
+  // Si se pasa una fecha personalizada (ISO string), se usa un Timestamp;
+  // de lo contrario se emplea serverTimestamp().
+  const fechaVal = mov.fecha ? new Date(mov.fecha) : null;
+  const fechaGuardar = fechaVal && !isNaN(fechaVal.getTime()) ? fechaVal : serverTimestamp();
+
   const batch = writeBatch(db);
   const matRef = doc(db, COL_MATERIALES, mov.materialId);
   batch.update(matRef, { cantidad: increment(delta), actualizado: serverTimestamp() });
@@ -179,7 +184,7 @@ export async function registrarMovimiento(mov) {
     responsable: mov.responsable || '',
     nota: mov.nota || '',
     usuario: mov.usuario || '',
-    fecha: serverTimestamp(),
+    fecha: fechaGuardar,
     ordenId: '',
     ordenNumero: ''
   });
@@ -220,7 +225,10 @@ export async function registrarOrden(orden) {
   if (items.length === 0) throw new Error('Agrega al menos un material con cantidad valida.');
 
   const numero = generarNumeroOrden(tipo);
-  const fecha = serverTimestamp();
+  // Si se pasa una fecha personalizada (ISO string), se usa un Date;
+  // de lo contrario se emplea serverTimestamp().
+  const fechaCustom = orden.fecha ? new Date(orden.fecha) : null;
+  const fecha = (fechaCustom && !isNaN(fechaCustom.getTime())) ? fechaCustom : serverTimestamp();
   const batch = writeBatch(db);
   const ordenRef = doc(collection(db, COL_ORDENES));
 
@@ -276,7 +284,7 @@ export async function registrarOrden(orden) {
     proveedor: orden.proveedor || '', responsable: orden.responsable || '',
     responsables: Array.isArray(orden.responsables) ? orden.responsables : [],
     nota: orden.nota || '', usuario: orden.usuario || '',
-    fecha: new Date().toISOString(), items
+    fecha: (fechaCustom && !isNaN(fechaCustom.getTime())) ? fechaCustom.toISOString() : new Date().toISOString(), items
   };
 }
 

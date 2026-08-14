@@ -98,8 +98,34 @@ function esc(s) {
 function fmtNum(n) { return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
 function fmtFecha(f) {
   if (!f) return '-';
-  try { return new Date(f).toLocaleString('es-CO', { dateStyle: 'short', timeStyle: 'short' }); }
+  try { return new Date(f).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' }); }
   catch (e) { return String(f); }
+}
+
+// Genera la hora actual en zona horaria de Colombia como string para datetime-local
+function fechaLocalColombia() {
+  const ahora = new Date();
+  // Obtener la hora en Colombia (UTC-5)
+  const col = new Date(ahora.toLocaleString('en-US', { timeZone: 'America/Bogota' }));
+  const y = col.getFullYear();
+  const m = String(col.getMonth() + 1).padStart(2, '0');
+  const d = String(col.getDate()).padStart(2, '0');
+  const h = String(col.getHours()).padStart(2, '0');
+  const min = String(col.getMinutes()).padStart(2, '0');
+  return `${y}-${m}-${d}T${h}:${min}`;
+}
+// HTML del campo de fecha con boton "Hora actual"
+function htmlCampoFecha(id) {
+  return `<div class="campo full"><label>Fecha y hora</label>
+    <div class="fecha-picker">
+      <input type="datetime-local" id="${id}" value="${fechaLocalColombia()}" />
+      <button type="button" class="btn-ghost btn-ahora" id="${id}-ahora">🕐 Hora actual</button>
+    </div>
+  </div>`;
+}
+function vincularCampoFecha(id) {
+  const btn = $(`#${id}-ahora`);
+  if (btn) btn.addEventListener('click', () => { $(`#${id}`).value = fechaLocalColombia(); });
 }
 
 let toastTimer = null;
@@ -130,13 +156,90 @@ function opcionesSelect(lista, sel) {
 function abrirModal(titulo, htmlBody, ancho) {
   $('#modal-titulo').textContent = titulo;
   $('#modal-body').innerHTML = htmlBody;
+  const wrap = $('#modal');
   const m = $('#modal .modal');
-  if (m) m.style.maxWidth = ancho ? ancho : '';
-  $('#modal').hidden = false;
+  if (m) {
+    m.style.maxWidth = ancho ? ancho : '';
+    m.classList.remove('modal-minimizado');
+    // Centrar el modal
+    m.style.left = '';
+    m.style.top = '';
+    m.style.position = '';
+    wrap.classList.remove('modal-draggable');
+  }
+  wrap.hidden = false;
+  // Habilitar arrastre despues de abrir
+  setTimeout(() => habilitarDragModal(), 50);
 }
-function cerrarModal() { $('#modal').hidden = true; $('#modal-body').innerHTML = ''; }
+function cerrarModal() { $('#modal').hidden = true; $('#modal-body').innerHTML = ''; const m = $('#modal .modal'); if (m) { m.classList.remove('modal-minimizado'); m.style.left = ''; m.style.top = ''; m.style.position = ''; } $('#modal').classList.remove('modal-draggable'); }
+function minimizarModal() {
+  const m = $('#modal .modal');
+  if (m) m.classList.toggle('modal-minimizado');
+}
+function habilitarDragModal() {
+  const wrap = $('#modal');
+  const m = wrap.querySelector('.modal');
+  const head = wrap.querySelector('.modal-head');
+  if (!m || !head) return;
+  let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+  // Remove previous listeners by cloning head content approach - use flag instead
+  if (head._dragSetup) return;
+  head._dragSetup = true;
+  head.addEventListener('mousedown', (e) => {
+    if (e.target.closest('button')) return;
+    isDragging = true;
+    // Switch to draggable mode
+    if (!wrap.classList.contains('modal-draggable')) {
+      const rect = m.getBoundingClientRect();
+      wrap.classList.add('modal-draggable');
+      m.style.position = 'absolute';
+      m.style.left = rect.left + 'px';
+      m.style.top = rect.top + 'px';
+    }
+    startX = e.clientX;
+    startY = e.clientY;
+    origX = parseInt(m.style.left) || 0;
+    origY = parseInt(m.style.top) || 0;
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    m.style.left = (origX + dx) + 'px';
+    m.style.top = (origY + dy) + 'px';
+  });
+  document.addEventListener('mouseup', () => { isDragging = false; });
+  // Touch support for mobile
+  head.addEventListener('touchstart', (e) => {
+    if (e.target.closest('button')) return;
+    isDragging = true;
+    const touch = e.touches[0];
+    if (!wrap.classList.contains('modal-draggable')) {
+      const rect = m.getBoundingClientRect();
+      wrap.classList.add('modal-draggable');
+      m.style.position = 'absolute';
+      m.style.left = rect.left + 'px';
+      m.style.top = rect.top + 'px';
+    }
+    startX = touch.clientX;
+    startY = touch.clientY;
+    origX = parseInt(m.style.left) || 0;
+    origY = parseInt(m.style.top) || 0;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    const touch = e.touches[0];
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+    m.style.left = (origX + dx) + 'px';
+    m.style.top = (origY + dy) + 'px';
+  }, { passive: true });
+  document.addEventListener('touchend', () => { isDragging = false; });
+}
 
 $('#modal-cerrar').addEventListener('click', cerrarModal);
+$('#modal-minimizar').addEventListener('click', minimizarModal);
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') cerrarModal(); });
 
 /* ==================================================================
@@ -198,6 +301,54 @@ function inyectarExtras() {
   .mat-picker .mat-filtro { font-size:12px; padding:7px 9px; }
   .orden-aviso { background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35); color:#c9f0d8; border-radius:8px; padding:9px 12px; font-size:12.5px; margin-bottom:12px; }
   .link-btn { background:none; border:none; color:#4da3ff; cursor:pointer; text-decoration:underline; font-size:12.5px; padding:0; }
+  /* --- Modal draggable & minimizable --- */
+  .modal-wrap.modal-draggable { align-items:flex-start; justify-content:flex-start; pointer-events:none; }
+  .modal-wrap.modal-draggable .modal { pointer-events:all; position:absolute; cursor:default; margin:0; }
+  .modal-head { cursor:move; user-select:none; }
+  .modal-head .modal-controles { display:flex; gap:6px; align-items:center; }
+  .modal-head .modal-minimizar { background:none; border:none; color:var(--texto-dim); font-size:16px; cursor:pointer; padding:2px 6px; }
+  .modal-head .modal-minimizar:hover { color:var(--cian); }
+  .modal.modal-minimizado { overflow:hidden; }
+  .modal.modal-minimizado .modal-body { display:none; }
+  .modal.modal-minimizado { max-height:56px !important; min-height:auto; resize:none; }
+  /* --- Responsive --- */
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr !important; }
+    .sidebar { position:fixed; left:-280px; top:0; bottom:0; width:264px; z-index:60; transition:left .25s ease; box-shadow:4px 0 20px rgba(0,0,0,0.5); }
+    .sidebar.sidebar-open { left:0; }
+    .sidebar-overlay { display:none; position:fixed; inset:0; z-index:55; background:rgba(0,0,0,0.4); }
+    .sidebar-overlay.activo { display:block; }
+    .topbar { padding-left:12px; }
+    .btn-menu-hamburger { display:flex !important; align-items:center; justify-content:center; background:none; border:1px solid var(--linea); color:var(--texto); border-radius:8px; width:38px; height:38px; font-size:20px; margin-right:10px; cursor:pointer; }
+    .contenido { padding:0 12px 30px; }
+    .barra-acciones { flex-wrap:wrap; }
+    .cards { grid-template-columns:1fr 1fr !important; }
+    .grid-2, .cards-reportes { grid-template-columns:1fr !important; }
+    .form-grid { grid-template-columns:1fr !important; }
+    .doc-meta { grid-template-columns:1fr !important; }
+    .doc-firmas { flex-direction:column; gap:30px; align-items:center; }
+    .orden-item-row { grid-template-columns:1fr 90px 38px !important; }
+    .tabla { font-size:12px; }
+    .tabla thead th, .tabla tbody td { padding:8px 6px; }
+    .modal { width:96vw !important; max-width:96vw !important; }
+  }
+  @media (max-width: 600px) {
+    .cards { grid-template-columns:1fr !important; }
+    .topbar h2 { font-size:16px; }
+    .topbar-proyecto { display:none; }
+    .barra-acciones { gap:6px; }
+    .barra-acciones .btn-primary, .barra-acciones .btn-ghost { font-size:12px; padding:8px 10px; }
+    .select, .input-buscar { min-width:0 !important; width:100%; font-size:12px; padding:9px 10px; }
+    .tabla thead th, .tabla tbody td { padding:6px 4px; font-size:11px; }
+    .acciones-cel { flex-wrap:wrap; }
+  }
+  .btn-menu-hamburger { display:none !important; }
+  /* --- Filtro tipo material en responsables --- */
+  #filtro-tipo-resp { min-width:160px; }
+  /* --- Campo fecha en modales --- */
+  .fecha-picker { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .fecha-picker input[type="datetime-local"] { flex:1; min-width:180px; }
+  .fecha-picker .btn-ahora { font-size:11.5px; padding:7px 12px; white-space:nowrap; }
   .kit-cargar { display:flex; gap:8px; margin:0 0 10px; }
   .kit-cargar select { flex:1; min-width:0; }
   .tipo-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
@@ -318,8 +469,13 @@ function inyectarExtras() {
   vistaResp.id = 'vista-responsables';
   vistaResp.hidden = true;
   vistaResp.innerHTML = `
-    <div class="barra-acciones">
+    <div class="barra-acciones" style="flex-wrap:wrap">
       <select id="sel-responsable" class="select" style="min-width:260px"></select>
+      <select id="filtro-tipo-resp" class="select">
+        <option value="">Todos los tipos</option>
+        <option value="materiales">Solo materiales</option>
+        <option value="herramientas">Solo herramientas</option>
+      </select>
       <button class="btn-primary" id="btn-imprimir-historial">🖨 Imprimir historial</button>
     </div>
     <div class="mov-hint">💡 El historial separa <b>herramientas</b> de <b>materiales</b> y se organiza por fecha. Las herramientas en posesion se muestran primero con su estado actual.</div>
@@ -419,6 +575,45 @@ function inyectarExtras() {
   const area = document.createElement('div');
   area.id = 'print-area';
   document.body.appendChild(area);
+
+  // ---- Responsive: hamburger menu + sidebar overlay ----
+  const topbar = $('.topbar');
+  if (topbar) {
+    const btnHamburger = document.createElement('button');
+    btnHamburger.className = 'btn-menu-hamburger';
+    btnHamburger.innerHTML = '☰';
+    btnHamburger.title = 'Menu';
+    topbar.insertBefore(btnHamburger, topbar.firstChild);
+    const overlay = document.createElement('div');
+    overlay.className = 'sidebar-overlay';
+    document.body.appendChild(overlay);
+    const sidebar = $('.sidebar');
+    btnHamburger.addEventListener('click', () => {
+      sidebar.classList.toggle('sidebar-open');
+      overlay.classList.toggle('activo');
+    });
+    overlay.addEventListener('click', () => {
+      sidebar.classList.remove('sidebar-open');
+      overlay.classList.remove('activo');
+    });
+    // Close sidebar on nav click (mobile)
+    document.querySelectorAll('.menu-item').forEach((mi) => {
+      mi.addEventListener('click', () => {
+        if (window.innerWidth <= 900) {
+          sidebar.classList.remove('sidebar-open');
+          overlay.classList.remove('activo');
+        }
+      });
+    });
+  }
+
+  // ---- Viewport meta for responsive (web version) ----
+  if (!document.querySelector('meta[name="viewport"]')) {
+    const meta = document.createElement('meta');
+    meta.name = 'viewport';
+    meta.content = 'width=device-width, initial-scale=1, maximum-scale=1';
+    document.head.appendChild(meta);
+  }
 
   // ---- Reconstruir encabezado de la tabla de movimientos ----
   const theadMov = $('#tabla-mov thead tr');
@@ -1213,6 +1408,7 @@ function modalMovimiento(materialId) {
         <input id="mv-responsable" list="lista-resp-mov" placeholder="Nombre de quien recibe / entrega" autocomplete="off" />
         <datalist id="lista-resp-mov">${responsablesExistentes().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
       </div>
+      ${htmlCampoFecha('mv-fecha')}
       <div class="campo full"><label>Nota</label><input id="mv-nota" placeholder="Opcional" /></div>
     </div>
     <div class="modal-acciones">
@@ -1220,6 +1416,7 @@ function modalMovimiento(materialId) {
       <button class="btn-primary" id="mv-guardar">Registrar</button>
     </div>`);
 
+  vincularCampoFecha('mv-fecha');
   const renderLugar = () => {
     const cont = $('#mv-campo-lugar');
     if (tipoSel === 'entrada') {
@@ -1253,7 +1450,8 @@ function modalMovimiento(materialId) {
         frente: frenteVal,
         contrato: contratoDeFrente(frenteVal),
         proveedor: proveedorVal,
-        responsable: $('#mv-responsable').value.trim(), nota: $('#mv-nota').value.trim(), usuario: nombreUsuario()
+        responsable: $('#mv-responsable').value.trim(), nota: $('#mv-nota').value.trim(), usuario: nombreUsuario(),
+        fecha: $('#mv-fecha').value ? new Date($('#mv-fecha').value).toISOString() : null
       });
       toast('Movimiento registrado', 'ok'); cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); }
@@ -1692,6 +1890,7 @@ function modalOrden(tipo, precarga) {
         <datalist id="lista-resp-ord">${responsablesExistentes().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
       </div>
       <div class="campo full"><label>Nota (opcional)</label><input id="o-nota" placeholder="Observaciones de la orden" /></div>
+      ${htmlCampoFecha('o-fecha')}
     </div>
     <label style="display:block;font-size:12px;color:var(--texto-dim);margin:14px 0 6px;font-weight:600">Materiales / Herramientas</label>
     ${estado.kits.length ? `<div class="kit-cargar">
@@ -1746,6 +1945,7 @@ function modalOrden(tipo, precarga) {
     });
   };
   renderResponsables();
+  vincularCampoFecha('o-fecha');
   $('#o-add-resp').addEventListener('click', () => { responsablesOrden.push({ _id: Date.now() + Math.random(), nombre: '', whatsapp: '' }); renderResponsables(); persistir(); });
 
   // Restaurar los textos (del borrador o de la orden copiada).
@@ -1852,7 +2052,8 @@ function modalOrden(tipo, precarga) {
         responsable: responsablePrincipal,
         responsables: responsablesArr,
         nota: $('#o-nota').value.trim(),
-        usuario: nombreUsuario(), items
+        usuario: nombreUsuario(), items,
+        fecha: $('#o-fecha').value ? new Date($('#o-fecha').value).toISOString() : null
       });
       // Actualizar estado de herramientas despachadas
       if (tipo === 'salida') {
@@ -2234,6 +2435,9 @@ function renderResponsable() {
   $('#resp-vacio').hidden = lista.length !== 0;
   if (lista.length === 0) { $('#resp-vacio').textContent = 'Este responsable no tiene movimientos.'; cuerpo.innerHTML = ''; return; }
 
+  // Filtro de tipo de material (herramientas / materiales / todos)
+  const filtroTipo = (($('#filtro-tipo-resp') || {}).value) || '';
+
   // Helper para estado de herramienta
   const estadoHerramientaLabel = (e) => {
     const labels = { disponible: '✅ Disponible', en_uso: '🔧 En uso', mantenimiento: '⚠️ Mantenimiento', baja: '❌ Baja' };
@@ -2242,8 +2446,8 @@ function renderResponsable() {
 
   // Separar movimientos en materiales y herramientas
   const matDe = (mv) => estado.materiales.find((x) => x.id === mv.materialId);
-  const movsMat = lista.filter((mv) => { const m = matDe(mv); return !m || !m.esHerramienta; });
-  const movsHerr = lista.filter((mv) => { const m = matDe(mv); return m && m.esHerramienta; });
+  const movsMat = filtroTipo === 'herramientas' ? [] : lista.filter((mv) => { const m = matDe(mv); return !m || !m.esHerramienta; });
+  const movsHerr = filtroTipo === 'materiales' ? [] : lista.filter((mv) => { const m = matDe(mv); return m && m.esHerramienta; });
 
   // Agrupar por fecha (YYYY-MM-DD)
   const agruparPorFecha = (movs) => {
@@ -2257,7 +2461,7 @@ function renderResponsable() {
   };
 
   // Herramientas actualmente en posesion (en_uso asignadas a este responsable)
-  const herrEnPosesion = estado.materiales.filter((m) => m.esHerramienta && (m.responsableActual || '').trim() === nombre && m.estadoHerr === 'en_uso');
+  const herrEnPosesion = filtroTipo === 'materiales' ? [] : estado.materiales.filter((m) => m.esHerramienta && (m.responsableActual || '').trim() === nombre && m.estadoHerr === 'en_uso');
 
   // Construir HTML
   let html = '';
@@ -2790,15 +2994,15 @@ function docOrden(o, almacenista) {
       <tbody>${filasMat}</tbody>
     </table>` : '';
   const tablaHerramientas = itemsHerr.length > 0 ? `
-    <h3 class="doc-sub">HERRAMIENTAS — ⚠️ REQUIERE DEVOLUCIÓN</h3>
+    <h3 class="doc-sub">HERRAMIENTAS${o.tipo !== 'entrada' ? ' — ⚠️ REQUIERE DEVOLUCIÓN' : ''}</h3>
     <table class="doc-tabla">
       <thead><tr><th>#</th><th>Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th></tr></thead>
       <tbody>${filasHerr}</tbody>
     </table>
-    <div style="border:3px solid #c0392b;border-radius:10px;padding:16px 20px;margin:14px 0;text-align:center;color:#c0392b;font-size:16px;font-weight:bold;line-height:1.5">
+    ${o.tipo !== 'entrada' ? `<div style="border:3px solid #c0392b;border-radius:10px;padding:16px 20px;margin:14px 0;text-align:center;color:#c0392b;font-size:16px;font-weight:bold;line-height:1.5">
       ⚠️ LAS HERRAMIENTAS LISTADAS ARRIBA REQUIEREN DEVOLUCIÓN<br>
       <span style="font-size:13px;font-weight:normal">POR FAVOR RECLAMAR EN ALMACÉN AL FINALIZAR LA LABOR</span>
-    </div>` : '';
+    </div>` : ''}` : '';
   return `<div class="doc">
     ${cabeceraDoc()}
     <h2 class="doc-titulo">${t.titulo}</h2>
@@ -2970,6 +3174,7 @@ if ($('#btn-nueva-categoria')) $('#btn-nueva-categoria').addEventListener('click
 
 $$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalOrden(b.dataset.nuevaOrden)));
 $('#sel-responsable').addEventListener('change', renderResponsable);
+$('#filtro-tipo-resp').addEventListener('change', renderResponsable);
 $('#btn-imprimir-historial').addEventListener('click', imprimirHistorialResponsable);
 $('#cons-contrato').addEventListener('change', () => { llenarFrentesConsumo(); renderConsumo(); });
 $('#cons-frente').addEventListener('change', renderConsumo);
