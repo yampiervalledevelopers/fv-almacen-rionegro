@@ -118,14 +118,16 @@ function fechaLocalColombia() {
 function htmlCampoFecha(id) {
   return `<div class="campo full"><label>Fecha y hora</label>
     <div class="fecha-picker">
-      <input type="datetime-local" id="${id}" value="${fechaLocalColombia()}" />
+      <input type="datetime-local" id="${id}" value="${fechaLocalColombia()}" data-tocado="0" />
       <button type="button" class="btn-ghost btn-ahora" id="${id}-ahora">🕐 Hora actual</button>
     </div>
   </div>`;
 }
 function vincularCampoFecha(id) {
+  const inp = $(`#${id}`);
   const btn = $(`#${id}-ahora`);
-  if (btn) btn.addEventListener('click', () => { $(`#${id}`).value = fechaLocalColombia(); });
+  if (inp) inp.addEventListener('change', () => { inp.dataset.tocado = '1'; });
+  if (btn) btn.addEventListener('click', () => { if (inp) { inp.value = fechaLocalColombia(); inp.dataset.tocado = '0'; } });
 }
 
 let toastTimer = null;
@@ -1479,7 +1481,7 @@ function modalMovimiento(materialId) {
         contrato: contratoDeFrente(frenteVal),
         proveedor: proveedorVal,
         responsable: $('#mv-responsable').value.trim(), nota: $('#mv-nota').value.trim(), usuario: nombreUsuario(),
-        fecha: $('#mv-fecha').value ? new Date($('#mv-fecha').value).toISOString() : null
+        fecha: ($('#mv-fecha') && $('#mv-fecha').dataset.tocado === '1') ? new Date($('#mv-fecha').value).toISOString() : null
       });
       toast('Movimiento registrado', 'ok'); cerrarModal();
     } catch (e) { toast('Error: ' + e.message, 'error'); }
@@ -2085,7 +2087,7 @@ function modalOrden(tipo, precarga) {
         responsables: responsablesArr,
         nota: $('#o-nota').value.trim(),
         usuario: nombreUsuario(), items,
-        fecha: $('#o-fecha').value ? new Date($('#o-fecha').value).toISOString() : null
+        fecha: ($('#o-fecha') && $('#o-fecha').dataset.tocado === '1') ? new Date($('#o-fecha').value).toISOString() : null
       });
       // Actualizar estado de herramientas despachadas
       if (tipo === 'salida') {
