@@ -486,6 +486,10 @@ function inyectarExtras() {
         <option value="materiales">Solo materiales</option>
         <option value="herramientas">Solo herramientas</option>
       </select>
+      <select id="vista-resp" class="select">
+        <option value="pedido">Ver por pedido</option>
+        <option value="totales">Ver por totales</option>
+      </select>
       <button class="btn-primary" id="btn-imprimir-historial">🖨 Imprimir historial</button>
     </div>
     <div class="mov-hint">💡 El historial separa <b>herramientas</b> de <b>materiales</b> y se organiza por fecha. Las herramientas en posesion se muestran primero con su estado actual.</div>
@@ -2523,6 +2527,60 @@ function renderResponsable() {
 
   // Filtro de tipo de material (herramientas / materiales / todos)
   const filtroTipo = (($('#filtro-tipo-resp') || {}).value) || '';
+  const vistaResp = (($('#vista-resp') || {}).value) || 'pedido';
+
+  // --- VISTA POR TOTALES ---
+  if (vistaResp === 'totales') {
+    const matDe = (mv) => estado.materiales.find((x) => x.id === mv.materialId);
+    const pasaTexto = (mv) => !qResp || normTxt((mv.materialNombre || '') + ' ' + (mv.nota || '')).includes(qResp);
+    const movsFiltr = lista.filter((mv) => {
+      const m = matDe(mv);
+      if (filtroTipo === 'herramientas' && (!m || !m.esHerramienta)) return false;
+      if (filtroTipo === 'materiales' && m && m.esHerramienta) return false;
+      return pasaTexto(mv);
+    });
+    // Agrupar por material: sumar salidas, restar devoluciones
+    const totales = {};
+    for (const mv of movsFiltr) {
+      const k = mv.materialId || mv.materialNombre;
+      if (!totales[k]) {
+        const m = matDe(mv);
+        totales[k] = { nombre: mv.materialNombre, unidad: mv.unidad || (m ? m.unidad : ''), esHerr: m ? m.esHerramienta : false, serial: m ? m.serial : '', salidas: 0, devoluciones: 0, entradas: 0 };
+      }
+      if (mv.tipo === 'salida') totales[k].salidas += Number(mv.cantidad) || 0;
+      else if (mv.tipo === 'devolucion') totales[k].devoluciones += Number(mv.cantidad) || 0;
+      else totales[k].entradas += Number(mv.cantidad) || 0;
+    }
+    const filas = Object.values(totales).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const herrTotales = filas.filter((r) => r.esHerr);
+    const matTotales = filas.filter((r) => !r.esHerr);
+    let html = '';
+    if (herrTotales.length > 0) {
+      html += `<tr class="inv-tipo abierto"><td colspan="6"><b>🔧 HERRAMIENTAS (${herrTotales.length})</b></td></tr>`;
+      html += herrTotales.map((r) => {
+        const neto = r.salidas - r.devoluciones;
+        return `<tr><td>${esc(r.nombre)}${r.serial ? ' <span style="color:var(--texto-mute)">[' + esc(r.serial) + ']</span>' : ''}</td><td class="der">${fmtNum(r.salidas)}</td><td class="der">${fmtNum(r.devoluciones)}</td><td class="der"><b>${fmtNum(neto)}</b></td><td>${esc(r.unidad)}</td><td>${neto > 0 ? '<span class="estado-badge en_uso">Pendiente</span>' : '<span class="estado-badge disponible">Devuelto</span>'}</td></tr>`;
+      }).join('');
+    }
+    if (matTotales.length > 0) {
+      html += `<tr class="inv-tipo abierto"><td colspan="6"><b>📦 MATERIALES (${matTotales.length})</b></td></tr>`;
+      html += matTotales.map((r) => {
+        const neto = r.salidas - r.devoluciones;
+        return `<tr><td>${esc(r.nombre)}</td><td class="der">${fmtNum(r.salidas)}</td><td class="der">${fmtNum(r.devoluciones)}</td><td class="der"><b>${fmtNum(neto)}</b></td><td>${esc(r.unidad)}</td><td></td></tr>`;
+      }).join('');
+    }
+    if (!html) html = '<tr><td colspan="6" class="cen" style="padding:20px;color:var(--texto-mute)">Sin resultados para este filtro.</td></tr>';
+    // Cambiar encabezado de tabla para vista totales
+    const thead = cuerpo.closest('table') && cuerpo.closest('table').querySelector('thead tr');
+    if (thead) thead.innerHTML = '<th>Material / Herramienta</th><th class="der">Salidas</th><th class="der">Devoluciones</th><th class="der">Neto</th><th>Unidad</th><th>Estado</th>';
+    cuerpo.innerHTML = html;
+    return;
+  }
+
+  // --- VISTA POR PEDIDO (la existente) ---
+  // Restaurar encabezado de tabla si cambio de vista
+  const thead = cuerpo.closest('table') && cuerpo.closest('table').querySelector('thead tr');
+  if (thead) thead.innerHTML = '<th>Estado / Tipo</th><th>Material / Herramienta</th><th>Detalle</th><th>Orden / Frente</th><th>Info</th><th></th>';
 
   // Helper para estado de herramienta
   const estadoHerramientaLabel = (e) => {
@@ -3313,6 +3371,7 @@ $$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalO
 $('#sel-responsable').addEventListener('change', renderResponsable);
 $('#filtro-tipo-resp').addEventListener('change', renderResponsable);
 if ($('#buscar-resp')) $('#buscar-resp').addEventListener('input', renderResponsable);
+if ($('#vista-resp')) $('#vista-resp').addEventListener('change', renderResponsable);
 $('#btn-imprimir-historial').addEventListener('click', imprimirHistorialResponsable);
 $('#cons-contrato').addEventListener('change', () => { llenarFrentesConsumo(); renderConsumo(); });
 $('#cons-frente').addEventListener('change', renderConsumo);
