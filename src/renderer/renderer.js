@@ -2528,7 +2528,7 @@ function renderResponsable() {
     </td></tr>`;
     const gruposFecha = agruparPorFecha(movsHerr);
     for (const gf of gruposFecha) {
-      html += `<tr><td colspan="5" style="padding:8px 12px 4px;font-size:12px;font-weight:700;color:var(--texto-dim);background:rgba(77,163,255,0.04)">📅 ${fmtFecha(gf.dia)}</td></tr>`;
+      html += `<tr><td colspan="5" style="padding:8px 12px 4px;font-size:12px;font-weight:700;color:var(--texto-dim);background:rgba(77,163,255,0.04)">📅 ${fmtFechaCorta(gf.dia)}</td></tr>`;
       for (const mv of gf.movs) {
         const m = matDe(mv);
         const estadoBadge = m ? `<span class="estado-badge ${esc(m.estadoHerr || 'disponible')}">${estadoHerramientaLabel(m.estadoHerr)}</span>` : '';
@@ -2551,7 +2551,7 @@ function renderResponsable() {
     </td></tr>`;
     const gruposFecha = agruparPorFecha(movsMat);
     for (const gf of gruposFecha) {
-      html += `<tr><td colspan="5" style="padding:8px 12px 4px;font-size:12px;font-weight:700;color:var(--texto-dim);background:rgba(46,204,113,0.04)">📅 ${fmtFecha(gf.dia)}</td></tr>`;
+      html += `<tr><td colspan="5" style="padding:8px 12px 4px;font-size:12px;font-weight:700;color:var(--texto-dim);background:rgba(46,204,113,0.04)">📅 ${fmtFechaCorta(gf.dia)}</td></tr>`;
       for (const mv of gf.movs) {
         const lugar = mv.frente ? esc(mv.frente) : esc(mv.proveedor || '-');
         html += `<tr>
