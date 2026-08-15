@@ -1138,7 +1138,7 @@ function modalMaterial(id, prefill) {
   const editando = !!m;
   const listaClases = clasesDeCategoria(b.categoria);
   const esHerr = !!b.esHerramienta;
-  abrirModal(editando ? 'Editar material' : (prefill ? 'Duplicar material' : 'Nuevo material'), `
+  abrirModal(editando ? (esHerr ? 'Editar herramienta' : 'Editar material') : (prefill ? (esHerr ? 'Nueva herramienta (duplicar)' : 'Duplicar material') : (esHerr ? 'Nueva herramienta' : 'Nuevo material / herramienta')), `
     <div class="form-grid">
       <div class="campo"><label>Codigo</label><input id="f-codigo" value="${esc(b.codigo || '')}" placeholder="Opcional" /></div>
       <div class="campo"><label>Unidad de medida</label><select id="f-unidad">${opcionesSelect(UNIDADES, b.unidad || 'unidad')}</select></div>
@@ -1174,8 +1174,8 @@ function modalMaterial(id, prefill) {
     </div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="m-cancelar">Cancelar</button>
-      ${editando ? '' : '<button class="btn-ghost" id="m-guardar-otro">Guardar y agregar otro</button>'}
-      <button class="btn-primary" id="m-guardar">${editando ? 'Guardar cambios' : 'Agregar material'}</button>
+      ${editando ? '' : `<button class="btn-ghost" id="m-guardar-otro">Guardar y agregar ${esHerr ? 'otra' : 'otro'}</button>`}
+      <button class="btn-primary" id="m-guardar">${editando ? 'Guardar cambios' : (esHerr ? 'Agregar herramienta' : 'Agregar material')}</button>
     </div>`);
 
   // Toggle campos herramienta
