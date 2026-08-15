@@ -98,7 +98,15 @@ function esc(s) {
 function fmtNum(n) { return (Number(n) || 0).toLocaleString('es-CO', { maximumFractionDigits: 2 }); }
 function fmtFecha(f) {
   if (!f) return '-';
-  try { return new Date(f).toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' }); }
+  try {
+    const d = new Date(f);
+    if (isNaN(d.getTime())) return String(f);
+    // Si la hora es exactamente medianoche UTC (00:00:00.000Z), la fecha fue
+    // guardada sin hora real (bug historico). Mostrar solo la fecha sin hora.
+    const esMedianocheUTC = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+    if (esMedianocheUTC) return d.toLocaleDateString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short' });
+    return d.toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
+  }
   catch (e) { return String(f); }
 }
 
