@@ -1966,25 +1966,29 @@ function modalOrden(tipo, precarga) {
 
   const renderResponsables = () => {
     const cont = $('#o-responsables-list');
+    const listaWa = Object.entries(leerDirectorioResp()).map(([n, w]) => w ? `<option value="${esc(w)}" label="${esc(n)}"></option>` : '').join('');
     cont.innerHTML = responsablesOrden.map((r) => `
       <div class="resp-row" data-resp="${r._id}" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
         <input type="text" class="resp-nombre" list="lista-resp-ord" placeholder="Nombre del responsable" value="${esc(r.nombre)}" style="flex:2" />
-        <input type="text" class="resp-whatsapp" placeholder="WhatsApp (ej: 573001234567)" value="${esc(r.whatsapp)}" style="flex:1.2" />
+        <input type="text" class="resp-whatsapp" list="lista-wa-ord" placeholder="WhatsApp (ej: 573001234567)" value="${esc(r.whatsapp)}" style="flex:1.2" />
         <button type="button" class="btn-icon peligro resp-quitar" title="Quitar" style="flex:none">✕</button>
       </div>`).join('');
+    // Datalist de numeros de WhatsApp conocidos
+    if (!$('#lista-wa-ord')) {
+      const dl = document.createElement('datalist'); dl.id = 'lista-wa-ord'; dl.innerHTML = listaWa; document.body.appendChild(dl);
+    } else { $('#lista-wa-ord').innerHTML = listaWa; }
     cont.querySelectorAll('.resp-row').forEach((row) => {
       const id = Number(row.dataset.resp);
       const item = responsablesOrden.find((x) => x._id === id);
       const nomEl = row.querySelector('.resp-nombre');
       const waEl = row.querySelector('.resp-whatsapp');
-      nomEl.addEventListener('input', () => { item.nombre = nomEl.value; persistir(); });
-      nomEl.addEventListener('change', () => {
-        item.nombre = nomEl.value;
-        // Autocompletar el WhatsApp si hay uno guardado en memoria.
+      const autocompletarWa = () => {
         const waGuardado = buscarWhatsappResp(nomEl.value);
         if (waGuardado && !waEl.value) { waEl.value = waGuardado; item.whatsapp = waGuardado; }
-        persistir();
-      });
+      };
+      nomEl.addEventListener('input', () => { item.nombre = nomEl.value; autocompletarWa(); persistir(); });
+      nomEl.addEventListener('change', () => { item.nombre = nomEl.value; autocompletarWa(); persistir(); });
+      nomEl.addEventListener('blur', () => { item.nombre = nomEl.value; autocompletarWa(); persistir(); });
       waEl.addEventListener('input', () => { item.whatsapp = waEl.value; persistir(); });
       row.querySelector('.resp-quitar').addEventListener('click', () => {
         responsablesOrden = responsablesOrden.filter((x) => x._id !== id);
