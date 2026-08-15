@@ -567,6 +567,7 @@ function inyectarExtras() {
         <option value="mantenimiento">Mantenimiento</option>
         <option value="baja">Baja</option>
       </select>
+      <button class="btn" id="btn-nueva-herr">+ Nueva herramienta</button>
     </div>
     <div class="mov-hint">🔧 Haz <b>doble clic</b> en una herramienta para ver su trazabilidad completa (historial de asignaciones).</div>
     <div class="panel sin-pad">
@@ -1025,6 +1026,8 @@ function filaMaterialHtml(m, clase, oculto) {
 const invAbierto = { tipos: new Set(), clases: new Set() };
 // Estado de dias abiertos en Movimientos (por defecto todo cerrado).
 const movDiasAbiertos = new Set();
+// Estado de grupos abiertos en Herramientas (por defecto todo cerrado).
+const herrGruposAbiertos = { tipos: new Set(), clases: new Set() };
 
 function renderInventario() {
   if (!$('#cuerpo-inventario')) return;
@@ -2221,8 +2224,30 @@ function renderHerramientas() {
     return labels[e] || e || 'Disponible';
   };
 
-  tbody.innerHTML = herramientas.map((h) => `
-    <tr data-herr-id="${h.id}" style="cursor:pointer">
+  // Agrupar por categoria (tipo de herramienta), luego por clase
+  const porTipo = {};
+  for (const h of herramientas) {
+    const tipo = h.categoria || 'Sin clasificar';
+    const clase = (h.clase || '').trim() || 'Sin clase';
+    porTipo[tipo] = porTipo[tipo] || {};
+    (porTipo[tipo][clase] = porTipo[tipo][clase] || []).push(h);
+  }
+  const tipos = Object.keys(porTipo).sort((a, b) => a.localeCompare(b));
+
+  let html = '';
+  for (const tipo of tipos) {
+    const clases = Object.keys(porTipo[tipo]).sort((a, b) => a.localeCompare(b));
+    const totalTipo = clases.reduce((s, c) => s + porTipo[tipo][c].length, 0);
+    const tipoCerrado = !herrGruposAbiertos.tipos.has(tipo);
+    html += `<tr class="inv-tipo ${tipoCerrado ? '' : 'abierto'}" data-toggle-herr-cat="${esc(tipo)}"><td colspan="7"><span class="caret">\u25B8</span> \uD83D\uDD27 ${esc(tipo)} <span class="conteo">(${totalTipo})</span></td></tr>`;
+    for (const clase of clases) {
+      const items = porTipo[tipo][clase].slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)));
+      const cKey = tipo + '||' + clase;
+      const claseCerrada = !herrGruposAbiertos.clases.has(cKey);
+      html += `<tr class="inv-clase ${claseCerrada ? '' : 'abierto'}" data-toggle-herr-clase="${esc(cKey)}"${tipoCerrado ? ' hidden' : ''}><td colspan="7"><span class="caret">\u25B8</span> ${esc(clase)} <span class="conteo">(${items.length})</span></td></tr>`;
+      const filasOcultas = tipoCerrado || claseCerrada;
+      for (const h of items) {
+        html += `<tr data-herr-id="${h.id}" style="cursor:pointer"${filasOcultas ? ' hidden' : ''}>
       <td><b>${esc(h.serial || '-')}</b></td>
       <td>${esc(h.nombre)}</td>
       <td>${esc(h.marca || '')}${h.modelo ? ' / ' + esc(h.modelo) : ''}</td>
@@ -2230,12 +2255,28 @@ function renderHerramientas() {
       <td>${esc(h.responsableActual || '-')}</td>
       <td>${h.frenteActual ? 'Frente ' + esc(h.frenteActual) : '-'}</td>
       <td class="cen">
-        <button class="btn-ghost btn-sm" data-herr-traza="${h.id}" title="Ver trazabilidad">📋</button>
-        <button class="btn-ghost btn-sm" data-herr-editar="${h.id}" title="Editar">✏️</button>
+        <button class="btn-ghost btn-sm" data-herr-editar="${h.id}" title="Editar">\u270E</button>
+        <button class="btn-ghost btn-sm" data-herr-traza="${h.id}" title="Ver trazabilidad">\uD83D\uDCCD</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+      }
+    }
+  }
 
-  // Eventos
+  tbody.innerHTML = html;
+
+  // Toggle eventos para categorias
+  tbody.querySelectorAll('[data-toggle-herr-cat]').forEach((el) => el.addEventListener('click', () => {
+    const t = el.dataset.toggleHerrCat;
+    if (herrGruposAbiertos.tipos.has(t)) herrGruposAbiertos.tipos.delete(t); else herrGruposAbiertos.tipos.add(t);
+    renderHerramientas();
+  }));
+  tbody.querySelectorAll('[data-toggle-herr-clase]').forEach((el) => el.addEventListener('click', () => {
+    const c = el.dataset.toggleHerrClase;
+    if (herrGruposAbiertos.clases.has(c)) herrGruposAbiertos.clases.delete(c); else herrGruposAbiertos.clases.add(c);
+    renderHerramientas();
+  }));
+  // Eventos de acciones
   tbody.querySelectorAll('[data-herr-traza]').forEach((btn) => {
     btn.addEventListener('click', (e) => { e.stopPropagation(); modalTrazabilidad(btn.dataset.herrTraza); });
   });
@@ -3266,6 +3307,7 @@ $('#filtro-tipo-mov').addEventListener('change', renderMovimientos);
 $('#btn-nuevo-mov').addEventListener('click', () => modalMovimiento(null));
 if ($('#btn-nuevo-kit')) $('#btn-nuevo-kit').addEventListener('click', () => modalKit(null));
 if ($('#btn-nueva-categoria')) $('#btn-nueva-categoria').addEventListener('click', modalCategorias);
+if ($('#btn-nueva-herr')) $('#btn-nueva-herr').addEventListener('click', () => modalMaterial(null, { esHerramienta: true }));
 
 $$('[data-nueva-orden]').forEach((b) => b.addEventListener('click', () => modalOrden(b.dataset.nuevaOrden)));
 $('#sel-responsable').addEventListener('change', renderResponsable);
