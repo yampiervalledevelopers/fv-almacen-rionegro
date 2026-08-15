@@ -567,7 +567,7 @@ function inyectarExtras() {
         <option value="mantenimiento">Mantenimiento</option>
         <option value="baja">Baja</option>
       </select>
-      <button class="btn" id="btn-nueva-herr">+ Nueva herramienta</button>
+      <button class="btn-primary" id="btn-nueva-herr">+ Nueva herramienta</button>
     </div>
     <div class="mov-hint">🔧 Haz <b>doble clic</b> en una herramienta para ver su trazabilidad completa (historial de asignaciones).</div>
     <div class="panel sin-pad">

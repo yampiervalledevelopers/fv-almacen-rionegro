@@ -42,7 +42,7 @@ body {
   overflow: hidden;
 }
 
-button { font-family: inherit; cursor: pointer; }
+button { font-family: inherit; cursor: pointer; background: none; border: none; color: inherit; font-size: inherit; }
 
 /* ---------- Botones ---------- */
 .btn-primary {
@@ -61,10 +61,11 @@ button { font-family: inherit; cursor: pointer; }
 .btn-block { width: 100%; padding: 12px; margin-top: 6px; }
 
 .btn-ghost {
-  background: transparent; color: var(--texto-dim);
+  background: rgba(255,255,255,0.04); color: var(--texto-dim);
   border: 1px solid var(--linea); padding: 9px 16px; border-radius: 10px; font-weight: 600;
+  cursor: pointer; font-size: 13px; transition: all .15s ease;
 }
-.btn-ghost:hover { color: var(--texto); border-color: var(--cian); }
+.btn-ghost:hover { color: var(--texto); border-color: var(--cian); background: rgba(77,163,255,0.08); }
 
 .btn-link { background: none; border: none; color: var(--cian); font-size: 12px; padding: 0; text-decoration: underline; }
 .btn-icon { background: rgba(255,255,255,0.05); border: 1px solid var(--linea); color: var(--texto-dim);
