@@ -3414,7 +3414,7 @@ llenarConsumo();
 /* ==================================================================
    ASISTENTE DE VOZ CON IA (Gemini via Cloud Function)
    ================================================================== */
-const CLOUD_FUNCTION_URL = 'https://us-central1-almacen-rio-jmc.cloudfunctions.net/asistente';
+const CLOUD_FUNCTION_URL = 'https://asistente-5lyachxl4a-uc.a.run.app';
 
 // Estado del asistente
 const asistente = { grabando: false, recognition: null, panelVisible: false };
