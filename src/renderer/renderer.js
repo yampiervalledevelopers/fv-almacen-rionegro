@@ -358,6 +358,19 @@ function inyectarExtras() {
   .fecha-picker { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .fecha-picker input[type="datetime-local"] { flex:1; min-width:180px; }
   .fecha-picker .btn-ahora { font-size:11.5px; padding:7px 12px; white-space:nowrap; }
+  /* --- Asistente de voz --- */
+  .btn-mic { position:fixed; bottom:24px; right:24px; z-index:100; width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg, var(--azul), var(--cian)); color:#04122b; font-size:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 24px rgba(0,200,255,0.4); cursor:pointer; border:none; transition:all .2s ease; }
+  .btn-mic:hover { transform:scale(1.1); box-shadow:0 8px 30px rgba(0,200,255,0.6); }
+  .btn-mic.grabando { background:linear-gradient(135deg, #ff5470, #c0392b); animation:pulse-mic 1s infinite; }
+  @keyframes pulse-mic { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
+  .asistente-panel { position:fixed; bottom:90px; right:24px; z-index:100; width:380px; max-width:calc(100vw - 48px); background:var(--navy-800); border:1px solid var(--linea); border-radius:16px; box-shadow:0 12px 40px rgba(0,0,0,0.6); padding:16px; display:none; }
+  .asistente-panel.activo { display:block; }
+  .asistente-panel .ap-titulo { font-size:14px; font-weight:700; color:var(--cian); margin-bottom:10px; }
+  .asistente-panel .ap-texto { font-size:13px; color:var(--texto-dim); line-height:1.5; margin-bottom:12px; min-height:40px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border:1px solid var(--linea); }
+  .asistente-panel .ap-estado { font-size:12px; color:var(--texto-mute); margin-bottom:8px; }
+  .asistente-panel .ap-resultado { font-size:12.5px; color:var(--texto); line-height:1.5; padding:10px; background:rgba(46,204,113,0.06); border:1px solid rgba(46,204,113,0.2); border-radius:8px; margin-bottom:10px; max-height:200px; overflow:auto; }
+  .asistente-panel .ap-acciones { display:flex; gap:8px; flex-wrap:wrap; }
+  @media (max-width:600px) { .btn-mic { bottom:16px; right:16px; width:48px; height:48px; font-size:20px; } .asistente-panel { bottom:74px; right:12px; width:calc(100vw - 24px); } }
   .kit-cargar { display:flex; gap:8px; margin:0 0 10px; }
   .kit-cargar select { flex:1; min-width:0; }
   .tipo-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
@@ -590,6 +603,17 @@ function inyectarExtras() {
   const area = document.createElement('div');
   area.id = 'print-area';
   document.body.appendChild(area);
+
+  // ---- Asistente de voz (boton microfono en topbar) ----
+  const topbarEl = $('.topbar');
+  if (topbarEl) {
+    const btnMic = document.createElement('button');
+    btnMic.className = 'btn-mic';
+    btnMic.id = 'btn-asistente-voz';
+    btnMic.innerHTML = '🎤';
+    btnMic.title = 'Asistente de voz (habla un comando)';
+    topbarEl.appendChild(btnMic);
+  }
 
   // ---- Responsive: hamburger menu + sidebar overlay ----
   const topbar = $('.topbar');
@@ -3386,3 +3410,224 @@ if ($('#cons-tipo-item')) $('#cons-tipo-item').addEventListener('change', render
 if ($('#cons-grafico')) $('#cons-grafico').addEventListener('change', renderConsumo);
 $('#btn-imprimir-consumo').addEventListener('click', imprimirConsumo);
 llenarConsumo();
+
+/* ==================================================================
+   ASISTENTE DE VOZ CON IA (Gemini via Cloud Function)
+   ================================================================== */
+const CLOUD_FUNCTION_URL = 'https://us-central1-almacen-rio-jmc.cloudfunctions.net/asistente';
+
+// Estado del asistente
+const asistente = { grabando: false, recognition: null, panelVisible: false };
+
+function initAsistente() {
+  // Crear el panel flotante
+  const panel = document.createElement('div');
+  panel.className = 'asistente-panel';
+  panel.id = 'asistente-panel';
+  panel.innerHTML = `
+    <div class="ap-titulo">🎤 Asistente de voz FVIECOM</div>
+    <div class="ap-estado" id="ap-estado">Presiona el microfono y habla tu comando.</div>
+    <div class="ap-texto" id="ap-texto" contenteditable="true" placeholder="El texto aparecera aqui..."></div>
+    <div class="ap-resultado" id="ap-resultado" hidden></div>
+    <div class="ap-acciones" id="ap-acciones">
+      <button class="btn-primary" id="ap-enviar" disabled>Enviar a la IA</button>
+      <button class="btn-ghost" id="ap-cerrar">Cerrar</button>
+    </div>`;
+  document.body.appendChild(panel);
+
+  const btnMic = $('#btn-asistente-voz');
+  if (!btnMic) return;
+
+  // Web Speech API (reconocimiento de voz)
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    btnMic.title = 'Tu navegador no soporta reconocimiento de voz';
+    btnMic.style.opacity = '0.5';
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'es-CO';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  asistente.recognition = recognition;
+
+  let textoFinal = '';
+  let textoInterim = '';
+
+  recognition.onresult = (event) => {
+    textoInterim = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        textoFinal += event.results[i][0].transcript + ' ';
+      } else {
+        textoInterim += event.results[i][0].transcript;
+      }
+    }
+    $('#ap-texto').textContent = textoFinal + textoInterim;
+    $('#ap-enviar').disabled = false;
+  };
+
+  recognition.onend = () => {
+    asistente.grabando = false;
+    btnMic.classList.remove('grabando');
+    $('#ap-estado').textContent = textoFinal.trim() ? 'Listo. Revisa el texto y dale "Enviar a la IA".' : 'No se detecto voz. Intenta de nuevo.';
+  };
+
+  recognition.onerror = (e) => {
+    asistente.grabando = false;
+    btnMic.classList.remove('grabando');
+    if (e.error === 'not-allowed') {
+      $('#ap-estado').textContent = 'Permiso de microfono denegado. Activa el microfono en tu navegador.';
+    } else {
+      $('#ap-estado').textContent = 'Error: ' + e.error;
+    }
+  };
+
+  // Boton microfono: toggle grabacion + mostrar panel
+  btnMic.addEventListener('click', () => {
+    if (!asistente.panelVisible) {
+      panel.classList.add('activo');
+      asistente.panelVisible = true;
+    }
+    if (asistente.grabando) {
+      recognition.stop();
+    } else {
+      textoFinal = '';
+      textoInterim = '';
+      $('#ap-texto').textContent = '';
+      $('#ap-resultado').hidden = true;
+      $('#ap-resultado').innerHTML = '';
+      $('#ap-enviar').disabled = true;
+      $('#ap-estado').textContent = '🔴 Escuchando... habla tu comando.';
+      btnMic.classList.add('grabando');
+      asistente.grabando = true;
+      recognition.start();
+    }
+  });
+
+  // Cerrar panel
+  $('#ap-cerrar').addEventListener('click', () => {
+    panel.classList.remove('activo');
+    asistente.panelVisible = false;
+    if (asistente.grabando) recognition.stop();
+  });
+
+  // Enviar a la IA
+  $('#ap-enviar').addEventListener('click', async () => {
+    const texto = ($('#ap-texto').textContent || '').trim();
+    if (!texto) { toast('Escribe o dicta un comando primero', 'error'); return; }
+    $('#ap-estado').textContent = '🧠 Procesando con IA...';
+    $('#ap-enviar').disabled = true;
+    $('#ap-resultado').hidden = true;
+
+    try {
+      // Enviar el inventario actual (nombres) para que Gemini empareje
+      const inv = estado.materiales.slice(0, 200).map((m) => ({
+        nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+        esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+      }));
+
+      const resp = await fetch(CLOUD_FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto, inventario: inv })
+      });
+
+      if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+      const json = await resp.json();
+
+      if (json.accion === 'error') {
+        $('#ap-estado').textContent = '❌ ' + (json.mensaje || 'No entendi.');
+        $('#ap-enviar').disabled = false;
+        return;
+      }
+
+      // Mostrar resultado
+      $('#ap-estado').textContent = '✅ Interpretado (confianza: ' + Math.round((json.confianza || 0) * 100) + '%)';
+      $('#ap-resultado').hidden = false;
+      $('#ap-resultado').innerHTML = formatearResultadoIA(json);
+
+      // Botones de accion segun el tipo
+      const accDiv = $('#ap-acciones');
+      accDiv.innerHTML = '';
+      if (json.accion === 'consulta') {
+        // Buscar en inventario y mostrar
+        const q = normTxt(json.consulta || texto);
+        const encontrados = estado.materiales.filter((m) => normTxt(m.nombre).includes(q));
+        if (encontrados.length > 0) {
+          $('#ap-resultado').innerHTML += '<div style="margin-top:8px;font-size:12px;color:var(--cian)">' +
+            encontrados.map((m) => `<div>${esc(m.nombre)}: <b>${fmtNum(m.cantidad)} ${esc(m.unidad)}</b></div>`).join('') + '</div>';
+        } else {
+          $('#ap-resultado').innerHTML += '<div style="margin-top:8px;color:#ff9db0">No se encontro en el inventario.</div>';
+        }
+        accDiv.innerHTML = '<button class="btn-ghost" id="ap-cerrar2">Cerrar</button>';
+        $('#ap-cerrar2').addEventListener('click', () => { panel.classList.remove('activo'); asistente.panelVisible = false; });
+      } else {
+        accDiv.innerHTML = `
+          <button class="btn-primary" id="ap-ejecutar">✅ Ejecutar</button>
+          <button class="btn-ghost" id="ap-editar">✏️ Editar antes</button>
+          <button class="btn-ghost" id="ap-cancelar">Cancelar</button>`;
+        $('#ap-ejecutar').addEventListener('click', () => { ejecutarAccionIA(json); panel.classList.remove('activo'); asistente.panelVisible = false; });
+        $('#ap-editar').addEventListener('click', () => { ejecutarAccionIA(json, true); panel.classList.remove('activo'); asistente.panelVisible = false; });
+        $('#ap-cancelar').addEventListener('click', () => { panel.classList.remove('activo'); asistente.panelVisible = false; });
+      }
+    } catch (err) {
+      $('#ap-estado').textContent = '❌ Error: ' + err.message;
+      $('#ap-enviar').disabled = false;
+    }
+  });
+}
+
+function formatearResultadoIA(json) {
+  let html = `<div><b>Accion:</b> ${esc(json.accion)}</div>`;
+  if (json.responsables && json.responsables.length) html += `<div><b>Responsable(s):</b> ${json.responsables.map(esc).join(', ')}</div>`;
+  if (json.frente) html += `<div><b>Frente:</b> ${esc(json.frente)}</div>`;
+  if (json.nota) html += `<div><b>Nota:</b> ${esc(json.nota)}</div>`;
+  if (json.items && json.items.length) {
+    html += '<div style="margin-top:6px"><b>Items:</b></div><ul style="margin:4px 0 0 16px;font-size:12px">';
+    for (const it of json.items) {
+      html += `<li>${esc(it.nombre)} — ${fmtNum(it.cantidad)} ${esc(it.unidad || 'unidad')}${it.esHerramienta ? ' 🔧' : ''}${it.serial ? ' [' + esc(it.serial) + ']' : ''}${it.esNuevo ? ' <span style="color:var(--cian)">NUEVO</span>' : ''}</li>`;
+    }
+    html += '</ul>';
+  }
+  if (json.mensaje) html += `<div style="margin-top:6px;font-style:italic;color:var(--texto-mute)">${esc(json.mensaje)}</div>`;
+  return html;
+}
+
+function ejecutarAccionIA(json, soloEditar) {
+  const tipo = json.accion;
+  if (tipo === 'salida' || tipo === 'devolucion' || tipo === 'entrada') {
+    // Pre-llenar una orden
+    const items = (json.items || []).map((it) => {
+      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
+      return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
+    });
+    const precarga = {
+      frente: json.frente || '',
+      responsable: (json.responsables && json.responsables[0]) || '',
+      responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+      nota: json.nota || '',
+      items: items.length ? items : [{ materialId: '', cantidad: '' }]
+    };
+    modalOrden(tipo, precarga);
+    if (!soloEditar) {
+      toast('Orden pre-llenada por la IA. Revisa y confirma.', 'ok');
+    }
+  } else if (tipo === 'agregar_inventario') {
+    // Agregar items al inventario (uno por uno por ahora)
+    const it = (json.items && json.items[0]) || {};
+    const prefill = {
+      nombre: it.nombre || '', cantidad: it.cantidad || '',
+      unidad: it.unidad || 'unidad', esHerramienta: !!it.esHerramienta,
+      serial: it.serial || ''
+    };
+    modalMaterial(null, prefill);
+    toast('Material pre-llenado por la IA. Revisa y confirma.', 'ok');
+  } else {
+    toast('Accion "' + tipo + '" no soportada aun. Usa el formulario manual.', 'error');
+  }
+}
+
+// Inicializar el asistente al cargar
+initAsistente();
