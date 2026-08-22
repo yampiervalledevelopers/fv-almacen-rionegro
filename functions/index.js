@@ -85,6 +85,11 @@ Si NO entiendes el comando:
 `;
 
 exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req, res) => {
+  // CORS headers manuales (por si cors:true no funciona en Gen 2)
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
+
   // CORS preflight
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
