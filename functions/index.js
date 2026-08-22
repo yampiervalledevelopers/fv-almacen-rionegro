@@ -1,16 +1,12 @@
 /**
  * Cloud Function: Asistente de voz con IA (Gemini) para Inventario FVIECOM.
- * Recibe texto (del reconocimiento de voz) + contexto del inventario.
- * Devuelve una accion estructurada (JSON) para que la app la ejecute.
+ * Usa llamada directa a la API REST (sin SDK) para maxima compatibilidad.
  */
 const { onRequest } = require('firebase-functions/v2/https');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const cors = require('cors')({ origin: true });
 
-// API key de Gemini (se configura via firebase functions:secrets:set GEMINI_API_KEY)
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
 const SYSTEM_PROMPT = `Eres el asistente de voz del sistema de inventario de FVIECOM S.A.S (empresa de ingenieria electrica y telecomunicaciones) en el proyecto del Aeropuerto Internacional Jose Maria Cordova, Rionegro, Colombia.
 
@@ -30,6 +26,7 @@ Tu trabajo: interpretar comandos de voz del almacenista y devolver una ACCION ES
 - "Chazos supra mas" = tipo de chazo de expansion.
 - "Tomas" = tomacorrientes.
 - "Platinas de separacion cablofil" = accesorios de bandeja portacables.
+- "mt" = metros.
 
 === CONTRATOS Y FRENTES ===
 - Contrato 1: frentes 3, 3A, 3B, 3C
@@ -44,82 +41,63 @@ Tu trabajo: interpretar comandos de voz del almacenista y devolver una ACCION ES
 6. Para entradas/pedidos: si dice "traido por X" -> X es el responsable/proveedor. "Recibe Y" -> Y es el almacenista/usuario.
 
 === FORMATO DE RESPUESTA (SIEMPRE JSON) ===
-Responde SOLO con un JSON valido, sin texto adicional. El formato es:
+Responde SOLO con un JSON valido, sin texto adicional, sin markdown, sin backticks. El formato es:
 
-{
-  "accion": "salida" | "devolucion" | "entrada" | "agregar_inventario" | "consulta",
-  "confianza": 0.0-1.0,
-  "items": [
-    {
-      "nombre": "Cable #12 AWG LSHF Rojo",
-      "cantidad": 20,
-      "unidad": "metro",
-      "esHerramienta": false,
-      "serial": "",
-      "esNuevo": false
-    }
-  ],
-  "responsables": ["Jorge Celis", "Ing. Milton"],
-  "frente": "5B",
-  "nota": "Frente 5Ba",
-  "proveedor": "",
-  "almacenista": "",
-  "consulta": "",
-  "mensaje": "Despachar 20m de cable #12 rojo + 20m blanco + 20m verde al frente 5B"
-}
+{"accion":"salida","confianza":0.95,"items":[{"nombre":"Cable #12 AWG LSHF Rojo","cantidad":20,"unidad":"metro","esHerramienta":false,"serial":"","esNuevo":false}],"responsables":["Jorge Celis","Ing. Milton"],"frente":"5B","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"Despachar 20m de cable #12 rojo al frente 5B"}
 
-Para CONSULTAS (preguntas sobre stock):
-{
-  "accion": "consulta",
-  "confianza": 1.0,
-  "consulta": "cable 10",
-  "mensaje": "Buscando stock de cable #10..."
-}
+Para CONSULTAS:
+{"accion":"consulta","confianza":1.0,"items":[],"responsables":[],"frente":"","nota":"","proveedor":"","almacenista":"","consulta":"cable 10","mensaje":"Buscando stock de cable #10..."}
 
-Si NO entiendes el comando:
-{
-  "accion": "error",
-  "confianza": 0,
-  "mensaje": "No entendi. Intenta de nuevo con mas detalle."
-}
+Si NO entiendes:
+{"accion":"error","confianza":0,"items":[],"responsables":[],"frente":"","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"No entendi. Intenta de nuevo con mas detalle."}
 `;
 
 exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req, res) => {
-  // CORS preflight
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
   try {
     const { texto, inventario } = req.body;
+    if (!texto) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
 
-    if (!texto) {
-      res.status(400).json({ error: 'Falta el campo "texto"' });
+    let contextoInv = '';
+    if (inventario && Array.isArray(inventario)) {
+      const lista = inventario.slice(0, 150).map((m) =>
+        `- ${m.nombre}${m.esHerramienta ? ' [HERR]' : ''} | ${m.cantidad} ${m.unidad}${m.serial ? ' | serial:' + m.serial : ''}`
+      ).join('\n');
+      contextoInv = '\n\n=== INVENTARIO ACTUAL ===\n' + lista;
+    }
+
+    const prompt = SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto;
+
+    // Llamada directa a la API REST de Gemini (sin SDK)
+    const response = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('Gemini API error:', response.status, errText);
+      res.status(500).json({ error: 'Error de Gemini: ' + response.status });
       return;
     }
 
-    // Construir contexto del inventario (nombres de materiales para que Gemini
-    // pueda emparejar con lo que existe).
-    let contextoInv = '';
-    if (inventario && Array.isArray(inventario)) {
-      const lista = inventario.slice(0, 200).map((m) =>
-        `- ${m.nombre}${m.esHerramienta ? ' [HERR]' : ''} | ${m.cantidad} ${m.unidad} | serial: ${m.serial || '-'}`
-      ).join('\n');
-      contextoInv = `\n\n=== INVENTARIO ACTUAL (materiales disponibles) ===\n${lista}`;
-    }
+    const data = await response.json();
+    const textResp = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || '';
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
-
-    const result = await model.generateContent(SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto);
-
-    const response = result.response;
-    const textResp = response.text().trim();
-
-    // Intentar parsear como JSON (Gemini a veces pone ```json ... ```)
     let json;
     try {
       const limpio = textResp.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       json = JSON.parse(limpio);
     } catch (e) {
-      json = { accion: 'error', confianza: 0, mensaje: 'No pude interpretar la respuesta de la IA.', raw: textResp };
+      json = { accion: 'error', confianza: 0, mensaje: 'No pude interpretar la respuesta.', raw: textResp };
     }
 
     res.status(200).json(json);
