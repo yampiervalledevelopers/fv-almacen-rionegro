@@ -106,7 +106,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       contextoInv = `\n\n=== INVENTARIO ACTUAL (materiales disponibles) ===\n${lista}`;
     }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
     const result = await model.generateContent([
       { role: 'user', parts: [{ text: SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto }] }
