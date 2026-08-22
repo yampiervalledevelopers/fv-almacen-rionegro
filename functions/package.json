@@ -1,12 +1,11 @@
 {
   "name": "fviecom-asistente-ia",
-  "description": "Cloud Function: asistente de voz con Gemini para Inventario FVIECOM",
+  "description": "Cloud Function: asistente de voz con Gemini (Vertex AI)",
   "main": "index.js",
   "engines": { "node": "20" },
   "dependencies": {
     "firebase-admin": "^12.0.0",
-    "firebase-functions": "^5.0.0",
-    "@google/generative-ai": "^0.21.0",
-    "cors": "^2.8.5"
+    "firebase-functions": "^6.3.0",
+    "google-auth-library": "^9.0.0"
   }
 }

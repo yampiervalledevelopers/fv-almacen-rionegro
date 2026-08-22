@@ -1,12 +1,14 @@
 /**
- * Cloud Function: Asistente de voz con IA (Gemini) para Inventario FVIECOM.
- * Usa llamada directa a la API REST (sin SDK) para maxima compatibilidad.
+ * Cloud Function: Asistente de voz con IA (Gemini via Vertex AI).
+ * Usa Vertex AI en vez de AI Studio para usar los creditos de Google Cloud.
  */
 const { onRequest } = require('firebase-functions/v2/https');
+const { GoogleAuth } = require('google-auth-library');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+const PROJECT_ID = 'almacen-rio-jmc';
+const LOCATION = 'us-central1';
+const MODEL = 'gemini-2.0-flash-001';
+const VERTEX_URL = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent`;
 
 const SYSTEM_PROMPT = `Eres el asistente de voz del sistema de inventario de FVIECOM S.A.S (empresa de ingenieria electrica y telecomunicaciones) en el proyecto del Aeropuerto Internacional Jose Maria Cordova, Rionegro, Colombia.
 
@@ -18,7 +20,6 @@ Tu trabajo: interpretar comandos de voz del almacenista y devolver una ACCION ES
 - "Circuito 220 sin neutro" = 3 cables: AMARILLO + ROJO + VERDE (tierra). Sin blanco.
 - "Cable 12" / "Cable 10" = Cable calibre #12 AWG / #10 AWG.
 - "LSHF" = Low Smoke Halogen Free (tipo de cable).
-- "AWG" = American Wire Gauge (calibre).
 - Medidas: "tres octavos"=3/8", "de cuarto"=1/4", "de media"=1/2", "de tres cuartos"=3/4", "de pulgada"=1".
 - "EMT" = tubo metalico electrico.
 - "Curvador" = herramienta para curvar tubo (es HERRAMIENTA, requiere devolucion).
@@ -32,25 +33,21 @@ Tu trabajo: interpretar comandos de voz del almacenista y devolver una ACCION ES
 - Contrato 1: frentes 3, 3A, 3B, 3C
 - Contrato 2: frentes 4, 5, 5B, 11
 
-=== REGLAS PARA GENERAR LA ACCION ===
+=== REGLAS ===
 1. Si es un CIRCUITO: desglosar en cables individuales por color. Cantidad x cada color.
 2. Si menciona herramientas (taladro, curvador, escalera, pesca, pulidora, etc.): marcar esHerramienta=true y si da serial (FV-1, FV-4) incluirlo.
 3. Si hay multiples responsables: ponerlos como array.
 4. Si no menciona frente: dejar frente="".
-5. Si no menciona cantidad: asumir 1 para herramientas, preguntar para materiales.
-6. Para entradas/pedidos: si dice "traido por X" -> X es el responsable/proveedor. "Recibe Y" -> Y es el almacenista/usuario.
+5. Si no menciona cantidad: asumir 1 para herramientas.
+6. Para entradas/pedidos: "traido por X" -> X es el responsable. "Recibe Y" -> Y es el almacenista.
 
-=== FORMATO DE RESPUESTA (SIEMPRE JSON) ===
-Responde SOLO con un JSON valido, sin texto adicional, sin markdown, sin backticks. El formato es:
+=== FORMATO DE RESPUESTA (SIEMPRE JSON PURO, SIN MARKDOWN) ===
+{"accion":"salida","confianza":0.95,"items":[{"nombre":"Cable #12 AWG Rojo","cantidad":20,"unidad":"metro","esHerramienta":false,"serial":"","esNuevo":false}],"responsables":["Jorge Celis"],"frente":"5B","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"Despachar 20m cable #12 rojo al frente 5B"}
 
-{"accion":"salida","confianza":0.95,"items":[{"nombre":"Cable #12 AWG LSHF Rojo","cantidad":20,"unidad":"metro","esHerramienta":false,"serial":"","esNuevo":false}],"responsables":["Jorge Celis","Ing. Milton"],"frente":"5B","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"Despachar 20m de cable #12 rojo al frente 5B"}
-
-Para CONSULTAS:
-{"accion":"consulta","confianza":1.0,"items":[],"responsables":[],"frente":"","nota":"","proveedor":"","almacenista":"","consulta":"cable 10","mensaje":"Buscando stock de cable #10..."}
-
-Si NO entiendes:
-{"accion":"error","confianza":0,"items":[],"responsables":[],"frente":"","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"No entendi. Intenta de nuevo con mas detalle."}
+Acciones validas: salida, devolucion, entrada, agregar_inventario, consulta, error
 `;
+
+const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
 
 exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
@@ -72,20 +69,26 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
 
     const prompt = SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto;
 
-    // Llamada directa a la API REST de Gemini (sin SDK)
-    const response = await fetch(GEMINI_URL, {
+    // Obtener token de autenticacion (automatico en Cloud Functions)
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+
+    const response = await fetch(VERTEX_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token.token}`
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
       })
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('Gemini API error:', response.status, errText);
-      res.status(500).json({ error: 'Error de Gemini: ' + response.status });
+      console.error('Vertex AI error:', response.status, errText);
+      res.status(500).json({ error: 'Error de Gemini: ' + response.status, detalle: errText.substring(0, 200) });
       return;
     }
 
@@ -97,7 +100,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       const limpio = textResp.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       json = JSON.parse(limpio);
     } catch (e) {
-      json = { accion: 'error', confianza: 0, mensaje: 'No pude interpretar la respuesta.', raw: textResp };
+      json = { accion: 'error', confianza: 0, mensaje: 'No pude interpretar la respuesta.', raw: textResp.substring(0, 300) };
     }
 
     res.status(200).json(json);
