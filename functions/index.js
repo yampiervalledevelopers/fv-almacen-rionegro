@@ -108,9 +108,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
 
     const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
-    const result = await model.generateContent([
-      { role: 'user', parts: [{ text: SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto }] }
-    ]);
+    const result = await model.generateContent(SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto);
 
     const response = result.response;
     const textResp = response.text().trim();
