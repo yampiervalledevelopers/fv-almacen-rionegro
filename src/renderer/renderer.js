@@ -3435,9 +3435,9 @@ const STOP_WORDS = ['detente', 'silencio', 'deja de escuchar', 'apaga el asisten
 
 // Alias de navegacion
 const ALIAS_VISTAS = {
-  panel: 'dashboard', inicio: 'dashboard', home: 'dashboard',
+  panel: 'dashboard', inicio: 'dashboard', home: 'dashboard', principal: 'dashboard',
   materiales: 'inventario', stock: 'inventario',
-  movimiento: 'movimientos', historial: 'movimientos',
+  movimiento: 'movimientos', historial: 'movimientos', despachos: 'movimientos', salidas: 'movimientos',
   orden: 'ordenes', pedidos: 'ordenes',
   responsable: 'responsables', gente: 'responsables',
   herramienta: 'herramientas', equipos: 'herramientas',
@@ -3924,6 +3924,96 @@ function esStopWord(texto) {
   return STOP_WORDS.some((sw) => t === normTxt(sw));
 }
 
+// --- Deteccion local de intencion (antes de enviar a la IA) ---
+// Resuelve navegacion, modales y confirmacion de forma instantanea sin Cloud Function.
+function detectarIntencionLocal(texto) {
+  const t = normTxt(texto);
+
+  // --- 1. Patrones de navegacion ---
+  // Detectar: "abre X", "ve a X", "ve al X", "muestra X", "ir a X", "ir al X", "muestrame X"
+  const regexNav = /^(?:abre|abrir|ve a|ve al|muestra|muestrame|ir a|ir al|vamos a|llevame a|abreme)\s+(.+)$/;
+  const matchNav = t.match(regexNav);
+  if (matchNav) {
+    const destino = matchNav[1].trim();
+    // Resolver alias o nombre directo de vista
+    const vistaResuelta = ALIAS_VISTAS[destino] || destino;
+    // Verificar si es una vista valida
+    const vistasValidas = ['dashboard', 'inventario', 'movimientos', 'ordenes', 'responsables', 'consumo', 'kits', 'herramientas', 'importar', 'reportes', 'acerca'];
+    if (vistasValidas.includes(vistaResuelta)) {
+      agregarAlHistorial('usuario', texto);
+      actualizarPanelConversacion();
+      navegarPorVoz(vistaResuelta);
+      return true;
+    }
+  }
+  // Detectar frases directas de navegacion: "panel general", "inicio"
+  const frasesNav = {
+    'panel general': 'dashboard',
+    'inicio': 'dashboard',
+    'inventario': 'inventario',
+    'movimientos': 'movimientos',
+    'ordenes': 'ordenes',
+    'responsables': 'responsables',
+    'consumo': 'consumo',
+    'kits': 'kits',
+    'herramientas': 'herramientas',
+    'reportes': 'reportes',
+    'importar': 'importar'
+  };
+  if (frasesNav[t]) {
+    agregarAlHistorial('usuario', texto);
+    actualizarPanelConversacion();
+    navegarPorVoz(frasesNav[t]);
+    return true;
+  }
+
+  // --- 2. Patrones de modal ---
+  // Detectar: "nueva salida", "generar salida", "crear salida", "nueva entrada", etc.
+  const regexModalSalida = /^(?:nueva|generar|crear|abrir|abre)\s+salida$/;
+  const regexModalEntrada = /^(?:nueva|generar|crear|abrir|abre)\s+entrada$/;
+  const regexModalDevolucion = /^(?:nueva|generar|crear|abrir|abre)\s+devolucion$/;
+  const regexModalMaterial = /^(?:nuevo|nueva|agregar|crear|añadir)\s+material$/;
+
+  if (regexModalSalida.test(t)) {
+    agregarAlHistorial('usuario', texto);
+    actualizarPanelConversacion();
+    abrirModalPorVoz('salida');
+    return true;
+  }
+  if (regexModalEntrada.test(t)) {
+    agregarAlHistorial('usuario', texto);
+    actualizarPanelConversacion();
+    abrirModalPorVoz('entrada');
+    return true;
+  }
+  if (regexModalDevolucion.test(t)) {
+    agregarAlHistorial('usuario', texto);
+    actualizarPanelConversacion();
+    abrirModalPorVoz('devolucion');
+    return true;
+  }
+  if (regexModalMaterial.test(t)) {
+    agregarAlHistorial('usuario', texto);
+    actualizarPanelConversacion();
+    abrirModalPorVoz('material');
+    return true;
+  }
+
+  // --- 3. Patrones de confirmacion (solo si hay modal abierto) ---
+  if (asistente.estadoAgente === 'en_modal') {
+    const palabrasConfirmar = ['listo', 'confirmar', 'generar', 'guardar', 'dale', 'hazlo', 'ejecuta', 'ejecutar', 'guardalo', 'generalo', 'confirmalo'];
+    if (palabrasConfirmar.includes(t)) {
+      agregarAlHistorial('usuario', texto);
+      actualizarPanelConversacion();
+      confirmarModalPorVoz();
+      return true;
+    }
+  }
+
+  // No se resolvio localmente
+  return false;
+}
+
 // --- STEP 11 + Inicializacion principal ---
 function initAsistente() {
   // Crear el panel flotante
@@ -3998,6 +4088,12 @@ function initAsistente() {
         return;
       }
       // --- STEP 11: Auto-envio en modo continuo ---
+      // Primero intentar resolver localmente (instantaneo, sin Cloud Function)
+      if (detectarIntencionLocal(textoAcumulado)) {
+        textoAcumulado = '';
+        return;
+      }
+      // Si no se resolvio localmente, enviar a la IA
       enviarTextoAlAgente(textoAcumulado);
       textoAcumulado = '';
     }
