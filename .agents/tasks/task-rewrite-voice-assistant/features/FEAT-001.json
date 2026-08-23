@@ -1,0 +1,44 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Complete rewrite of the voice assistant in renderer.js to implement a guided conversational flow for 'nueva salida' with continuous recognition, local material parsing, and TTS pause/resume.",
+  "status": "completed",
+  "steps": [
+    "1. In src/renderer/renderer.js, replace the entire voice assistant section (from the comment block at ~line 3414 '/* ASISTENTE DE VOZ...' through the end of initAsistente() at ~line 4175 including 'initAsistente();' call) with the new implementation.",
+    "2. The new 'asistente' object must include a 'flujo' property: { paso: null, datos: { responsable: '', frente: '', nota: '', items: [] } }",
+    "3. Change recognition.continuous from false to true. Set recognition.interimResults = true.",
+    "4. Rewrite reactivarMicrofono() to use a maximum delay of 100ms (not 800ms).",
+    "5. Rewrite hablarAgente(texto) to PAUSE recognition before speaking (recognition.stop()) and RESUME it immediately after speech ends (restart recognition). This prevents the mic from picking up TTS output.",
+    "6. Rewrite recognition.onresult to accumulate final transcript text and process it. When final text arrives: (a) check stop words, (b) check if flujo.paso is active and route to procesarEnFlujo(texto), (c) otherwise try detectarIntencionLocal(texto), (d) fallback to enviarTextoAlAgente(texto).",
+    "7. Rewrite recognition.onend and recognition.onerror to reactivate immediately (100ms max) on unexpected stops like 'no-speech' or 'end' events, as long as asistente.escuchando is true.",
+    "8. Implement new function procesarEnFlujo(texto) that handles the conversational state machine: (a) paso='responsable': set datos.responsable from texto, fill the responsable field in the modal, advance to paso='frente', speak confirmation and ask for frente. (b) paso='frente': parse frente from texto, fill #o-frente select, advance to paso='materiales', speak confirmation and ask for materials. (c) paso='materiales': if user says 'listo'/'terminé'/'eso es todo', advance to paso='confirmar' and ask for confirmation with item count. Otherwise call parsearMaterialLocal(texto) to extract material, add to datos.items, add row in modal DOM, speak 'Agregado. Que mas?'. (d) paso='confirmar': if user says 'si'/'dale'/'generar'/'confirmar', click #o-guardar to submit the order.",
+    "9. Implement new function parsearMaterialLocal(texto) that locally parses material dictation: (a) Use regex to extract quantity (numbers at start or embedded). (b) Detect unit from known UNIDADES list or common aliases (metros/metro/m, unidades/unidad/und). (c) Strip quantity+unit to get the material name search term. (d) Search estado.materiales using normTxt() includes matching. (e) If exact match found, return {materialId, nombre, cantidad, unidad}. (f) If fuzzy/partial match found, ask 'Te refieres a [nombre completo]?' and wait for yes/no in a sub-state. (g) If no match, speak 'No encontre ese material' and stay in paso='materiales'.",
+    "10. Modify the existing detectarIntencionLocal function's 'nueva salida' / 'generar salida' regex match to: open modal via modalOrden('salida', null), set asistente.flujo.paso = 'responsable', and speak 'Nueva salida. Para que responsable?' instead of calling the old abrirModalPorVoz.",
+    "11. Keep all other local detection patterns (navigation, other modals, confirmation when NOT in flujo). Keep enviarTextoAlAgente and despacharAccionIA as fallback for complex commands.",
+    "12. In src/renderer/index.html line 219, change renderer.js?v=47 to renderer.js?v=48."
+  ],
+  "acceptance_criteria": [
+    "recognition.continuous is set to true in the new code",
+    "reactivarMicrofono uses <= 100ms delay",
+    "hablarAgente pauses recognition before speaking and resumes after",
+    "asistente object has flujo property with paso and datos",
+    "procesarEnFlujo function handles all conversation states: responsable, frente, materiales, confirmar",
+    "parsearMaterialLocal function extracts quantity, unit, and material name locally from speech text",
+    "The 'nueva salida' intent triggers the guided flow (sets flujo.paso = 'responsable')",
+    "User saying 'listo' in materiales step transitions to confirmation",
+    "User confirming in confirmar step clicks #o-guardar",
+    "index.html has v=48 cache buster",
+    "All existing helper functions (navegarPorVoz, llenarCampoPorVoz, confirmarModalPorVoz, ejecutarDirectoIA, enviarTextoAlAgente, despacharAccionIA, consultaPorVoz) are preserved",
+    "The code is syntactically valid JavaScript"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/fv-almacen-rionegro && npm test (existing tests must still pass - they test pdfParser, unrelated to voice)",
+    "Run: cd /projects/sandbox/fv-almacen-rionegro && node -e \"const fs=require('fs'); const code=fs.readFileSync('src/renderer/renderer.js','utf8'); console.log('Lines:', code.split('\\n').length); const opens=code.split('{').length-1; const closes=code.split('}').length-1; console.log('Braces open:',opens,'close:',closes); if(Math.abs(opens-closes)>2) process.exit(1);\" to verify brace balance",
+    "Run: grep -c 'continuous.*=.*true' src/renderer/renderer.js to confirm continuous is set to true",
+    "Run: grep -c 'procesarEnFlujo' src/renderer/renderer.js to confirm the new function exists",
+    "Run: grep -c 'parsearMaterialLocal' src/renderer/renderer.js to confirm the parser function exists",
+    "Run: grep 'v=48' src/renderer/index.html to confirm cache buster updated"
+  ],
+  "blocked_reason": null,
+  "findings": "Pre-existing test failure: test/logic.test.js has a syntax error at line 30 (multiline string with special character) that prevents npm test from running. Verified this exists on the base state before changes. All other verification checks pass: brace balance OK (1638/1638), continuous=true confirmed (1 match), procesarEnFlujo confirmed (2 references), parsearMaterialLocal confirmed (2 references), v=48 cache buster in index.html confirmed."
+}

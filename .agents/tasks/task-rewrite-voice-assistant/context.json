@@ -1,0 +1,20 @@
+{
+  "project_type": "Electron desktop app with Firebase backend for warehouse inventory management",
+  "language": "JavaScript (ES modules in renderer, CommonJS in main process)",
+  "build_system": "electron-builder for packaging; no compile step for renderer JS",
+  "test_framework": "Custom assert-based test runner in test/logic.test.js (tests pdfParser only)",
+  "build_command": "No build step needed - renderer JS runs directly in Electron/browser",
+  "test_command": "npm test (runs node test/logic.test.js - tests pdfParser logic only)",
+  "verification_instructions": "1. Run npm test to confirm existing tests still pass. 2. Verify syntax of renderer.js with node --check (ES module syntax check). 3. Verify the voice assistant code is syntactically correct by checking for balanced braces/parens.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "npm install (installs electron and pdf-parse/pdfkit)",
+  "environment_constraints": "This is an Electron app - cannot run the full app in sandbox (needs display). Verification limited to syntax checks and existing tests. The renderer.js uses browser APIs (Web Speech API, DOM) not available in Node.",
+  "contribution_requirements": "Push directly to main branch. Update cache-buster from ?v=47 to ?v=48 in index.html.",
+  "key_patterns": "- $ = document.querySelector shorthand (line 91). - normTxt(s) normalizes text: NFD strip diacritics, lowercase, trim (line 1878). - estado.materiales = array of {id, nombre, cantidad, unidad, esHerramienta, serial, categoria, minimo}. - modalOrden(tipo, precarga) opens order modal (line 1939). - registrarOrden({tipo, frente, contrato, proveedor, responsable, responsables, nota, usuario, items, fecha}) in db.js. - contratoDeFrente(frente) resolves contract from frente. - Voice assistant code block starts at line ~3414 ending at ~4175. - CLOUD_FUNCTION_URL for complex AI commands. - hablarAgente(texto) returns Promise, uses SpeechSynthesis. - llenarCampoPorVoz handles filling form fields. - ejecutarDirectoIA(json) executes orders directly without modal.",
+  "relevant_files": [
+    "src/renderer/renderer.js (lines 3414-4175 - entire voice assistant section)",
+    "src/renderer/index.html (line 219 - cache buster)",
+    "src/renderer/db.js (registrarOrden function - called for order creation)"
+  ],
+  "directory_structure": "Root: package.json, firebase.json. src/main/ = Electron main process. src/renderer/ = UI (index.html, renderer.js ~4175 lines, styles.css, auth.js, db.js, firebase-config.js). functions/ = Cloud Functions. test/ = logic tests."
+}
