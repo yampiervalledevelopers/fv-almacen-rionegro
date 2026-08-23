@@ -3411,53 +3411,23 @@ if ($('#cons-grafico')) $('#cons-grafico').addEventListener('change', renderCons
 $('#btn-imprimir-consumo').addEventListener('click', imprimirConsumo);
 llenarConsumo();
 
+
 /* ==================================================================
-   ASISTENTE DE VOZ - FLUJO GUIADO CONVERSACIONAL
-   Reconocimiento continuo, parseo local de materiales, guia paso a
-   paso para despachos rapidos. Cloud Function solo como fallback.
+   ASISTENTE DE VOZ - ARQUITECTURA SIMPLE CON GEMINI
+   Todo va a Gemini. El frontend solo ejecuta lo que Gemini responde.
    ================================================================== */
 const CLOUD_FUNCTION_URL = 'https://asistente-5lyachxl4a-uc.a.run.app';
 
-// --- Estado del agente con flujo conversacional ---
 const asistente = {
-  grabando: false,
   recognition: null,
-  panelVisible: false,
   escuchando: false,
-  estadoAgente: 'libre',
-  modalTipo: null,
-  historial: [],
-  procesando: false,
+  grabando: false,
   hablando: false,
-  flujoOcupado: false,
-  flujoBuffer: [],
-  flujo: {
-    paso: null,
-    datos: {
-      responsable: '',
-      frente: '',
-      nota: '',
-      items: []
-    },
-    esperandoConfirmacionMaterial: null,
-    esperandoDesambiguacion: null
-  }
+  procesando: false,
+  panelVisible: false,
+  historial: []
 };
 
-// --- Helper: resetear estado del flujo (evita duplicacion) ---
-function resetFlujo() {
-  asistente.flujo.paso = null;
-  asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
-  asistente.flujo.esperandoConfirmacionMaterial = null;
-  asistente.flujo.esperandoDesambiguacion = null;
-  asistente.flujoOcupado = false;
-  asistente.flujoBuffer = [];
-}
-
-// Palabras de parada
-const STOP_WORDS = ['detente', 'silencio', 'deja de escuchar', 'apaga el asistente', 'listo con todo'];
-
-// Alias de navegacion
 const ALIAS_VISTAS = {
   panel: 'dashboard', inicio: 'dashboard', home: 'dashboard', principal: 'dashboard',
   materiales: 'inventario', stock: 'inventario',
@@ -3471,57 +3441,46 @@ const ALIAS_VISTAS = {
   info: 'acerca', acercade: 'acerca'
 };
 
-// --- Timer de reactivacion (declarado temprano para uso en hablarAgente) ---
 let _reactivarTimer = null;
 
-// --- Text-to-Speech con pausa/reanudacion de reconocimiento ---
+// --- TTS con pausa de recognition ---
 function hablarAgente(texto) {
-  // Set hablando IMMEDIATELY to prevent any pending reactivarMicrofono from firing
   asistente.hablando = true;
   if (_reactivarTimer) { clearTimeout(_reactivarTimer); _reactivarTimer = null; }
   return new Promise((resolve) => {
     if (!window.speechSynthesis) { asistente.hablando = false; resolve(); return; }
-    // Pausar reconocimiento mientras habla el agente
     if (asistente.recognition && asistente.grabando) {
-      try { asistente.recognition.stop(); } catch (e) { /* ignorar */ }
+      try { asistente.recognition.stop(); } catch (e) { /* ok */ }
       asistente.grabando = false;
     }
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(texto);
     utt.lang = 'es-CO';
     utt.rate = 1.1;
-    utt.pitch = 1.0;
     const voces = window.speechSynthesis.getVoices();
-    const vozCO = voces.find((v) => v.lang === 'es-CO');
-    const vozES = voces.find((v) => v.lang.startsWith('es'));
-    if (vozCO) utt.voice = vozCO;
-    else if (vozES) utt.voice = vozES;
+    const voz = voces.find((v) => v.lang === 'es-CO') || voces.find((v) => v.lang.startsWith('es'));
+    if (voz) utt.voice = voz;
     let resuelto = false;
-    const resolver = () => {
-      if (!resuelto) {
-        resuelto = true;
-        clearInterval(pollId);
-        clearTimeout(maxTimeout);
-        asistente.hablando = false;
-        // Reanudar reconocimiento inmediatamente despues de hablar
-        if (asistente.escuchando) reactivarMicrofono();
-        resolve();
-      }
+    const done = () => {
+      if (resuelto) return;
+      resuelto = true;
+      clearInterval(poll);
+      clearTimeout(maxT);
+      asistente.hablando = false;
+      if (asistente.escuchando) reactivarMicrofono();
+      resolve();
     };
-    utt.onend = resolver;
-    utt.onerror = resolver;
+    utt.onend = done;
+    utt.onerror = done;
     window.speechSynthesis.speak(utt);
-    const pollId = setInterval(() => {
-      if (!window.speechSynthesis.speaking) resolver();
-    }, 200);
-    const maxTimeout = setTimeout(resolver, 15000);
+    const poll = setInterval(() => { if (!window.speechSynthesis.speaking) done(); }, 200);
+    const maxT = setTimeout(done, 15000);
   });
 }
 
-// --- Reactivacion inmediata del microfono (debounced 150ms) ---
+// --- Reactivar microfono (100ms debounce) ---
 function reactivarMicrofono() {
   if (!asistente.escuchando || !asistente.recognition || asistente.hablando) return;
-  // Debounce: si ya hay un timer pendiente, no programar otro
   if (_reactivarTimer) return;
   _reactivarTimer = setTimeout(() => {
     _reactivarTimer = null;
@@ -3529,165 +3488,168 @@ function reactivarMicrofono() {
     try {
       asistente.recognition.start();
       asistente.grabando = true;
-      const btnMic = $('#btn-asistente-voz');
-      if (btnMic) btnMic.classList.add('grabando');
-      actualizarEstadoPanel();
-    } catch (e) {
-      // Si ya esta corriendo, ignorar
-    }
-  }, 150);
+      const btn = $('#btn-asistente-voz');
+      if (btn) btn.classList.add('grabando');
+    } catch (e) { /* ya corriendo */ }
+  }, 100);
 }
 
-// --- Navegacion por voz ---
-function navegarPorVoz(destino) {
-  const dest = ALIAS_VISTAS[normTxt(destino)] || normTxt(destino);
-  const btn = document.querySelector(`.menu-item[data-vista="${dest}"]`);
-  if (btn) {
-    btn.click();
-    agregarAlHistorial('agente', `Navegue a ${TITULOS[dest] || dest}.`);
-    return hablarAgente(`Listo, abri ${TITULOS[dest] || dest}.`);
-  } else {
-    agregarAlHistorial('agente', `No encontre la seccion "${destino}".`);
-    return hablarAgente(`No encontre la seccion ${destino}.`);
-  }
+// --- Historial y panel ---
+function agregarAlHistorial(rol, texto) {
+  asistente.historial.push({ rol, texto, ts: Date.now() });
+  if (asistente.historial.length > 10) asistente.historial.shift();
 }
 
-// --- Abrir modal por voz ---
-function abrirModalPorVoz(modalTipo) {
-  if (modalTipo === 'material') {
-    modalMaterial(null);
-    asistente.estadoAgente = 'en_modal';
-    asistente.modalTipo = 'material';
-    agregarAlHistorial('agente', 'Abri formulario de nuevo material. Dime los datos.');
-    return hablarAgente('Abri nuevo material. Dime el nombre, cantidad y unidad.');
-  }
-  // Para ordenes (entrada, devolucion): abrir modal normal sin flujo guiado
-  const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
-  if (vistaActual !== 'ordenes') {
-    const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
-    if (btnOrd) btnOrd.click();
-  }
-  modalOrden(modalTipo, null);
-  asistente.estadoAgente = 'en_modal';
-  asistente.modalTipo = modalTipo;
-  const nombres = { salida: 'nueva salida', entrada: 'nueva entrada', devolucion: 'nueva devolucion' };
-  const msg = `Abri ${nombres[modalTipo] || modalTipo}. Dime el responsable.`;
-  agregarAlHistorial('agente', msg);
-  return hablarAgente(msg);
+function actualizarPanel() {
+  const log = $('#ap-log');
+  if (!log) return;
+  const ultimos = asistente.historial.slice(-5);
+  log.innerHTML = ultimos.map((m) => {
+    const cls = m.rol === 'usuario' ? 'ap-msg-user' : 'ap-msg-agent';
+    const icon = m.rol === 'usuario' ? '🗣️' : '🤖';
+    return `<div class="${cls}">${icon} ${esc(m.texto)}</div>`;
+  }).join('');
+  log.scrollTop = log.scrollHeight;
 }
 
-// --- Llenar campo por voz ---
-function llenarCampoPorVoz(campo, valor, json) {
-  let msg = '';
+function actualizarEstado(txt) {
+  const el = $('#ap-estado');
+  if (!el) return;
+  if (txt) { el.textContent = txt; return; }
+  if (asistente.procesando) { el.textContent = '🧠 Procesando...'; return; }
+  if (asistente.escuchando && asistente.grabando) { el.textContent = '🟢 Escuchando...'; return; }
+  if (asistente.escuchando) { el.textContent = '🟡 Activo'; return; }
+  el.textContent = 'Presiona el microfono para activar.';
+}
+
+// --- Navegacion local instantanea ---
+function intentarNavLocal(texto) {
+  const t = normTxt(texto).replace(/[.,;:!?]+/g, '').trim();
+  const regexNav = /^(?:abre|abrir|ve a|ve al|muestra|muestrame|ir a|ir al|vamos a|llevame a|abreme)\s+(.+)$/;
+  const match = t.match(regexNav);
+  if (!match) return false;
+  const destino = match[1].trim();
+  const vista = ALIAS_VISTAS[destino] || destino;
+  const btn = document.querySelector(`.menu-item[data-vista="${vista}"]`);
+  if (!btn) return false;
+  btn.click();
+  agregarAlHistorial('usuario', texto);
+  agregarAlHistorial('agente', `Abri ${TITULOS[vista] || vista}.`);
+  actualizarPanel();
+  hablarAgente(`Listo, abri ${TITULOS[vista] || vista}.`);
+  return true;
+}
+
+// --- Enviar a Gemini ---
+async function enviarAGemini(texto) {
+  if (asistente.procesando) return;
+  asistente.procesando = true;
+  agregarAlHistorial('usuario', texto);
+  actualizarPanel();
+  actualizarEstado('🧠 Procesando...');
+
   try {
-    if (campo === 'responsable') {
-      const inputs = document.querySelectorAll('#o-responsables-list .resp-nombre');
-      let target = null;
-      for (const inp of inputs) {
-        if (!inp.value.trim()) { target = inp; break; }
-      }
-      if (!target && inputs.length > 0) target = inputs[0];
-      if (target) {
-        target.value = valor;
-        target.dispatchEvent(new Event('input', { bubbles: true }));
-        msg = `Listo, responsable ${valor}.`;
-      } else {
-        msg = 'No encontre el campo de responsable. Abre un modal primero.';
-      }
-    } else if (campo === 'frente') {
-      const sel = $('#o-frente');
-      if (sel) {
-        const frenteNorm = normTxt(valor).replace('frente', '').trim().toUpperCase();
-        const opciones = Array.from(sel.options);
-        const match = opciones.find((o) => o.value.toUpperCase() === frenteNorm);
-        if (match) {
-          sel.value = match.value;
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          msg = `Frente ${match.value} seleccionado.`;
-        } else {
-          const parcial = opciones.find((o) => o.value.toUpperCase().includes(frenteNorm) || frenteNorm.includes(o.value.toUpperCase()));
-          if (parcial) { sel.value = parcial.value; sel.dispatchEvent(new Event('change', { bubbles: true })); msg = `Frente ${parcial.value} seleccionado.`; }
-          else msg = `No encontre el frente "${valor}".`;
-        }
-      } else {
-        msg = 'No hay selector de frente abierto.';
-      }
-    } else if (campo === 'nota') {
-      const nota = $('#o-nota');
-      if (nota) {
-        nota.value = valor;
-        nota.dispatchEvent(new Event('input', { bubbles: true }));
-        msg = `Nota: "${valor}".`;
-      } else {
-        msg = 'No hay campo de nota abierto.';
-      }
-    } else if (campo === 'item') {
-      const itemNombre = json.itemNombre || valor;
-      const itemCantidad = json.itemCantidad || 1;
-      const itemUnidad = json.itemUnidad || 'unidad';
-      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(itemNombre)));
-      if (mat) {
-        const addBtn = $('#o-add');
-        if (addBtn) addBtn.click();
-        const rows = document.querySelectorAll('.orden-item-row');
-        if (rows.length > 0) {
-          const lastRow = rows[rows.length - 1];
-          const selMat = lastRow.querySelector('select');
-          if (selMat) { selMat.value = mat.id; selMat.dispatchEvent(new Event('change', { bubbles: true })); }
-          const inpCant = lastRow.querySelector('input[type="number"]');
-          if (inpCant) { inpCant.value = itemCantidad; inpCant.dispatchEvent(new Event('input', { bubbles: true })); }
-        }
-        msg = `Agregado: ${itemCantidad} ${itemUnidad} de ${mat.nombre}.`;
-      } else {
-        msg = `No encontre "${itemNombre}" en el inventario.`;
-      }
-    } else {
-      msg = `Campo "${campo}" no reconocido.`;
-    }
-  } catch (e) {
-    msg = 'Error al llenar campo: ' + e.message;
-  }
-  agregarAlHistorial('agente', msg);
-  return hablarAgente(msg);
-}
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
+    const inv = estado.materiales.slice(0, 200).map((m) => ({
+      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+    }));
+    const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
 
-// --- Confirmar/Ejecutar modal por voz ---
-function confirmarModalPorVoz() {
-  const btnGuardar = $('#o-guardar');
-  if (btnGuardar) {
-    btnGuardar.click();
-    asistente.flujo.paso = null;
-    const checkCierre = setInterval(async () => {
-      const modal = $('#modal');
-      if (modal && modal.hidden) {
-        clearInterval(checkCierre);
-        asistente.estadoAgente = 'libre';
-        asistente.modalTipo = null;
-        resetFlujo();
-        const msg = 'Orden generada exitosamente.';
-        agregarAlHistorial('agente', msg);
-        await hablarAgente(msg);
-      }
-    }, 300);
-    setTimeout(() => {
-      clearInterval(checkCierre);
-      if (!$('#modal').hidden) {
-        const msg = 'Hubo un problema al generar la orden. Revisa los datos.';
-        agregarAlHistorial('agente', msg);
-        hablarAgente(msg);
-      }
-    }, 10000);
-    return Promise.resolve();
-  } else {
-    const msg = 'No hay modal abierto para confirmar.';
+    const resp = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto, inventario: inv, vistaActual, historial: histCtx })
+    });
+
+    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+    const json = await resp.json();
+    await ejecutarRespuesta(json);
+  } catch (err) {
+    const msg = 'Error de comunicacion. Intenta de nuevo.';
     agregarAlHistorial('agente', msg);
-    return hablarAgente(msg);
+    actualizarPanel();
+    await hablarAgente(msg);
+  } finally {
+    asistente.procesando = false;
+    actualizarEstado();
   }
 }
 
-// --- Ejecucion directa sin confirmacion ---
-async function ejecutarDirectoIA(json) {
-  const tipo = json.accion;
+// --- Ejecutar respuesta de Gemini ---
+async function ejecutarRespuesta(json) {
+  const accion = json.accion;
+  const mensaje = json.mensaje || '';
+
+  if (accion === 'navegar') {
+    const dest = ALIAS_VISTAS[normTxt(json.destino || '')] || normTxt(json.destino || '');
+    const btn = document.querySelector(`.menu-item[data-vista="${dest}"]`);
+    if (btn) btn.click();
+    agregarAlHistorial('agente', mensaje || `Abri ${TITULOS[dest] || dest}.`);
+    actualizarPanel();
+    await hablarAgente(mensaje || `Listo, abri ${TITULOS[dest] || dest}.`);
+
+  } else if (accion === 'ejecutar_orden') {
+    await ejecutarOrden(json);
+
+  } else if (accion === 'abrir_orden') {
+    const tipo = json.tipo || 'salida';
+    const items = (json.items || []).map((it) => {
+      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
+      return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
+    });
+    const precarga = {
+      frente: json.frente || '',
+      responsable: (json.responsables && json.responsables[0]) || '',
+      responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+      nota: json.nota || '',
+      items: items.length ? items : [{ materialId: '', cantidad: '' }]
+    };
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
+    if (vistaActual !== 'ordenes') {
+      const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
+      if (btnOrd) btnOrd.click();
+    }
+    modalOrden(tipo, precarga);
+    agregarAlHistorial('agente', mensaje || 'Abri la orden para que la revises.');
+    actualizarPanel();
+    await hablarAgente(mensaje || 'Te abro la orden para que la revises.');
+
+  } else if (accion === 'consulta') {
+    agregarAlHistorial('agente', mensaje);
+    actualizarPanel();
+    await hablarAgente(mensaje);
+
+  } else if (accion === 'respuesta') {
+    agregarAlHistorial('agente', mensaje);
+    actualizarPanel();
+    await hablarAgente(mensaje);
+
+  } else if (accion === 'agregar_inventario') {
+    const it = (json.items && json.items[0]) || {};
+    const prefill = {
+      nombre: it.nombre || '', cantidad: it.cantidad || '',
+      unidad: it.unidad || 'unidad', esHerramienta: !!it.esHerramienta,
+      serial: it.serial || ''
+    };
+    modalMaterial(null, prefill);
+    agregarAlHistorial('agente', mensaje || 'Abri formulario de material.');
+    actualizarPanel();
+    await hablarAgente(mensaje || 'Abri formulario de material. Revisa y confirma.');
+
+  } else {
+    if (mensaje) {
+      agregarAlHistorial('agente', mensaje);
+      actualizarPanel();
+      await hablarAgente(mensaje);
+    }
+  }
+}
+
+// --- Ejecutar orden directo ---
+async function ejecutarOrden(json) {
+  const tipo = json.tipo || 'salida';
+  const mensaje = json.mensaje || '';
   try {
     const items = (json.items || []).map((it) => {
       const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
@@ -3710,6 +3672,7 @@ async function ejecutarDirectoIA(json) {
       modalOrden(tipo, precarga);
       const msg = 'No pude resolver los materiales. Abri el formulario para que completes.';
       agregarAlHistorial('agente', msg);
+      actualizarPanel();
       await hablarAgente(msg);
       return;
     }
@@ -3720,6 +3683,7 @@ async function ejecutarDirectoIA(json) {
         if (mat && it.cantidad > (Number(mat.cantidad) || 0)) {
           const msg = `Stock insuficiente de "${mat.nombre}". Disponible: ${fmtNum(mat.cantidad)} ${mat.unidad}.`;
           agregarAlHistorial('agente', msg);
+          actualizarPanel();
           toast(msg, 'error');
           await hablarAgente(msg);
           return;
@@ -3754,779 +3718,30 @@ async function ejecutarDirectoIA(json) {
     }
 
     const resumen = items.map((it) => `${fmtNum(it.cantidad)} ${it.unidad} de ${it.materialNombre}`).join(', ');
-    const tipoLabel = tipo === 'salida' ? 'Despachado' : tipo === 'entrada' ? 'Registrada entrada de' : 'Devolucion de';
-    const msg = `${tipoLabel}: ${resumen}${frenteVal ? ' al frente ' + frenteVal : ''}${responsablePrincipal ? ' para ' + responsablePrincipal : ''}. Orden ${orden.numero}.`;
+    const msg = mensaje || `Listo: ${resumen}. Orden ${orden.numero}.`;
     toast(msg, 'ok');
     agregarAlHistorial('agente', msg);
+    actualizarPanel();
     await hablarAgente(msg);
   } catch (e) {
     const msg = 'Error al ejecutar: ' + e.message;
     toast(msg, 'error');
     agregarAlHistorial('agente', msg);
+    actualizarPanel();
     await hablarAgente(msg);
   }
 }
 
-// --- Consulta por voz ---
-async function consultaPorVoz(json, textoOriginal) {
-  const q = normTxt(json.consulta || textoOriginal);
-  const encontrados = estado.materiales.filter((m) => normTxt(m.nombre).includes(q));
-  let msg = '';
-  if (encontrados.length > 0) {
-    const top = encontrados.slice(0, 5);
-    msg = top.map((m) => `${m.nombre}: ${fmtNum(m.cantidad)} ${m.unidad}`).join('. ');
-  } else {
-    msg = `No encontre "${json.consulta || textoOriginal}" en el inventario.`;
-  }
-  agregarAlHistorial('agente', msg);
-  actualizarPanelConversacion();
-  await hablarAgente(msg);
-}
-
-// --- Dispatcher principal (Cloud Function responses) ---
-async function despacharAccionIA(json, textoOriginal) {
-  const accion = json.accion;
-  if (accion === 'error') {
-    const msg = json.mensaje || 'No entendi el comando.';
-    agregarAlHistorial('agente', msg);
-    actualizarPanelConversacion();
-    await hablarAgente(msg);
-  } else if (accion === 'navegar') {
-    await navegarPorVoz(json.destino || '');
-  } else if (accion === 'abrir_modal') {
-    await abrirModalPorVoz(json.modalTipo || 'salida');
-  } else if (accion === 'llenar_campo') {
-    await llenarCampoPorVoz(json.campo, json.valor, json);
-  } else if (accion === 'confirmar') {
-    await confirmarModalPorVoz();
-  } else if (accion === 'consulta') {
-    await consultaPorVoz(json, textoOriginal);
-  } else if ((accion === 'salida' || accion === 'entrada' || accion === 'devolucion') && json.items && json.items.length && json.responsables && json.responsables.length) {
-    const confianza = Number(json.confianza) || 0;
-    if (confianza >= 0.85) {
-      await ejecutarDirectoIA(json);
-    } else {
-      const items = (json.items || []).map((it) => {
-        const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
-        return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
-      });
-      const precarga = {
-        frente: json.frente || '',
-        responsable: (json.responsables && json.responsables[0]) || '',
-        responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
-        nota: json.nota || '',
-        items: items.length ? items : [{ materialId: '', cantidad: '' }]
-      };
-      modalOrden(accion, precarga);
-      asistente.estadoAgente = 'en_modal';
-      asistente.modalTipo = accion;
-      const msg = json.mensaje || 'No estoy seguro del comando. Revisa los datos y confirma.';
-      agregarAlHistorial('agente', msg);
-      await hablarAgente(msg);
-    }
-  } else if (accion === 'salida' || accion === 'entrada' || accion === 'devolucion') {
-    const items = (json.items || []).map((it) => {
-      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
-      return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
-    });
-    const precarga = {
-      frente: json.frente || '',
-      responsable: (json.responsables && json.responsables[0]) || '',
-      responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
-      nota: json.nota || '',
-      items: items.length ? items : [{ materialId: '', cantidad: '' }]
-    };
-    modalOrden(accion, precarga);
-    asistente.estadoAgente = 'en_modal';
-    asistente.modalTipo = accion;
-    const msg = json.mensaje || 'Abri el formulario. Completa los datos que faltan.';
-    agregarAlHistorial('agente', msg);
-    await hablarAgente(msg);
-  } else if (accion === 'agregar_inventario') {
-    const it = (json.items && json.items[0]) || {};
-    const prefill = {
-      nombre: it.nombre || '', cantidad: it.cantidad || '',
-      unidad: it.unidad || 'unidad', esHerramienta: !!it.esHerramienta,
-      serial: it.serial || ''
-    };
-    modalMaterial(null, prefill);
-    asistente.estadoAgente = 'en_modal';
-    asistente.modalTipo = 'material';
-    const msg = json.mensaje || 'Abri formulario de material. Revisa y confirma.';
-    agregarAlHistorial('agente', msg);
-    await hablarAgente(msg);
-  } else {
-    const msg = json.mensaje || 'Comando procesado.';
-    agregarAlHistorial('agente', msg);
-    await hablarAgente(msg);
-  }
-  actualizarPanelConversacion();
-}
-
-// --- Enviar texto al Cloud Function (fallback para comandos complejos) ---
-async function enviarTextoAlAgente(texto) {
-  if (!texto.trim() || asistente.procesando) return;
-  asistente.procesando = true;
-  agregarAlHistorial('usuario', texto);
-  actualizarPanelConversacion();
-  actualizarEstadoPanel('🧠 Procesando...');
-
-  try {
-    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
-    const inv = estado.materiales.slice(0, 200).map((m) => ({
-      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
-      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
-    }));
-
-    const resp = await fetch(CLOUD_FUNCTION_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        texto,
-        inventario: inv,
-        vistaActual,
-        estadoAgente: asistente.estadoAgente,
-        modalTipo: asistente.modalTipo
-      })
-    });
-
-    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
-    const json = await resp.json();
-    await despacharAccionIA(json, texto);
-  } catch (err) {
-    const msg = 'Error de comunicacion: ' + err.message;
-    agregarAlHistorial('agente', msg);
-    actualizarPanelConversacion();
-    await hablarAgente(msg);
-  } finally {
-    asistente.procesando = false;
-    actualizarEstadoPanel();
-  }
-}
-
-// --- Historial de conversacion ---
-function agregarAlHistorial(rol, texto) {
-  asistente.historial.push({ rol, texto, ts: Date.now() });
-  if (asistente.historial.length > 10) asistente.historial.shift();
-}
-
-// --- Actualizar panel de conversacion ---
-function actualizarPanelConversacion() {
-  const log = $('#ap-log');
-  if (!log) return;
-  const ultimos = asistente.historial.slice(-6);
-  log.innerHTML = ultimos.map((m) => {
-    const clase = m.rol === 'usuario' ? 'ap-msg-user' : 'ap-msg-agent';
-    const icon = m.rol === 'usuario' ? '🗣️' : '🤖';
-    return `<div class="${clase}">${icon} ${esc(m.texto)}</div>`;
-  }).join('');
-  log.scrollTop = log.scrollHeight;
-}
-
-function actualizarEstadoPanel(custom) {
-  const el = $('#ap-estado');
-  if (!el) return;
-  if (custom) { el.textContent = custom; return; }
-  if (asistente.procesando) { el.textContent = '🧠 Procesando...'; return; }
-  if (asistente.escuchando && asistente.grabando) {
-    if (asistente.flujo.paso) {
-      const pasos = { responsable: 'Esperando responsable...', frente: 'Esperando frente...', materiales: 'Dictando materiales...', confirmar: 'Esperando confirmacion...' };
-      el.textContent = `🟢 Flujo salida: ${pasos[asistente.flujo.paso] || asistente.flujo.paso}`;
-    } else if (asistente.estadoAgente === 'en_modal') {
-      const tipos = { salida: 'nueva salida', entrada: 'nueva entrada', devolucion: 'nueva devolucion', material: 'nuevo material' };
-      el.textContent = `🟢 En modal: ${tipos[asistente.modalTipo] || asistente.modalTipo} - escuchando...`;
-    } else {
-      el.textContent = '🟢 Agente activo - escuchando...';
-    }
-  } else if (asistente.escuchando) {
-    el.textContent = '🟡 Agente activo - esperando...';
-  } else {
-    el.textContent = 'Presiona el microfono para activar el agente.';
-  }
-}
-
-// --- Deteccion de palabras de parada ---
-function esStopWord(texto) {
-  const t = normTxt(texto);
-  return STOP_WORDS.some((sw) => t === normTxt(sw));
-}
-
-// --- Parseo LOCAL de materiales dictados por voz ---
-function parsearMaterialLocal(texto) {
-  const t = normTxt(texto);
-  // Alias de unidades para reconocimiento de voz
-  const aliasUnidades = {
-    metro: 'metro', metros: 'metro', m: 'metro', mts: 'metro',
-    unidad: 'unidad', unidades: 'unidad', und: 'unidad',
-    kilometro: 'kilometro', kilometros: 'kilometro', km: 'kilometro',
-    centimetro: 'centimetro', centimetros: 'centimetro', cm: 'centimetro',
-    kilogramo: 'kilogramo', kilogramos: 'kilogramo', kg: 'kilogramo', kilos: 'kilogramo', kilo: 'kilogramo',
-    gramo: 'gramo', gramos: 'gramo', gr: 'gramo',
-    litro: 'litro', litros: 'litro', lt: 'litro',
-    galon: 'galon', galones: 'galon',
-    bulto: 'bulto', bultos: 'bulto',
-    rollo: 'rollo', rollos: 'rollo',
-    caja: 'caja', cajas: 'caja',
-    paquete: 'paquete', paquetes: 'paquete',
-    bolsa: 'bolsa', bolsas: 'bolsa',
-    tramo: 'tramo', tramos: 'tramo',
-    juego: 'juego', juegos: 'juego',
-    par: 'par', pares: 'par'
-  };
-
-  // Extraer cantidad: buscar numeros al inicio o despues de palabras comunes
-  const regexCantidad = /(\d+(?:[.,]\d+)?)/;
-  const matchCant = t.match(regexCantidad);
-  let cantidad = matchCant ? parseFloat(matchCant[1].replace(',', '.')) : 1;
-
-  // Extraer unidad
-  let unidadDetectada = 'unidad';
-  let restoTexto = t;
-
-  // Remover la cantidad del texto
-  if (matchCant) {
-    restoTexto = restoTexto.replace(matchCant[0], '').trim();
-  }
-
-  // Buscar unidad en el texto restante
-  const palabras = restoTexto.split(/\s+/);
-  let unidadIdx = -1;
-  for (let i = 0; i < palabras.length; i++) {
-    const p = palabras[i];
-    if (aliasUnidades[p]) {
-      unidadDetectada = aliasUnidades[p];
-      unidadIdx = i;
-      break;
-    }
-  }
-
-  // Remover unidad y preposiciones del texto para obtener el nombre del material
-  let nombreBusqueda = restoTexto;
-  if (unidadIdx >= 0) {
-    palabras.splice(unidadIdx, 1);
-    nombreBusqueda = palabras.join(' ');
-  }
-  // Limpiar preposiciones comunes
-  nombreBusqueda = nombreBusqueda.replace(/\b(de|del|la|el|los|las|un|una|unos|unas)\b/g, '').replace(/\s+/g, ' ').trim();
-
-  if (!nombreBusqueda) {
-    return { encontrado: false, cantidad, unidad: unidadDetectada, nombre: '', material: null, sugerencia: null };
-  }
-
-  // Buscar en inventario: coincidencia exacta (includes) con desambiguacion
-  const busquedaNorm = normTxt(nombreBusqueda);
-  const coincidencias = estado.materiales.filter((m) => normTxt(m.nombre).includes(busquedaNorm));
-
-  if (coincidencias.length === 1) {
-    return {
-      encontrado: true,
-      cantidad,
-      unidad: coincidencias[0].unidad || unidadDetectada,
-      nombre: coincidencias[0].nombre,
-      material: coincidencias[0],
-      sugerencia: null,
-      multiples: null
-    };
-  }
-
-  if (coincidencias.length > 1) {
-    // Intentar encontrar la coincidencia mas especifica (nombre mas corto)
-    const ordenadas = coincidencias.slice().sort((a, b) => a.nombre.length - b.nombre.length);
-    // Si la mas corta es mucho mas especifica (nombre completo ~ busqueda), usar esa
-    if (normTxt(ordenadas[0].nombre) === busquedaNorm) {
-      return {
-        encontrado: true,
-        cantidad,
-        unidad: ordenadas[0].unidad || unidadDetectada,
-        nombre: ordenadas[0].nombre,
-        material: ordenadas[0],
-        sugerencia: null,
-        multiples: null
-      };
-    }
-    // Multiples coincidencias: devolver para desambiguacion
-    return {
-      encontrado: false,
-      cantidad,
-      unidad: unidadDetectada,
-      nombre: nombreBusqueda,
-      material: null,
-      sugerencia: null,
-      multiples: coincidencias.slice(0, 5)
-    };
-  }
-
-  // Si no encuentra, intentar busqueda inversa (nombre del material incluye la busqueda)
-  let encontrado = estado.materiales.find((m) => busquedaNorm.includes(normTxt(m.nombre)));
-
-  if (encontrado) {
-    return {
-      encontrado: true,
-      cantidad,
-      unidad: encontrado.unidad || unidadDetectada,
-      nombre: encontrado.nombre,
-      material: encontrado,
-      sugerencia: null,
-      multiples: null
-    };
-  }
-
-  // Busqueda fuzzy: buscar coincidencias parciales por palabras clave
-  const palabrasClave = busquedaNorm.split(/\s+/).filter((p) => p.length > 2);
-  let mejorMatch = null;
-  let mejorScore = 0;
-  for (const mat of estado.materiales) {
-    const nombreMat = normTxt(mat.nombre);
-    let score = 0;
-    for (const palabra of palabrasClave) {
-      if (nombreMat.includes(palabra)) score++;
-    }
-    if (score > mejorScore) {
-      mejorScore = score;
-      mejorMatch = mat;
-    }
-  }
-
-  // Si al menos la mitad de las palabras clave coinciden, sugerir
-  if (mejorMatch && mejorScore >= Math.ceil(palabrasClave.length / 2) && palabrasClave.length > 0) {
-    return {
-      encontrado: false,
-      cantidad,
-      unidad: mejorMatch.unidad || unidadDetectada,
-      nombre: nombreBusqueda,
-      material: null,
-      sugerencia: mejorMatch,
-      multiples: null
-    };
-  }
-
-  return { encontrado: false, cantidad, unidad: unidadDetectada, nombre: nombreBusqueda, material: null, sugerencia: null, multiples: null };
-}
-
-// --- Agregar item al modal DOM ---
-function agregarItemAlModal(material, cantidad) {
-  const addBtn = $('#o-add');
-  if (addBtn) addBtn.click();
-  const rows = document.querySelectorAll('.orden-item-row');
-  if (rows.length > 0) {
-    const lastRow = rows[rows.length - 1];
-    const selMat = lastRow.querySelector('select');
-    if (selMat) { selMat.value = material.id; selMat.dispatchEvent(new Event('change', { bubbles: true })); }
-    const inpCant = lastRow.querySelector('input[type="number"]');
-    if (inpCant) { inpCant.value = cantidad; inpCant.dispatchEvent(new Event('input', { bubbles: true })); }
-  }
-}
-
-// --- Procesador del flujo guiado conversacional (con lock para concurrencia) ---
-async function procesarEnFlujo(texto) {
-  // Fix 2: Lock guard - buffer text if already processing
-  if (asistente.flujoOcupado) {
-    asistente.flujoBuffer.push(texto);
-    return;
-  }
-  asistente.flujoOcupado = true;
-
-  try {
-    await _procesarEnFlujoInterno(texto);
-    // Process any buffered utterances sequentially
-    while (asistente.flujoBuffer.length > 0 && asistente.flujo.paso) {
-      const siguiente = asistente.flujoBuffer.shift();
-      agregarAlHistorial('usuario', siguiente);
-      actualizarPanelConversacion();
-      await _procesarEnFlujoInterno(siguiente);
-    }
-  } finally {
-    asistente.flujoOcupado = false;
-  }
-}
-
-async function _procesarEnFlujoInterno(texto) {
-  const t = normTxt(texto).replace(/[.,;:!?]+/g, '').trim().replace(/\s+/g, ' ');
-  const paso = asistente.flujo.paso;
-
-  // Cancelar flujo si el usuario dice cancelar/salir
-  if (/^(cancelar|cancelalo|salir del flujo|no quiero|olvidalo)$/.test(t)) {
-    resetFlujo();
-    asistente.estadoAgente = 'libre';
-    asistente.modalTipo = null;
-    const msg = 'Flujo cancelado.';
-    agregarAlHistorial('agente', msg);
-    actualizarPanelConversacion();
-    await hablarAgente(msg);
-    return;
-  }
-
-  // --- Sub-estado: esperando confirmacion de material sugerido ---
-  if (asistente.flujo.esperandoConfirmacionMaterial) {
-    const afirmativas = ['si', 'sip', 'sep', 'eso', 'correcto', 'dale', 'ese', 'esa', 'exacto', 'afirmativo'];
-    const negativas = ['no', 'nop', 'otro', 'otra', 'negativo', 'tampoco'];
-    if (afirmativas.includes(t)) {
-      const mat = asistente.flujo.esperandoConfirmacionMaterial.material;
-      const cant = asistente.flujo.esperandoConfirmacionMaterial.cantidad;
-      // Fix 5: Stock validation on confirmation of suggested material
-      const stockDisponible = Number(mat.cantidad) || 0;
-      if (cant > stockDisponible) {
-        asistente.flujo.esperandoConfirmacionMaterial = null;
-        const msg = stockDisponible > 0
-          ? `Stock insuficiente de "${mat.nombre}". Solo hay ${fmtNum(stockDisponible)} ${mat.unidad} disponibles. Dime otra cantidad o di otro material.`
-          : `"${mat.nombre}" esta en cero. Dime otro material.`;
-        agregarAlHistorial('agente', msg);
-        actualizarPanelConversacion();
-        await hablarAgente(msg);
-        return;
-      }
-      asistente.flujo.datos.items.push({ materialId: mat.id, nombre: mat.nombre, cantidad: cant, unidad: mat.unidad });
-      agregarItemAlModal(mat, cant);
-      asistente.flujo.esperandoConfirmacionMaterial = null;
-      const msg = `Agregado: ${cant} ${mat.unidad} de ${mat.nombre}. Que mas?`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-      return;
-    } else if (negativas.includes(t)) {
-      asistente.flujo.esperandoConfirmacionMaterial = null;
-      const msg = 'Entendido. Dime el material de nuevo o di otro.';
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-      return;
-    }
-    // Si no es si/no, tratar como nuevo material (cayo en otro dictado)
-    asistente.flujo.esperandoConfirmacionMaterial = null;
-  }
-
-  // --- Sub-estado: esperando desambiguacion de material (multiples coincidencias) ---
-  if (asistente.flujo.esperandoDesambiguacion) {
-    const candidatos = asistente.flujo.esperandoDesambiguacion.candidatos;
-    const cantidadOriginal = asistente.flujo.esperandoDesambiguacion.cantidad;
-    // Intentar match por posicion ordinal
-    const ordinales = { primero: 0, primera: 0, segundo: 1, segunda: 1, tercero: 2, tercera: 2, uno: 0, una: 0, dos: 1, tres: 2 };
-    let seleccionado = null;
-    if (ordinales[t] !== undefined && ordinales[t] < candidatos.length) {
-      seleccionado = candidatos[ordinales[t]];
-    } else {
-      // Intentar match por nombre parcial contra los candidatos
-      seleccionado = candidatos.find((m) => normTxt(m.nombre).includes(normTxt(texto.trim())));
-    }
-    if (seleccionado) {
-      // Stock validation
-      const stockDisponible = Number(seleccionado.cantidad) || 0;
-      if (cantidadOriginal > stockDisponible) {
-        asistente.flujo.esperandoDesambiguacion = null;
-        const msg = stockDisponible > 0
-          ? `Stock insuficiente de "${seleccionado.nombre}". Solo hay ${fmtNum(stockDisponible)} ${seleccionado.unidad} disponibles. Dime otra cantidad o di otro material.`
-          : `"${seleccionado.nombre}" esta en cero. Dime otro material.`;
-        agregarAlHistorial('agente', msg);
-        actualizarPanelConversacion();
-        await hablarAgente(msg);
-        return;
-      }
-      asistente.flujo.datos.items.push({ materialId: seleccionado.id, nombre: seleccionado.nombre, cantidad: cantidadOriginal, unidad: seleccionado.unidad });
-      agregarItemAlModal(seleccionado, cantidadOriginal);
-      asistente.flujo.esperandoDesambiguacion = null;
-      const msg = `Agregado: ${cantidadOriginal} ${seleccionado.unidad} de ${seleccionado.nombre}. Que mas?`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-      return;
-    } else {
-      // No pudo resolver, limpiar y pedir de nuevo
-      asistente.flujo.esperandoDesambiguacion = null;
-      const msg = 'No pude identificar cual. Dime el nombre completo del material.';
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-      return;
-    }
-  }
-
-  if (paso === 'responsable') {
-    // El usuario dice el nombre del responsable
-    const nombre = texto.trim();
-    asistente.flujo.datos.responsable = nombre;
-    // Llenar el campo en el modal
-    const inputs = document.querySelectorAll('#o-responsables-list .resp-nombre');
-    let target = null;
-    for (const inp of inputs) {
-      if (!inp.value.trim()) { target = inp; break; }
-    }
-    if (!target && inputs.length > 0) target = inputs[0];
-    if (target) {
-      target.value = nombre;
-      target.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    asistente.flujo.paso = 'frente';
-    const msg = `Listo, responsable ${nombre}. Que frente?`;
-    agregarAlHistorial('agente', msg);
-    actualizarPanelConversacion();
-    actualizarEstadoPanel();
-    await hablarAgente(msg);
-
-  } else if (paso === 'frente') {
-    // Parsear frente del texto
-    let frenteNorm = t.replace('frente', '').replace('el', '').trim().toUpperCase();
-    // Mapeo de numeros hablados a valores
-    const numHablados = { uno: '1', dos: '2', tres: '3', cuatro: '4', cinco: '5', seis: '6', siete: '7', ocho: '8', nueve: '9', diez: '10', once: '11' };
-    // Reemplazar numeros hablados
-    for (const [palabra, num] of Object.entries(numHablados)) {
-      frenteNorm = frenteNorm.replace(new RegExp('\\b' + palabra.toUpperCase() + '\\b', 'g'), num);
-    }
-    frenteNorm = frenteNorm.replace(/\s+/g, '').trim();
-
-    const sel = $('#o-frente');
-    let frenteSeleccionado = '';
-    if (sel) {
-      const opciones = Array.from(sel.options);
-      const match = opciones.find((o) => o.value.toUpperCase() === frenteNorm);
-      if (match) {
-        sel.value = match.value;
-        sel.dispatchEvent(new Event('change', { bubbles: true }));
-        frenteSeleccionado = match.value;
-      } else {
-        const parcial = opciones.find((o) => o.value.toUpperCase().includes(frenteNorm) || frenteNorm.includes(o.value.toUpperCase()));
-        if (parcial) {
-          sel.value = parcial.value;
-          sel.dispatchEvent(new Event('change', { bubbles: true }));
-          frenteSeleccionado = parcial.value;
-        }
-      }
-    }
-
-    if (frenteSeleccionado) {
-      asistente.flujo.datos.frente = frenteSeleccionado;
-      asistente.flujo.paso = 'materiales';
-      const msg = `Frente ${frenteSeleccionado}. Ahora dime los materiales. Di listo cuando termines.`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      actualizarEstadoPanel();
-      await hablarAgente(msg);
-    } else {
-      const msg = `No encontre el frente "${texto}". Dime el numero de frente: 3, 3A, 3B, 3C, 4, 5, 5B u 11.`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-    }
-
-  } else if (paso === 'materiales') {
-    // Verificar si el usuario quiere terminar
-    const palabrasListo = ['listo', 'termine', 'eso es todo', 'ya', 'nada mas', 'no mas', 'listo con materiales', 'es todo'];
-    if (palabrasListo.some((p) => t === p || t.startsWith(p))) {
-      const itemCount = asistente.flujo.datos.items.length;
-      if (itemCount === 0) {
-        const msg = 'No tienes materiales agregados. Dime al menos uno o di cancelar.';
-        agregarAlHistorial('agente', msg);
-        actualizarPanelConversacion();
-        await hablarAgente(msg);
-        return;
-      }
-      asistente.flujo.paso = 'confirmar';
-      const msg = `Tienes ${itemCount} material${itemCount > 1 ? 'es' : ''} en la orden. Genero la orden?`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      actualizarEstadoPanel();
-      await hablarAgente(msg);
-      return;
-    }
-
-    // Parsear material localmente
-    const resultado = parsearMaterialLocal(texto);
-    if (resultado.encontrado) {
-      // Fix 5: Stock validation during dictation
-      const stockDisponible = Number(resultado.material.cantidad) || 0;
-      if (resultado.cantidad > stockDisponible) {
-        const msg = stockDisponible > 0
-          ? `Stock insuficiente de "${resultado.material.nombre}". Solo hay ${fmtNum(stockDisponible)} ${resultado.unidad} disponibles. Dime otra cantidad o di otro material.`
-          : `"${resultado.material.nombre}" esta en cero. Dime otro material.`;
-        agregarAlHistorial('agente', msg);
-        actualizarPanelConversacion();
-        await hablarAgente(msg);
-        return;
-      }
-      asistente.flujo.datos.items.push({
-        materialId: resultado.material.id,
-        nombre: resultado.material.nombre,
-        cantidad: resultado.cantidad,
-        unidad: resultado.unidad
-      });
-      agregarItemAlModal(resultado.material, resultado.cantidad);
-      const msg = `Agregado: ${resultado.cantidad} ${resultado.unidad} de ${resultado.material.nombre}. Que mas?`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-    } else if (resultado.multiples && resultado.multiples.length > 1) {
-      // Fix 3: Disambiguation - multiple matches found, set sub-state to capture response
-      asistente.flujo.esperandoDesambiguacion = {
-        candidatos: resultado.multiples,
-        cantidad: resultado.cantidad
-      };
-      const nombres = resultado.multiples.slice(0, 3).map((m) => m.nombre).join(', ');
-      const msg = `Encontre varios: ${nombres}. Cual necesitas?`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-    } else if (resultado.sugerencia) {
-      // Guardar estado de espera de confirmacion
-      asistente.flujo.esperandoConfirmacionMaterial = {
-        material: resultado.sugerencia,
-        cantidad: resultado.cantidad
-      };
-      const msg = `Te refieres a ${resultado.sugerencia.nombre}?`;
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-    } else {
-      // No encontro nada, enviar a Cloud Function como fallback
-      if (resultado.nombre) {
-        const msg = `No encontre "${resultado.nombre}" en el inventario. Intenta de nuevo o di el nombre exacto.`;
-        agregarAlHistorial('agente', msg);
-        actualizarPanelConversacion();
-        await hablarAgente(msg);
-      } else {
-        const msg = 'No entendi el material. Di la cantidad, unidad y nombre. Por ejemplo: 50 metros de cable.';
-        agregarAlHistorial('agente', msg);
-        actualizarPanelConversacion();
-        await hablarAgente(msg);
-      }
-    }
-
-  } else if (paso === 'confirmar') {
-    const afirmativas = ['si', 'sip', 'sep', 'dale', 'generar', 'confirmar', 'hazlo', 'ejecuta', 'generala', 'guardalo', 'genera'];
-    const negativas = ['no', 'nop', 'cancelar', 'espera', 'todavia no'];
-    if (afirmativas.includes(t)) {
-      // Hacer click en guardar
-      agregarAlHistorial('usuario', texto);
-      actualizarPanelConversacion();
-      await confirmarModalPorVoz();
-    } else if (negativas.includes(t)) {
-      // Volver a materiales
-      asistente.flujo.paso = 'materiales';
-      const msg = 'Entendido. Sigue dictando materiales o di listo para confirmar.';
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      actualizarEstadoPanel();
-      await hablarAgente(msg);
-    } else {
-      const msg = 'Di si para generar la orden o no para seguir editando.';
-      agregarAlHistorial('agente', msg);
-      actualizarPanelConversacion();
-      await hablarAgente(msg);
-    }
-  }
-}
-
-// --- Deteccion local de intencion (antes de enviar a la IA) ---
-function detectarIntencionLocal(texto) {
-  let t = normTxt(texto);
-  t = t.replace(/[.,;:!?]+/g, '').replace(/\.{2,}/g, '').trim().replace(/\s+/g, ' ');
-  console.log('[AGENTE LOCAL]', texto, '->', t);
-
-  // --- 1. Patrones de navegacion ---
-  const regexNav = /^(?:abre|abrir|ve a|ve al|muestra|muestrame|ir a|ir al|vamos a|llevame a|abreme)\s+(.+)$/;
-  const matchNav = t.match(regexNav);
-  if (matchNav) {
-    const destino = matchNav[1].trim();
-    const vistaResuelta = ALIAS_VISTAS[destino] || destino;
-    const vistasValidas = ['dashboard', 'inventario', 'movimientos', 'ordenes', 'responsables', 'consumo', 'kits', 'herramientas', 'importar', 'reportes', 'acerca'];
-    if (vistasValidas.includes(vistaResuelta)) {
-      agregarAlHistorial('usuario', texto);
-      actualizarPanelConversacion();
-      navegarPorVoz(vistaResuelta);
-      return true;
-    }
-  }
-  const frasesNav = {
-    'panel general': 'dashboard',
-    'inicio': 'dashboard',
-    'inventario': 'inventario',
-    'movimientos': 'movimientos',
-    'ordenes': 'ordenes',
-    'responsables': 'responsables',
-    'consumo': 'consumo',
-    'kits': 'kits',
-    'herramientas': 'herramientas',
-    'reportes': 'reportes',
-    'importar': 'importar'
-  };
-  if (frasesNav[t]) {
-    agregarAlHistorial('usuario', texto);
-    actualizarPanelConversacion();
-    navegarPorVoz(frasesNav[t]);
-    return true;
-  }
-
-  // --- 2. Patrones de modal: "nueva salida" triggers guided flow ---
-  const regexModalSalida = /^(?:nueva|generar|crear|abrir|abre)\s+salida$/;
-  const regexModalEntrada = /^(?:nueva|generar|crear|abrir|abre)\s+entrada$/;
-  const regexModalDevolucion = /^(?:nueva|generar|crear|abrir|abre)\s+devolucion$/;
-  const regexModalMaterial = /^(?:nuevo|nueva|agregar|crear|a[nñ]adir)\s+material$/;
-
-  if (regexModalSalida.test(t)) {
-    agregarAlHistorial('usuario', texto);
-    actualizarPanelConversacion();
-    // Abrir modal y activar flujo guiado
-    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
-    if (vistaActual !== 'ordenes') {
-      const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
-      if (btnOrd) btnOrd.click();
-    }
-    modalOrden('salida', null);
-    asistente.estadoAgente = 'en_modal';
-    asistente.modalTipo = 'salida';
-    resetFlujo();
-    asistente.flujo.paso = 'responsable';
-    actualizarEstadoPanel();
-    const msg = 'Nueva salida. Para que responsable?';
-    agregarAlHistorial('agente', msg);
-    actualizarPanelConversacion();
-    hablarAgente(msg);
-    return true;
-  }
-  if (regexModalEntrada.test(t)) {
-    agregarAlHistorial('usuario', texto);
-    actualizarPanelConversacion();
-    abrirModalPorVoz('entrada');
-    return true;
-  }
-  if (regexModalDevolucion.test(t)) {
-    agregarAlHistorial('usuario', texto);
-    actualizarPanelConversacion();
-    abrirModalPorVoz('devolucion');
-    return true;
-  }
-  if (regexModalMaterial.test(t)) {
-    agregarAlHistorial('usuario', texto);
-    actualizarPanelConversacion();
-    abrirModalPorVoz('material');
-    return true;
-  }
-
-  // --- 3. Patrones de confirmacion (solo si hay modal abierto y NO en flujo) ---
-  if (asistente.estadoAgente === 'en_modal' && !asistente.flujo.paso) {
-    const palabrasConfirmar = ['listo', 'confirmar', 'generar', 'guardar', 'dale', 'hazlo', 'ejecuta', 'ejecutar', 'guardalo', 'generalo', 'confirmalo'];
-    if (palabrasConfirmar.includes(t)) {
-      agregarAlHistorial('usuario', texto);
-      actualizarPanelConversacion();
-      confirmarModalPorVoz();
-      return true;
-    }
-  }
-
-  return false;
-}
-window.detectarIntencionLocal = detectarIntencionLocal;
-
-// --- Inicializacion del asistente con reconocimiento CONTINUO ---
+// --- Inicializacion ---
 function initAsistente() {
   const panel = document.createElement('div');
   panel.className = 'asistente-panel';
   panel.id = 'asistente-panel';
   panel.innerHTML = `
     <div class="ap-titulo">🤖 Agente FVIECOM</div>
-    <div class="ap-estado" id="ap-estado">Presiona el microfono para activar el agente.</div>
+    <div class="ap-estado" id="ap-estado">Presiona el microfono para activar.</div>
     <div class="ap-log" id="ap-log"></div>
-    <div class="ap-acciones" id="ap-acciones">
-      <button class="btn-ghost" id="ap-cerrar">Cerrar</button>
-    </div>`;
+    <div class="ap-acciones"><button class="btn-ghost" id="ap-cerrar">Cerrar</button></div>`;
   document.body.appendChild(panel);
 
   const style = document.createElement('style');
@@ -4564,115 +3779,83 @@ function initAsistente() {
         interim += event.results[i][0].transcript;
       }
     }
-    // Mostrar texto intermedio
-    const el = $('#ap-estado');
-    if (el && interim) el.textContent = '🎤 ' + interim;
+    if (interim) actualizarEstado('🎤 ' + interim);
+    if (!finalText) return;
+    const texto = finalText.trim();
+    if (!texto) return;
 
-    if (finalText) {
-      const textoFinal = finalText.trim();
-      if (!textoFinal) return;
-
-      // Deteccion de stop words
-      if (esStopWord(textoFinal)) {
-        try { recognition.stop(); } catch (e) { /* ignorar */ }
-        asistente.escuchando = false;
-        asistente.grabando = false;
-        resetFlujo();
-        btnMic.classList.remove('grabando', 'agente-activo');
-        agregarAlHistorial('usuario', textoFinal);
-        agregarAlHistorial('agente', 'Entendido, me detengo.');
-        actualizarPanelConversacion();
-        actualizarEstadoPanel();
-        hablarAgente('Entendido, me detengo.');
-        return;
-      }
-
-      // Si estamos en un flujo guiado, procesar ahi
-      if (asistente.flujo.paso) {
-        agregarAlHistorial('usuario', textoFinal);
-        actualizarPanelConversacion();
-        procesarEnFlujo(textoFinal);
-        return;
-      }
-
-      // Intentar resolver localmente
-      if (detectarIntencionLocal(textoFinal)) {
-        return;
-      }
-
-      // Fallback: enviar a Cloud Function
-      enviarTextoAlAgente(textoFinal);
+    // Stop words
+    const t = normTxt(texto);
+    if (['detente', 'silencio', 'deja de escuchar', 'apaga el asistente'].includes(t)) {
+      try { recognition.stop(); } catch (e) { /* ok */ }
+      asistente.escuchando = false;
+      asistente.grabando = false;
+      btnMic.classList.remove('grabando', 'agente-activo');
+      agregarAlHistorial('usuario', texto);
+      agregarAlHistorial('agente', 'Entendido, me detengo.');
+      actualizarPanel();
+      actualizarEstado();
+      hablarAgente('Entendido, me detengo.');
+      return;
     }
+
+    // Navegacion local instantanea
+    if (intentarNavLocal(texto)) return;
+
+    // Todo lo demas va a Gemini
+    enviarAGemini(texto);
   };
 
   recognition.onend = () => {
     asistente.grabando = false;
     const mic = $('#btn-asistente-voz');
     if (mic) mic.classList.remove('grabando');
-    actualizarEstadoPanel();
-    // Reactivar inmediatamente si estamos en modo escucha y no hablando
-    if (asistente.escuchando && !asistente.hablando && !asistente.procesando) {
-      reactivarMicrofono();
-    }
+    if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
   };
 
   recognition.onerror = (e) => {
     asistente.grabando = false;
-    const mic = $('#btn-asistente-voz');
-    if (mic) mic.classList.remove('grabando');
     if (e.error === 'not-allowed') {
-      actualizarEstadoPanel('Permiso de microfono denegado. Activa el microfono en tu navegador.');
+      actualizarEstado('Permiso de microfono denegado.');
       asistente.escuchando = false;
-      if (mic) mic.classList.remove('agente-activo');
-    } else if (e.error === 'no-speech' || e.error === 'network') {
-      if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
-    } else if (e.error === 'aborted') {
-      // Abortado intencionalmente (por hablarAgente), no hacer nada
-    } else {
-      actualizarEstadoPanel('Error: ' + e.error);
+      const mic = $('#btn-asistente-voz');
+      if (mic) mic.classList.remove('grabando', 'agente-activo');
+    } else if (e.error === 'no-speech' || e.error === 'network' || e.error === 'aborted') {
       if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
     }
   };
 
-  // --- Boton microfono: toggle modo agente ---
   btnMic.addEventListener('click', () => {
     if (!asistente.panelVisible) {
       panel.classList.add('activo');
       asistente.panelVisible = true;
     }
-
     if (asistente.escuchando) {
-      // Desactivar agente
       asistente.escuchando = false;
       asistente.grabando = false;
       asistente.hablando = false;
-      resetFlujo();
       btnMic.classList.remove('grabando', 'agente-activo');
-      try { recognition.stop(); } catch (e) { /* ignorar */ }
+      try { recognition.stop(); } catch (e) { /* ok */ }
       window.speechSynthesis.cancel();
-      actualizarEstadoPanel();
+      actualizarEstado();
     } else {
-      // Activar agente en modo continuo
       asistente.escuchando = true;
       asistente.grabando = true;
       btnMic.classList.add('grabando', 'agente-activo');
-      actualizarEstadoPanel();
-      try { recognition.start(); } catch (e) { /* ignorar */ }
+      actualizarEstado();
+      try { recognition.start(); } catch (e) { /* ok */ }
     }
   });
 
-  // Cerrar panel
   $('#ap-cerrar').addEventListener('click', () => {
     panel.classList.remove('activo');
     asistente.panelVisible = false;
   });
 
-  // Cargar voces
   if (window.speechSynthesis) {
     window.speechSynthesis.getVoices();
     window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
   }
 }
 
-// Inicializar el asistente al cargar
 initAsistente();

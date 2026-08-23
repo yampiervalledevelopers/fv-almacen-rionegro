@@ -1,7 +1,7 @@
 {
   "id": "FEAT-001",
   "type": "feat",
-  "description": "Complete rewrite of the voice assistant in renderer.js to implement a guided conversational flow for 'nueva salida' with continuous recognition, local material parsing, and TTS pause/resume.",
+  "description": "Complete rewrite of the voice assistant with simple Gemini-first architecture. No state machine, no local parsing. Frontend sends text to Gemini and executes the JSON response.",
   "status": "completed",
   "steps": [
     "1. In src/renderer/renderer.js, replace the entire voice assistant section (from the comment block at ~line 3414 '/* ASISTENTE DE VOZ...' through the end of initAsistente() at ~line 4175 including 'initAsistente();' call) with the new implementation.",

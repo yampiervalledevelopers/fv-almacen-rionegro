@@ -1,6 +1,6 @@
 {
   "task_id": "task-rewrite-voice-assistant",
-  "task_description": "Complete rewrite of the voice assistant to implement a guided conversational flow for dispatch orders with continuous recognition, local material parsing, and improved TTS handling.",
+  "task_description": "Complete rewrite of the voice assistant with simple Gemini-first architecture. No local state machine, no complex flows. Everything goes to Gemini, frontend just executes the response.",
   "status": "completed",
   "feature_order": ["FEAT-001"],
   "blocked_reason": null,
@@ -9,9 +9,11 @@
     "tests": "skipped",
     "test_quality": "pass",
     "docker_build": "skipped",
-    "summary": "Syntax verified (4628 lines, 1658/1658 braces balanced). Review fixes: resetFlujo=6 occurrences, flujoOcupado=5 occurrences, multiples disambiguation=9 refs, stockDisponible=8 refs. All 5 review issues addressed."
+    "summary": "Syntax verified (3862 lines, 1461/1461 braces perfectly balanced, 298/298 parens in voice section). Pre-existing paren imbalance of -3 in head section unchanged. Cache buster updated to v=49. Cloud Function rewritten with simplified 6-action schema and conversational historial."
   },
   "findings": {
-    "review_fixes": "All 5 issues from semantic review resolved: (1) hablando set synchronously before Promise in hablarAgente + debounced reactivarMicrofono, (2) flujoOcupado lock with buffer queue in procesarEnFlujo, (3) multiple-match disambiguation prompt instead of first-match, (4) resetFlujo() helper extracted and used in 5 call sites, (5) stock validation with voice warning during material dictation."
+    "architecture_change": "Replaced 1265-line complex state machine (flujo guiado, parsearMaterialLocal, procesarEnFlujo, disambiguation sub-states) with 448-line simple Gemini-first architecture. Local nav only for instant response, everything else goes to Cloud Function.",
+    "cloud_function_changes": "Rewrote SYSTEM_PROMPT to simplified 6-action schema (ejecutar_orden, respuesta, navegar, consulta, abrir_orden, agregar_inventario). Added conversational historial support (last 6 messages sent as multi-turn conversation to Vertex AI).",
+    "pre_existing": "Paren imbalance of -3 exists in the first 3413 lines (pre-existing, unchanged from before)."
   }
 }
