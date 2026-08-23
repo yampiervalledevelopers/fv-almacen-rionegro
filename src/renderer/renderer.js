@@ -3412,28 +3412,488 @@ $('#btn-imprimir-consumo').addEventListener('click', imprimirConsumo);
 llenarConsumo();
 
 /* ==================================================================
-   ASISTENTE DE VOZ CON IA (Gemini via Cloud Function)
+   ASISTENTE DE VOZ - AGENTE VIVO (Gemini via Cloud Function)
+   Ejecuta acciones directamente, navega por voz, llena campos
+   paso a paso, responde con TTS y mantiene escucha continua.
    ================================================================== */
 const CLOUD_FUNCTION_URL = 'https://asistente-5lyachxl4a-uc.a.run.app';
 
-// Estado del asistente
-const asistente = { grabando: false, recognition: null, panelVisible: false };
+// --- STEP 1: Estado expandido del agente ---
+const asistente = {
+  grabando: false,
+  recognition: null,
+  panelVisible: false,
+  escuchando: false,        // modo continuo activo
+  estadoAgente: 'libre',    // 'libre' | 'en_modal'
+  modalTipo: null,           // null | 'salida' | 'entrada' | 'devolucion' | 'material'
+  historial: [],             // ultimos mensajes [{rol:'usuario'|'agente', texto}]
+  procesando: false          // evitar envios duplicados
+};
 
+// Palabras de parada (deteccion local, no se envian a la IA)
+const STOP_WORDS = ['para', 'detente', 'silencio', 'deja de escuchar', 'apaga el asistente'];
+
+// Alias de navegacion
+const ALIAS_VISTAS = {
+  panel: 'dashboard', inicio: 'dashboard', home: 'dashboard',
+  materiales: 'inventario', stock: 'inventario',
+  movimiento: 'movimientos', historial: 'movimientos',
+  orden: 'ordenes', pedidos: 'ordenes',
+  responsable: 'responsables', gente: 'responsables',
+  herramienta: 'herramientas', equipos: 'herramientas',
+  kit: 'kits', plantilla: 'kits',
+  importacion: 'importar', pdf: 'importar',
+  reporte: 'reportes', informe: 'reportes',
+  info: 'acerca', acercade: 'acerca'
+};
+
+// --- STEP 2: Text-to-Speech ---
+function hablarAgente(texto) {
+  return new Promise((resolve) => {
+    if (!window.speechSynthesis) { resolve(); return; }
+    // Cancelar cualquier speech previo
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(texto);
+    utt.lang = 'es-CO';
+    utt.rate = 1.1;
+    utt.pitch = 1.0;
+    // Intentar encontrar voz en espanol colombiano o espanol generico
+    const voces = window.speechSynthesis.getVoices();
+    const vozCO = voces.find((v) => v.lang === 'es-CO');
+    const vozES = voces.find((v) => v.lang.startsWith('es'));
+    if (vozCO) utt.voice = vozCO;
+    else if (vozES) utt.voice = vozES;
+    utt.onend = () => resolve();
+    utt.onerror = () => resolve();
+    window.speechSynthesis.speak(utt);
+    // Timeout de seguridad (si no termina en 15s, resolver igual)
+    setTimeout(resolve, 15000);
+  });
+}
+
+// --- STEP 3: Reactivacion automatica del microfono ---
+function reactivarMicrofono() {
+  if (!asistente.escuchando || !asistente.recognition) return;
+  setTimeout(() => {
+    if (!asistente.escuchando) return;
+    try {
+      asistente.recognition.start();
+      asistente.grabando = true;
+      const btnMic = $('#btn-asistente-voz');
+      if (btnMic) btnMic.classList.add('grabando');
+      actualizarEstadoPanel();
+    } catch (e) {
+      // Si ya esta corriendo, ignorar
+    }
+  }, 800);
+}
+
+// --- STEP 4: Navegacion por voz ---
+function navegarPorVoz(destino) {
+  // Resolver alias
+  const dest = ALIAS_VISTAS[normTxt(destino)] || normTxt(destino);
+  const btn = document.querySelector(`.menu-item[data-vista="${dest}"]`);
+  if (btn) {
+    btn.click();
+    agregarAlHistorial('agente', `Navegue a ${TITULOS[dest] || dest}.`);
+    return hablarAgente(`Listo, abri ${TITULOS[dest] || dest}.`);
+  } else {
+    agregarAlHistorial('agente', `No encontre la seccion "${destino}".`);
+    return hablarAgente(`No encontre la seccion ${destino}.`);
+  }
+}
+
+// --- STEP 5: Abrir modal por voz ---
+function abrirModalPorVoz(modalTipo) {
+  if (modalTipo === 'material') {
+    modalMaterial(null);
+    asistente.estadoAgente = 'en_modal';
+    asistente.modalTipo = 'material';
+    agregarAlHistorial('agente', 'Abri formulario de nuevo material. Dime los datos.');
+    return hablarAgente('Abri nuevo material. Dime el nombre, cantidad y unidad.');
+  }
+  // Para ordenes: navegar primero a ordenes si no estamos ahi
+  const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
+  if (vistaActual !== 'ordenes') {
+    const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
+    if (btnOrd) btnOrd.click();
+  }
+  modalOrden(modalTipo, null);
+  asistente.estadoAgente = 'en_modal';
+  asistente.modalTipo = modalTipo;
+  const nombres = { salida: 'nueva salida', entrada: 'nueva entrada', devolucion: 'nueva devolucion' };
+  const msg = `Abri ${nombres[modalTipo] || modalTipo}. Dime el responsable.`;
+  agregarAlHistorial('agente', msg);
+  return hablarAgente(msg);
+}
+
+// --- STEP 6: Llenar campo por voz ---
+function llenarCampoPorVoz(campo, valor, json) {
+  let msg = '';
+  try {
+    if (campo === 'responsable') {
+      // Buscar el primer input de responsable vacio o el primero disponible
+      const inputs = document.querySelectorAll('#o-responsables-list .resp-nombre');
+      let target = null;
+      for (const inp of inputs) {
+        if (!inp.value.trim()) { target = inp; break; }
+      }
+      if (!target && inputs.length > 0) target = inputs[0];
+      if (target) {
+        target.value = valor;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        msg = `Listo, responsable ${valor}.`;
+      } else {
+        msg = 'No encontre el campo de responsable. Abre un modal primero.';
+      }
+    } else if (campo === 'frente') {
+      const sel = $('#o-frente');
+      if (sel) {
+        // Normalizar valor del frente (puede venir como "3B", "frente 3b", etc.)
+        const frenteNorm = normTxt(valor).replace('frente', '').trim().toUpperCase();
+        const opciones = Array.from(sel.options);
+        const match = opciones.find((o) => o.value.toUpperCase() === frenteNorm);
+        if (match) {
+          sel.value = match.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          msg = `Frente ${match.value} seleccionado.`;
+        } else {
+          // Intentar coincidencia parcial
+          const parcial = opciones.find((o) => o.value.toUpperCase().includes(frenteNorm) || frenteNorm.includes(o.value.toUpperCase()));
+          if (parcial) { sel.value = parcial.value; sel.dispatchEvent(new Event('change', { bubbles: true })); msg = `Frente ${parcial.value} seleccionado.`; }
+          else msg = `No encontre el frente "${valor}".`;
+        }
+      } else {
+        msg = 'No hay selector de frente abierto.';
+      }
+    } else if (campo === 'nota') {
+      const nota = $('#o-nota');
+      if (nota) {
+        nota.value = valor;
+        nota.dispatchEvent(new Event('input', { bubbles: true }));
+        msg = `Nota: "${valor}".`;
+      } else {
+        msg = 'No hay campo de nota abierto.';
+      }
+    } else if (campo === 'item') {
+      // Agregar un item a la orden
+      const itemNombre = json.itemNombre || valor;
+      const itemCantidad = json.itemCantidad || 1;
+      const itemUnidad = json.itemUnidad || 'unidad';
+      // Buscar material en inventario
+      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(itemNombre)));
+      if (mat) {
+        // Agregar al itemsOrden y re-renderizar
+        estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: mat.id, cantidad: itemCantidad, _filtro: '' });
+        // Disparar click en #o-add y luego setear el ultimo item (o manipular directo)
+        const addBtn = $('#o-add');
+        if (addBtn) addBtn.click();
+        // Setear el ultimo row
+        const rows = document.querySelectorAll('.orden-item-row');
+        if (rows.length > 0) {
+          const lastRow = rows[rows.length - 1];
+          const selMat = lastRow.querySelector('select');
+          if (selMat) { selMat.value = mat.id; selMat.dispatchEvent(new Event('change', { bubbles: true })); }
+          const inpCant = lastRow.querySelector('input[type="number"]');
+          if (inpCant) { inpCant.value = itemCantidad; inpCant.dispatchEvent(new Event('input', { bubbles: true })); }
+        }
+        msg = `Agregado: ${itemCantidad} ${itemUnidad} de ${mat.nombre}.`;
+      } else {
+        msg = `No encontre "${itemNombre}" en el inventario.`;
+      }
+    } else {
+      msg = `Campo "${campo}" no reconocido.`;
+    }
+  } catch (e) {
+    msg = 'Error al llenar campo: ' + e.message;
+  }
+  agregarAlHistorial('agente', msg);
+  return hablarAgente(msg);
+}
+
+// --- STEP 7: Confirmar/Ejecutar modal por voz ---
+function confirmarModalPorVoz() {
+  const btnGuardar = $('#o-guardar');
+  if (btnGuardar) {
+    btnGuardar.click();
+    asistente.estadoAgente = 'libre';
+    asistente.modalTipo = null;
+    const msg = 'Orden generada exitosamente.';
+    agregarAlHistorial('agente', msg);
+    return hablarAgente(msg);
+  } else {
+    const msg = 'No hay modal abierto para confirmar.';
+    agregarAlHistorial('agente', msg);
+    return hablarAgente(msg);
+  }
+}
+
+// --- STEP 8: Ejecucion directa sin confirmacion ---
+async function ejecutarDirectoIA(json) {
+  const tipo = json.accion; // salida | entrada | devolucion
+  try {
+    // Construir items resueltos
+    const items = (json.items || []).map((it) => {
+      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
+      return {
+        materialId: mat ? mat.id : '',
+        materialNombre: mat ? mat.nombre : it.nombre,
+        cantidad: Number(it.cantidad) || 1,
+        unidad: mat ? mat.unidad : (it.unidad || 'unidad')
+      };
+    }).filter((it) => it.materialId);
+
+    if (items.length === 0) {
+      // Fallback: abrir modal pre-llenado si no se resolvieron materiales
+      const precarga = {
+        frente: json.frente || '',
+        responsable: (json.responsables && json.responsables[0]) || '',
+        responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+        nota: json.nota || '',
+        items: [{ materialId: '', cantidad: '' }]
+      };
+      modalOrden(tipo, precarga);
+      const msg = 'No pude resolver los materiales. Abri el formulario para que completes.';
+      agregarAlHistorial('agente', msg);
+      await hablarAgente(msg);
+      return;
+    }
+
+    // Validar stock en salidas
+    if (tipo === 'salida') {
+      for (const it of items) {
+        const mat = estado.materiales.find((m) => m.id === it.materialId);
+        if (mat && it.cantidad > (Number(mat.cantidad) || 0)) {
+          const msg = `Stock insuficiente de "${mat.nombre}". Disponible: ${fmtNum(mat.cantidad)} ${mat.unidad}.`;
+          agregarAlHistorial('agente', msg);
+          toast(msg, 'error');
+          await hablarAgente(msg);
+          return;
+        }
+      }
+    }
+
+    const frenteVal = (json.frente || '').trim();
+    const responsablePrincipal = (json.responsables && json.responsables[0]) || '';
+    const responsablesArr = (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) }));
+
+    const orden = await registrarOrden({
+      tipo,
+      frente: frenteVal,
+      contrato: contratoDeFrente(frenteVal),
+      proveedor: '',
+      responsable: responsablePrincipal,
+      responsables: responsablesArr,
+      nota: json.nota || '',
+      usuario: nombreUsuario(),
+      items,
+      fecha: null
+    });
+
+    // Construir mensaje de confirmacion
+    const resumen = items.map((it) => `${fmtNum(it.cantidad)} ${it.unidad} de ${it.materialNombre}`).join(', ');
+    const tipoLabel = tipo === 'salida' ? 'Despachado' : tipo === 'entrada' ? 'Registrada entrada de' : 'Devolucion de';
+    const msg = `${tipoLabel}: ${resumen}${frenteVal ? ' al frente ' + frenteVal : ''}${responsablePrincipal ? ' para ' + responsablePrincipal : ''}. Orden ${orden.numero}.`;
+    toast(msg, 'ok');
+    agregarAlHistorial('agente', msg);
+    await hablarAgente(msg);
+  } catch (e) {
+    const msg = 'Error al ejecutar: ' + e.message;
+    toast(msg, 'error');
+    agregarAlHistorial('agente', msg);
+    await hablarAgente(msg);
+  }
+}
+
+// --- STEP 9: Consulta por voz (busqueda en inventario + TTS) ---
+async function consultaPorVoz(json, textoOriginal) {
+  const q = normTxt(json.consulta || textoOriginal);
+  const encontrados = estado.materiales.filter((m) => normTxt(m.nombre).includes(q));
+  let msg = '';
+  if (encontrados.length > 0) {
+    const top = encontrados.slice(0, 5);
+    msg = top.map((m) => `${m.nombre}: ${fmtNum(m.cantidad)} ${m.unidad}`).join('. ');
+  } else {
+    msg = `No encontre "${json.consulta || textoOriginal}" en el inventario.`;
+  }
+  agregarAlHistorial('agente', msg);
+  actualizarPanelConversacion();
+  await hablarAgente(msg);
+}
+
+// --- STEP 10: Dispatcher principal ---
+async function despacharAccionIA(json, textoOriginal) {
+  const accion = json.accion;
+  if (accion === 'error') {
+    const msg = json.mensaje || 'No entendi el comando.';
+    agregarAlHistorial('agente', msg);
+    actualizarPanelConversacion();
+    await hablarAgente(msg);
+  } else if (accion === 'navegar') {
+    await navegarPorVoz(json.destino || '');
+  } else if (accion === 'abrir_modal') {
+    await abrirModalPorVoz(json.modalTipo || 'salida');
+  } else if (accion === 'llenar_campo') {
+    await llenarCampoPorVoz(json.campo, json.valor, json);
+  } else if (accion === 'confirmar') {
+    await confirmarModalPorVoz();
+  } else if (accion === 'consulta') {
+    await consultaPorVoz(json, textoOriginal);
+  } else if ((accion === 'salida' || accion === 'entrada' || accion === 'devolucion') && json.items && json.items.length && json.responsables && json.responsables.length) {
+    // Ejecucion directa: tiene todos los datos completos
+    await ejecutarDirectoIA(json);
+  } else if (accion === 'salida' || accion === 'entrada' || accion === 'devolucion') {
+    // Datos incompletos: abrir modal pre-llenado
+    const items = (json.items || []).map((it) => {
+      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
+      return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
+    });
+    const precarga = {
+      frente: json.frente || '',
+      responsable: (json.responsables && json.responsables[0]) || '',
+      responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+      nota: json.nota || '',
+      items: items.length ? items : [{ materialId: '', cantidad: '' }]
+    };
+    modalOrden(accion, precarga);
+    asistente.estadoAgente = 'en_modal';
+    asistente.modalTipo = accion;
+    const msg = json.mensaje || 'Abri el formulario. Completa los datos que faltan.';
+    agregarAlHistorial('agente', msg);
+    await hablarAgente(msg);
+  } else if (accion === 'agregar_inventario') {
+    const it = (json.items && json.items[0]) || {};
+    const prefill = {
+      nombre: it.nombre || '', cantidad: it.cantidad || '',
+      unidad: it.unidad || 'unidad', esHerramienta: !!it.esHerramienta,
+      serial: it.serial || ''
+    };
+    modalMaterial(null, prefill);
+    asistente.estadoAgente = 'en_modal';
+    asistente.modalTipo = 'material';
+    const msg = json.mensaje || 'Abri formulario de material. Revisa y confirma.';
+    agregarAlHistorial('agente', msg);
+    await hablarAgente(msg);
+  } else {
+    const msg = json.mensaje || 'Comando procesado.';
+    agregarAlHistorial('agente', msg);
+    await hablarAgente(msg);
+  }
+  actualizarPanelConversacion();
+}
+
+// --- Enviar texto al Cloud Function ---
+async function enviarTextoAlAgente(texto) {
+  if (!texto.trim() || asistente.procesando) return;
+  asistente.procesando = true;
+  agregarAlHistorial('usuario', texto);
+  actualizarPanelConversacion();
+  actualizarEstadoPanel('🧠 Procesando...');
+
+  try {
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
+    const inv = estado.materiales.slice(0, 200).map((m) => ({
+      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+    }));
+
+    const resp = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        texto,
+        inventario: inv,
+        vistaActual,
+        estadoAgente: asistente.estadoAgente,
+        modalTipo: asistente.modalTipo
+      })
+    });
+
+    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+    const json = await resp.json();
+    await despacharAccionIA(json, texto);
+  } catch (err) {
+    const msg = 'Error de comunicacion: ' + err.message;
+    agregarAlHistorial('agente', msg);
+    actualizarPanelConversacion();
+    await hablarAgente(msg);
+  } finally {
+    asistente.procesando = false;
+    actualizarEstadoPanel();
+    // Reactivar microfono en modo continuo
+    reactivarMicrofono();
+  }
+}
+
+// --- Historial de conversacion ---
+function agregarAlHistorial(rol, texto) {
+  asistente.historial.push({ rol, texto, ts: Date.now() });
+  // Mantener solo los ultimos 10 mensajes
+  if (asistente.historial.length > 10) asistente.historial.shift();
+}
+
+// --- STEP 12: Actualizar panel de conversacion ---
+function actualizarPanelConversacion() {
+  const log = $('#ap-log');
+  if (!log) return;
+  const ultimos = asistente.historial.slice(-6);
+  log.innerHTML = ultimos.map((m) => {
+    const clase = m.rol === 'usuario' ? 'ap-msg-user' : 'ap-msg-agent';
+    const icon = m.rol === 'usuario' ? '🗣️' : '🤖';
+    return `<div class="${clase}">${icon} ${esc(m.texto)}</div>`;
+  }).join('');
+  log.scrollTop = log.scrollHeight;
+}
+
+function actualizarEstadoPanel(custom) {
+  const el = $('#ap-estado');
+  if (!el) return;
+  if (custom) { el.textContent = custom; return; }
+  if (asistente.procesando) { el.textContent = '🧠 Procesando...'; return; }
+  if (asistente.escuchando && asistente.grabando) {
+    if (asistente.estadoAgente === 'en_modal') {
+      const tipos = { salida: 'nueva salida', entrada: 'nueva entrada', devolucion: 'nueva devolucion', material: 'nuevo material' };
+      el.textContent = `🟢 En modal: ${tipos[asistente.modalTipo] || asistente.modalTipo} - escuchando...`;
+    } else {
+      el.textContent = '🟢 Agente activo - escuchando...';
+    }
+  } else if (asistente.escuchando) {
+    el.textContent = '🟡 Agente activo - esperando...';
+  } else {
+    el.textContent = 'Presiona el microfono para activar el agente.';
+  }
+}
+
+// --- STEP 13: Deteccion de palabras de parada ---
+function esStopWord(texto) {
+  const t = normTxt(texto);
+  return STOP_WORDS.some((sw) => t === normTxt(sw) || t.startsWith(normTxt(sw)));
+}
+
+// --- STEP 11 + Inicializacion principal ---
 function initAsistente() {
   // Crear el panel flotante
   const panel = document.createElement('div');
   panel.className = 'asistente-panel';
   panel.id = 'asistente-panel';
   panel.innerHTML = `
-    <div class="ap-titulo">🎤 Asistente de voz FVIECOM</div>
-    <div class="ap-estado" id="ap-estado">Presiona el microfono y habla tu comando.</div>
-    <div class="ap-texto" id="ap-texto" contenteditable="true" placeholder="El texto aparecera aqui..."></div>
-    <div class="ap-resultado" id="ap-resultado" hidden></div>
+    <div class="ap-titulo">🤖 Agente FVIECOM</div>
+    <div class="ap-estado" id="ap-estado">Presiona el microfono para activar el agente.</div>
+    <div class="ap-log" id="ap-log"></div>
     <div class="ap-acciones" id="ap-acciones">
-      <button class="btn-primary" id="ap-enviar" disabled>Enviar a la IA</button>
       <button class="btn-ghost" id="ap-cerrar">Cerrar</button>
     </div>`;
   document.body.appendChild(panel);
+
+  // Estilos adicionales para el log de conversacion
+  const style = document.createElement('style');
+  style.textContent = `
+    .ap-log { max-height:180px; overflow-y:auto; padding:6px 8px; font-size:12px; line-height:1.6; margin:6px 0; border-radius:8px; background:rgba(255,255,255,0.03); }
+    .ap-msg-user { color:var(--cian,#4fc3f7); margin-bottom:4px; }
+    .ap-msg-agent { color:var(--texto-dim,#b0b8c8); margin-bottom:4px; }
+    .btn-mic.agente-activo { box-shadow:0 0 0 4px rgba(76,175,80,0.4); }
+  `;
+  document.head.appendChild(style);
 
   const btnMic = $('#btn-asistente-voz');
   if (!btnMic) return;
@@ -3448,61 +3908,97 @@ function initAsistente() {
 
   const recognition = new SpeechRecognition();
   recognition.lang = 'es-CO';
-  recognition.continuous = true;
+  recognition.continuous = false;  // Un resultado por sesion para auto-envio
   recognition.interimResults = true;
   asistente.recognition = recognition;
 
-  let textoFinal = '';
-  let textoInterim = '';
+  let textoAcumulado = '';
 
   recognition.onresult = (event) => {
-    textoInterim = '';
+    let interim = '';
+    let finalText = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
       if (event.results[i].isFinal) {
-        textoFinal += event.results[i][0].transcript + ' ';
+        finalText += event.results[i][0].transcript;
       } else {
-        textoInterim += event.results[i][0].transcript;
+        interim += event.results[i][0].transcript;
       }
     }
-    $('#ap-texto').textContent = textoFinal + textoInterim;
-    $('#ap-enviar').disabled = false;
+    // Mostrar texto intermedio en el panel
+    const el = $('#ap-estado');
+    if (el && interim) el.textContent = '🎤 ' + interim;
+
+    if (finalText) {
+      textoAcumulado = finalText.trim();
+      // --- STEP 13: Deteccion de stop words ---
+      if (esStopWord(textoAcumulado)) {
+        recognition.stop();
+        asistente.escuchando = false;
+        asistente.grabando = false;
+        btnMic.classList.remove('grabando', 'agente-activo');
+        agregarAlHistorial('usuario', textoAcumulado);
+        agregarAlHistorial('agente', 'Entendido, me detengo.');
+        actualizarPanelConversacion();
+        actualizarEstadoPanel();
+        hablarAgente('Entendido, me detengo.');
+        return;
+      }
+      // --- STEP 11: Auto-envio en modo continuo ---
+      enviarTextoAlAgente(textoAcumulado);
+      textoAcumulado = '';
+    }
   };
 
   recognition.onend = () => {
     asistente.grabando = false;
     btnMic.classList.remove('grabando');
-    $('#ap-estado').textContent = textoFinal.trim() ? 'Listo. Revisa el texto y dale "Enviar a la IA".' : 'No se detecto voz. Intenta de nuevo.';
+    actualizarEstadoPanel();
+    // En modo continuo, reactivar si no fue parada explica
+    if (asistente.escuchando && !asistente.procesando) {
+      reactivarMicrofono();
+    }
   };
 
   recognition.onerror = (e) => {
     asistente.grabando = false;
     btnMic.classList.remove('grabando');
     if (e.error === 'not-allowed') {
-      $('#ap-estado').textContent = 'Permiso de microfono denegado. Activa el microfono en tu navegador.';
+      actualizarEstadoPanel('Permiso de microfono denegado. Activa el microfono en tu navegador.');
+      asistente.escuchando = false;
+      btnMic.classList.remove('agente-activo');
+    } else if (e.error === 'no-speech') {
+      // Sin habla detectada, reactivar en modo continuo
+      if (asistente.escuchando) reactivarMicrofono();
+    } else if (e.error === 'aborted') {
+      // Abortado intencionalmente, no hacer nada
     } else {
-      $('#ap-estado').textContent = 'Error: ' + e.error;
+      actualizarEstadoPanel('Error: ' + e.error);
+      if (asistente.escuchando) reactivarMicrofono();
     }
   };
 
-  // Boton microfono: toggle grabacion + mostrar panel
+  // --- Boton microfono: toggle modo agente ---
   btnMic.addEventListener('click', () => {
     if (!asistente.panelVisible) {
       panel.classList.add('activo');
       asistente.panelVisible = true;
     }
-    if (asistente.grabando) {
-      recognition.stop();
+
+    if (asistente.escuchando) {
+      // Desactivar agente
+      asistente.escuchando = false;
+      asistente.grabando = false;
+      btnMic.classList.remove('grabando', 'agente-activo');
+      try { recognition.stop(); } catch (e) { /* ignorar */ }
+      actualizarEstadoPanel();
     } else {
-      textoFinal = '';
-      textoInterim = '';
-      $('#ap-texto').textContent = '';
-      $('#ap-resultado').hidden = true;
-      $('#ap-resultado').innerHTML = '';
-      $('#ap-enviar').disabled = true;
-      $('#ap-estado').textContent = '🔴 Escuchando... habla tu comando.';
-      btnMic.classList.add('grabando');
+      // Activar agente en modo continuo
+      asistente.escuchando = true;
       asistente.grabando = true;
-      recognition.start();
+      btnMic.classList.add('grabando', 'agente-activo');
+      textoAcumulado = '';
+      actualizarEstadoPanel();
+      try { recognition.start(); } catch (e) { /* ignorar */ }
     }
   });
 
@@ -3510,123 +4006,13 @@ function initAsistente() {
   $('#ap-cerrar').addEventListener('click', () => {
     panel.classList.remove('activo');
     asistente.panelVisible = false;
-    if (asistente.grabando) recognition.stop();
+    // No detener el agente, solo ocultar panel
   });
 
-  // Enviar a la IA
-  $('#ap-enviar').addEventListener('click', async () => {
-    const texto = ($('#ap-texto').textContent || '').trim();
-    if (!texto) { toast('Escribe o dicta un comando primero', 'error'); return; }
-    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
-    $('#ap-estado').textContent = '🧠 Procesando con IA... (vista: ' + vistaActual + ')';
-    $('#ap-enviar').disabled = true;
-    $('#ap-resultado').hidden = true;
-
-    try {
-      // Enviar el inventario actual (nombres) para que Gemini empareje
-      const inv = estado.materiales.slice(0, 200).map((m) => ({
-        nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
-        esHerramienta: !!m.esHerramienta, serial: m.serial || ''
-      }));
-
-      const resp = await fetch(CLOUD_FUNCTION_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ texto, inventario: inv, vistaActual })
-      });
-
-      if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
-      const json = await resp.json();
-
-      if (json.accion === 'error') {
-        $('#ap-estado').textContent = '❌ ' + (json.mensaje || 'No entendi.');
-        $('#ap-enviar').disabled = false;
-        return;
-      }
-
-      // Mostrar resultado
-      $('#ap-estado').textContent = '✅ Interpretado (confianza: ' + Math.round((json.confianza || 0) * 100) + '%)';
-      $('#ap-resultado').hidden = false;
-      $('#ap-resultado').innerHTML = formatearResultadoIA(json);
-
-      // Botones de accion segun el tipo
-      const accDiv = $('#ap-acciones');
-      accDiv.innerHTML = '';
-      if (json.accion === 'consulta') {
-        // Buscar en inventario y mostrar
-        const q = normTxt(json.consulta || texto);
-        const encontrados = estado.materiales.filter((m) => normTxt(m.nombre).includes(q));
-        if (encontrados.length > 0) {
-          $('#ap-resultado').innerHTML += '<div style="margin-top:8px;font-size:12px;color:var(--cian)">' +
-            encontrados.map((m) => `<div>${esc(m.nombre)}: <b>${fmtNum(m.cantidad)} ${esc(m.unidad)}</b></div>`).join('') + '</div>';
-        } else {
-          $('#ap-resultado').innerHTML += '<div style="margin-top:8px;color:#ff9db0">No se encontro en el inventario.</div>';
-        }
-        accDiv.innerHTML = '<button class="btn-ghost" id="ap-cerrar2">Cerrar</button>';
-        $('#ap-cerrar2').addEventListener('click', () => { panel.classList.remove('activo'); asistente.panelVisible = false; });
-      } else {
-        accDiv.innerHTML = `
-          <button class="btn-primary" id="ap-ejecutar">✅ Ejecutar</button>
-          <button class="btn-ghost" id="ap-editar">✏️ Editar antes</button>
-          <button class="btn-ghost" id="ap-cancelar">Cancelar</button>`;
-        $('#ap-ejecutar').addEventListener('click', () => { ejecutarAccionIA(json); panel.classList.remove('activo'); asistente.panelVisible = false; });
-        $('#ap-editar').addEventListener('click', () => { ejecutarAccionIA(json, true); panel.classList.remove('activo'); asistente.panelVisible = false; });
-        $('#ap-cancelar').addEventListener('click', () => { panel.classList.remove('activo'); asistente.panelVisible = false; });
-      }
-    } catch (err) {
-      $('#ap-estado').textContent = '❌ Error: ' + err.message;
-      $('#ap-enviar').disabled = false;
-    }
-  });
-}
-
-function formatearResultadoIA(json) {
-  let html = `<div><b>Accion:</b> ${esc(json.accion)}</div>`;
-  if (json.responsables && json.responsables.length) html += `<div><b>Responsable(s):</b> ${json.responsables.map(esc).join(', ')}</div>`;
-  if (json.frente) html += `<div><b>Frente:</b> ${esc(json.frente)}</div>`;
-  if (json.nota) html += `<div><b>Nota:</b> ${esc(json.nota)}</div>`;
-  if (json.items && json.items.length) {
-    html += '<div style="margin-top:6px"><b>Items:</b></div><ul style="margin:4px 0 0 16px;font-size:12px">';
-    for (const it of json.items) {
-      html += `<li>${esc(it.nombre)} — ${fmtNum(it.cantidad)} ${esc(it.unidad || 'unidad')}${it.esHerramienta ? ' 🔧' : ''}${it.serial ? ' [' + esc(it.serial) + ']' : ''}${it.esNuevo ? ' <span style="color:var(--cian)">NUEVO</span>' : ''}</li>`;
-    }
-    html += '</ul>';
-  }
-  if (json.mensaje) html += `<div style="margin-top:6px;font-style:italic;color:var(--texto-mute)">${esc(json.mensaje)}</div>`;
-  return html;
-}
-
-function ejecutarAccionIA(json, soloEditar) {
-  const tipo = json.accion;
-  if (tipo === 'salida' || tipo === 'devolucion' || tipo === 'entrada') {
-    // Pre-llenar una orden
-    const items = (json.items || []).map((it) => {
-      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
-      return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
-    });
-    const precarga = {
-      frente: json.frente || '',
-      responsable: (json.responsables && json.responsables[0]) || '',
-      responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
-      nota: json.nota || '',
-      items: items.length ? items : [{ materialId: '', cantidad: '' }]
-    };
-    modalOrden(tipo, precarga);
-    if (!soloEditar) {
-      toast('Orden pre-llenada por la IA. Revisa y confirma.', 'ok');
-    }
-  } else if (tipo === 'agregar_inventario') {
-    // Agregar items al inventario (uno por uno por ahora)
-    const it = (json.items && json.items[0]) || {};
-    const prefill = {
-      nombre: it.nombre || '', cantidad: it.cantidad || '',
-      unidad: it.unidad || 'unidad', esHerramienta: !!it.esHerramienta,
-      serial: it.serial || ''
-    };
-    modalMaterial(null, prefill);
-    toast('Material pre-llenado por la IA. Revisa y confirma.', 'ok');
-  } else {
-    toast('Accion "' + tipo + '" no soportada aun. Usa el formulario manual.', 'error');
+  // Cargar voces (algunos navegadores las cargan async)
+  if (window.speechSynthesis) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
   }
 }
 

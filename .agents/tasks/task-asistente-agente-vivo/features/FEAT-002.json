@@ -2,7 +2,7 @@
   "id": "FEAT-002",
   "type": "feat",
   "description": "Transform the voice assistant in renderer.js into a live agent that: (1) executes orders directly in Firestore without confirmation when all data is present, (2) navigates by voice, (3) fills modal fields step by step, (4) responds with Text-to-Speech (speechSynthesis API), (5) auto-reactivates the microphone for continuous conversation mode.",
-  "status": "pending",
+  "status": "in_progress",
   "steps": [
     "STEP 1 - AGENT STATE: Replace the current 'asistente' state object (line ~3420) with an expanded state that tracks: estadoAgente ('libre' or 'en_modal'), modalTipo (null/'salida'/'entrada'/'devolucion'/'material'), and escuchando (boolean for auto-reactivation). Add a constant for the speech synthesis voice (es-CO or es-ES fallback).",
     "STEP 2 - TEXT-TO-SPEECH: Create a function hablarAgente(texto) that uses the Web Speech Synthesis API (window.speechSynthesis). It should: create a SpeechSynthesisUtterance with lang='es-CO', set rate=1.1, pitch=1.0. Try to find a Spanish voice (preferring 'es-CO' or 'es-' prefix). Call speechSynthesis.speak(utterance). Return a promise that resolves when speech finishes (utterance.onend). Use this throughout for all agent confirmations.",
