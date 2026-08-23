@@ -3439,7 +3439,8 @@ const asistente = {
       nota: '',
       items: []
     },
-    esperandoConfirmacionMaterial: null
+    esperandoConfirmacionMaterial: null,
+    esperandoDesambiguacion: null
   }
 };
 
@@ -3448,6 +3449,7 @@ function resetFlujo() {
   asistente.flujo.paso = null;
   asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
   asistente.flujo.esperandoConfirmacionMaterial = null;
+  asistente.flujo.esperandoDesambiguacion = null;
   asistente.flujoOcupado = false;
   asistente.flujoBuffer = [];
 }
@@ -3654,6 +3656,7 @@ function confirmarModalPorVoz() {
   const btnGuardar = $('#o-guardar');
   if (btnGuardar) {
     btnGuardar.click();
+    asistente.flujo.paso = null;
     const checkCierre = setInterval(async () => {
       const modal = $('#modal');
       if (modal && modal.hidden) {
@@ -4192,6 +4195,51 @@ async function _procesarEnFlujoInterno(texto) {
     asistente.flujo.esperandoConfirmacionMaterial = null;
   }
 
+  // --- Sub-estado: esperando desambiguacion de material (multiples coincidencias) ---
+  if (asistente.flujo.esperandoDesambiguacion) {
+    const candidatos = asistente.flujo.esperandoDesambiguacion.candidatos;
+    const cantidadOriginal = asistente.flujo.esperandoDesambiguacion.cantidad;
+    // Intentar match por posicion ordinal
+    const ordinales = { primero: 0, primera: 0, segundo: 1, segunda: 1, tercero: 2, tercera: 2, uno: 0, una: 0, dos: 1, tres: 2 };
+    let seleccionado = null;
+    if (ordinales[t] !== undefined && ordinales[t] < candidatos.length) {
+      seleccionado = candidatos[ordinales[t]];
+    } else {
+      // Intentar match por nombre parcial contra los candidatos
+      seleccionado = candidatos.find((m) => normTxt(m.nombre).includes(normTxt(texto.trim())));
+    }
+    if (seleccionado) {
+      // Stock validation
+      const stockDisponible = Number(seleccionado.cantidad) || 0;
+      if (cantidadOriginal > stockDisponible) {
+        asistente.flujo.esperandoDesambiguacion = null;
+        const msg = stockDisponible > 0
+          ? `Stock insuficiente de "${seleccionado.nombre}". Solo hay ${fmtNum(stockDisponible)} ${seleccionado.unidad} disponibles. Dime otra cantidad o di otro material.`
+          : `"${seleccionado.nombre}" esta en cero. Dime otro material.`;
+        agregarAlHistorial('agente', msg);
+        actualizarPanelConversacion();
+        await hablarAgente(msg);
+        return;
+      }
+      asistente.flujo.datos.items.push({ materialId: seleccionado.id, nombre: seleccionado.nombre, cantidad: cantidadOriginal, unidad: seleccionado.unidad });
+      agregarItemAlModal(seleccionado, cantidadOriginal);
+      asistente.flujo.esperandoDesambiguacion = null;
+      const msg = `Agregado: ${cantidadOriginal} ${seleccionado.unidad} de ${seleccionado.nombre}. Que mas?`;
+      agregarAlHistorial('agente', msg);
+      actualizarPanelConversacion();
+      await hablarAgente(msg);
+      return;
+    } else {
+      // No pudo resolver, limpiar y pedir de nuevo
+      asistente.flujo.esperandoDesambiguacion = null;
+      const msg = 'No pude identificar cual. Dime el nombre completo del material.';
+      agregarAlHistorial('agente', msg);
+      actualizarPanelConversacion();
+      await hablarAgente(msg);
+      return;
+    }
+  }
+
   if (paso === 'responsable') {
     // El usuario dice el nombre del responsable
     const nombre = texto.trim();
@@ -4306,7 +4354,11 @@ async function _procesarEnFlujoInterno(texto) {
       actualizarPanelConversacion();
       await hablarAgente(msg);
     } else if (resultado.multiples && resultado.multiples.length > 1) {
-      // Fix 3: Disambiguation - multiple matches found
+      // Fix 3: Disambiguation - multiple matches found, set sub-state to capture response
+      asistente.flujo.esperandoDesambiguacion = {
+        candidatos: resultado.multiples,
+        cantidad: resultado.cantidad
+      };
       const nombres = resultado.multiples.slice(0, 3).map((m) => m.nombre).join(', ');
       const msg = `Encontre varios: ${nombres}. Cual necesitas?`;
       agregarAlHistorial('agente', msg);
@@ -4420,7 +4472,6 @@ function detectarIntencionLocal(texto) {
     modalOrden('salida', null);
     asistente.estadoAgente = 'en_modal';
     asistente.modalTipo = 'salida';
-    asistente.flujo.paso = 'responsable';
     resetFlujo();
     asistente.flujo.paso = 'responsable';
     actualizarEstadoPanel();
