@@ -1,0 +1,25 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Add detectarIntencionLocal(texto) function that intercepts voice commands before sending to Cloud Function. Resolves navigation, modal opening, and confirmation commands instantly on the frontend.",
+  "status": "completed",
+  "steps": [
+    "STEP 1: Add extended ALIAS_VISTAS entries for new aliases: despachos/salidas=movimientos, pedidos=ordenes (already there), equipos=herramientas, principal=dashboard",
+    "STEP 2: Create detectarIntencionLocal(texto) function with: navigation patterns (abre/ve a/muestra/ir a + vista), modal patterns (nueva salida/entrada/devolucion, nuevo material/agregar material), confirmation patterns (listo/confirmar/generar/guardar/dale/hazlo/ejecuta), using regex and normTxt",
+    "STEP 3: Intercept in recognition.onresult: after stop word check, call detectarIntencionLocal(textoAcumulado). If it returns true, skip enviarTextoAlAgente",
+    "STEP 4: Verify syntax with NODE_OPTIONS='' node --check src/renderer/renderer.js"
+  ],
+  "acceptance_criteria": [
+    "detectarIntencionLocal function exists and handles navigation, modal, and confirmation patterns",
+    "Saying 'abre inventario' resolves locally without calling Cloud Function",
+    "Saying 'nueva salida' opens modal locally without calling Cloud Function",
+    "Saying 'confirmar' or 'listo' calls confirmarModalPorVoz locally when modal is open",
+    "Complex commands (stock queries, field filling with data) still go to Cloud Function",
+    "File passes NODE_OPTIONS='' node --check src/renderer/renderer.js"
+  ],
+  "verification": [
+    "NODE_OPTIONS='' node --check src/renderer/renderer.js"
+  ],
+  "blocked_reason": null,
+  "findings": "Added detectarIntencionLocal() at line 3929. Extended ALIAS_VISTAS with: principal=dashboard, despachos/salidas=movimientos, equipos=herramientas. The function handles 3 categories: (1) navigation via regex matching 'abre/ve a/muestra/ir a' + vista name or alias, plus direct keywords like 'panel general'/'inicio', (2) modal opening via regex 'nueva/generar/crear + salida/entrada/devolucion/material', (3) confirmation via exact word match when estadoAgente is 'en_modal'. Intercepted at line 4092 in recognition.onresult, after stop word check and before enviarTextoAlAgente. File passes node --check. 98 insertions, 2 deletions."
+}
