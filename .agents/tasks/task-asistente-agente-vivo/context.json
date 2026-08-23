@@ -1,0 +1,22 @@
+{
+  "project_type": "Electron + Web app (GitHub Pages) with Firebase backend and Cloud Function (Vertex AI)",
+  "language": "JavaScript (ES Modules for renderer, CommonJS for Cloud Function)",
+  "build_system": "npm + electron-builder (desktop), static files served for web",
+  "test_framework": "Custom assert-based test runner in test/logic.test.js (only tests PDF parser)",
+  "build_command": "No standard build - static files. Syntax check: NODE_OPTIONS='' node --check src/renderer/renderer.js && NODE_OPTIONS='' node --check functions/index.js",
+  "test_command": "NODE_OPTIONS='' node --check src/renderer/renderer.js && NODE_OPTIONS='' node --check functions/index.js",
+  "verification_instructions": "1. Run NODE_OPTIONS='' node --check src/renderer/renderer.js to verify renderer syntax. 2. Run NODE_OPTIONS='' node --check functions/index.js to verify Cloud Function syntax. 3. test/logic.test.js has a pre-existing syntax error not caused by our changes.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "npm install (root for Electron deps). cd functions && npm install (for Cloud Function deps). Not needed for syntax checks.",
+  "environment_constraints": "No Electron runtime available in sandbox (cannot run GUI). Verification limited to syntax checks. No Firebase/Firestore connection available. Cannot test the Cloud Function live. NODE_OPTIONS='' must prefix node commands due to a missing preload module in the sandbox.",
+  "contribution_requirements": "Code comments and UI in Spanish (Colombian). The app serves Colombian electricians at an airport construction site. Voice assistant uses Colombian Spanish (es-CO).",
+  "key_patterns": "- Single-file renderer.js (~3634 lines) with all UI logic. - Views toggled by data-vista attribute on .menu-item buttons. - activarNavegacion() at line 873 sets up click handlers. - Navigation tracked via active class on .menu-item. - Current view: document.querySelector('.menu-item.active').dataset.vista. - initAsistente() at line 3422 creates floating panel + mic button. - ejecutarAccionIA(json, soloEditar) at line 3604 dispatches actions to modals. - CLOUD_FUNCTION_URL at line 3417. - Cloud Function in functions/index.js uses Vertex AI (GoogleAuth + fetch). - SYSTEM_PROMPT contains electrical jargon and JSON format spec. - registrarOrden() in db.js handles Firestore writes (batch: updates stock + creates movements + creates order doc). - modalOrden(tipo, precarga) at line 1939 opens order modal with prefilled data. - modalMaterial(id, prefill) at line 1163 opens material add/edit modal. - nombreUsuario() at line 808 returns current user display name. - toast(msg, tipo) at line 142 shows notification. - abrirModal(titulo, htmlBody, ancho) at line 166 opens modal. - cerrarModal() at line 184 closes modal. - TITULOS constant at line 867 maps vista names to display titles. - CONTRATOS constant maps contract names to frente arrays. - estado.materiales array holds all materials with id, nombre, cantidad, unidad, esHerramienta, serial fields.",
+  "relevant_files": [
+    "src/renderer/renderer.js",
+    "src/renderer/index.html",
+    "src/renderer/db.js",
+    "functions/index.js",
+    "functions/package.json"
+  ],
+  "directory_structure": "Root: package.json, firebase.json, firestore.rules. src/renderer/: index.html, renderer.js, styles.css, auth.js, db.js, firebase-config.js, assets/. src/main/: main.js, preload.js, pdfParser.js, pdfExport.js. functions/: index.js, package.json. test/: logic.test.js."
+}

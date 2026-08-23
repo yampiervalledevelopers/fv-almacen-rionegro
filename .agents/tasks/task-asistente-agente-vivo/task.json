@@ -1,0 +1,7 @@
+{
+  "task_id": "task-asistente-agente-vivo",
+  "task_description": "Transform the voice assistant into a live agent that executes actions directly (navigation, direct Firestore writes, field-by-field form filling, TTS responses, continuous listening mode). Changes to functions/index.js (Cloud Function prompt) and src/renderer/renderer.js (frontend agent logic).",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001", "FEAT-002"],
+  "blocked_reason": null
+}

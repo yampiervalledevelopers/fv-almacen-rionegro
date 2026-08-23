@@ -1,0 +1,42 @@
+{
+  "id": "FEAT-002",
+  "type": "feat",
+  "description": "Transform the voice assistant in renderer.js into a live agent that: (1) executes orders directly in Firestore without confirmation when all data is present, (2) navigates by voice, (3) fills modal fields step by step, (4) responds with Text-to-Speech (speechSynthesis API), (5) auto-reactivates the microphone for continuous conversation mode.",
+  "status": "pending",
+  "steps": [
+    "STEP 1 - AGENT STATE: Replace the current 'asistente' state object (line ~3420) with an expanded state that tracks: estadoAgente ('libre' or 'en_modal'), modalTipo (null/'salida'/'entrada'/'devolucion'/'material'), and escuchando (boolean for auto-reactivation). Add a constant for the speech synthesis voice (es-CO or es-ES fallback).",
+    "STEP 2 - TEXT-TO-SPEECH: Create a function hablarAgente(texto) that uses the Web Speech Synthesis API (window.speechSynthesis). It should: create a SpeechSynthesisUtterance with lang='es-CO', set rate=1.1, pitch=1.0. Try to find a Spanish voice (preferring 'es-CO' or 'es-' prefix). Call speechSynthesis.speak(utterance). Return a promise that resolves when speech finishes (utterance.onend). Use this throughout for all agent confirmations.",
+    "STEP 3 - AUTO-REACTIVATION: Create a function reactivarMicrofono() that, after a short delay (800ms after TTS finishes), restarts recognition if asistente.escuchando is true. The recognition.onend handler should call reactivarMicrofono() unless the user explicitly stopped (clicked the mic to stop, or said 'para'/'detente'/'silencio').",
+    "STEP 4 - NAVIGATION: Create a function navegarPorVoz(destino) that: (a) finds the .menu-item button with data-vista matching destino, (b) simulates a click on it (which triggers activarNavegacion's handler to switch views), (c) calls hablarAgente with confirmation message. Map common aliases: 'panel' -> 'dashboard', 'inicio' -> 'dashboard', 'materiales' -> 'inventario', 'stock' -> 'inventario', etc.",
+    "STEP 5 - OPEN MODAL: Create a function abrirModalPorVoz(modalTipo) that: (a) navigates to 'ordenes' view first if not already there, (b) calls modalOrden(modalTipo) to open the modal with empty precarga, (c) sets asistente.estadoAgente='en_modal' and asistente.modalTipo=modalTipo, (d) calls hablarAgente('Abri nueva [tipo]. Dime el responsable.'). Also handle 'material' type by calling modalMaterial(null).",
+    "STEP 6 - FIELD FILLING: Create a function llenarCampoPorVoz(campo, valor, json) that fills fields in the currently open modal. Handle: (a) campo='responsable': find the first empty .resp-nombre input inside #o-responsables-list, set its value to valor, trigger an 'input' event. (b) campo='frente': set $('#o-frente').value to the closest matching option value (normalize: '3B' matches 'frente 3B', etc). (c) campo='nota': set $('#o-nota').value to valor. (d) campo='item': add a material row - push to estado.itemsOrden, find the material in estado.materiales by normalized name match, set materialId and cantidad. Then trigger a re-render of the items list by finding and clicking #o-add if needed, or directly manipulate the last item row's select and input. (e) Call hablarAgente with confirmation.",
+    "STEP 7 - CONFIRM/EXECUTE MODAL: Create a function confirmarModalPorVoz() that: simulates a click on #o-guardar (the save button in the order modal). Set asistente.estadoAgente='libre', asistente.modalTipo=null. Call hablarAgente('Orden generada exitosamente.').",
+    "STEP 8 - DIRECT EXECUTION: Create a function ejecutarDirectoIA(json) that, when the AI returns a complete order (salida/entrada/devolucion with items, responsable, frente), directly calls registrarOrden() from db.js with the proper data structure (matching what the #o-guardar handler builds). After successful execution, call hablarAgente with confirmation (e.g., 'Despachado: 50 metros de cable 12 rojo al frente 3B para Pedro.'). Show a toast notification too. Handle errors gracefully with hablarAgente explaining the problem.",
+    "STEP 9 - VOICE QUERY: Enhance the consulta handling: when accion='consulta', search estado.materiales, build a spoken response (e.g., 'Tienes 150 metros de cable 12 rojo'), call hablarAgente(response), and also show it in the panel.",
+    "STEP 10 - MAIN DISPATCHER: Rewrite the fetch/response handler in initAsistente (currently the #ap-enviar click handler). After receiving the JSON response from the Cloud Function, dispatch based on accion: 'navegar' -> navegarPorVoz(json.destino), 'abrir_modal' -> abrirModalPorVoz(json.modalTipo), 'llenar_campo' -> llenarCampoPorVoz(json.campo, json.valor, json), 'confirmar' -> confirmarModalPorVoz(), 'consulta' -> voice query handler, 'salida'/'entrada'/'devolucion' with complete data (items+responsable) -> ejecutarDirectoIA(json), otherwise fall back to the old behavior (show in panel with Ejecutar button).",
+    "STEP 11 - CONTINUOUS MODE: Modify the recognition flow so that: (a) When the mic button is clicked, set asistente.escuchando=true and start recognition. (b) When recognition captures final text, immediately send it to the Cloud Function (auto-send, no need to click 'Enviar'). (c) After the action is processed and TTS finishes, auto-restart recognition. (d) To stop: click the mic button again (sets asistente.escuchando=false), or say 'para'/'detente'/'silencio' (detect locally before sending to Cloud Function). (e) Show visual indicator that the agent is in 'live' mode (maybe pulsing green border on mic button).",
+    "STEP 12 - PANEL UI UPDATE: Update the panel HTML to show the agent state ('Agente activo - escuchando', 'En modal: nueva salida', etc.). Remove the manual 'Enviar a la IA' button for the new flow (auto-send). Keep a text display showing the conversation (what was said and what the agent responded). Add a minimal conversation log showing last 3-5 exchanges.",
+    "STEP 13 - STOP WORDS: Add local detection for stop words that should NOT be sent to the Cloud Function: 'para', 'detente', 'silencio', 'deja de escuchar', 'apaga el asistente'. When detected, stop recognition, set asistente.escuchando=false, call hablarAgente('Entendido, me detengo.'), update UI.",
+    "STEP 14 - VERIFY SYNTAX: Run NODE_OPTIONS='' node --check src/renderer/renderer.js to ensure no syntax errors."
+  ],
+  "acceptance_criteria": [
+    "The asistente state object tracks estadoAgente, modalTipo, and escuchando",
+    "hablarAgente() function uses speechSynthesis API with Spanish voice",
+    "Microphone auto-reactivates after each action (continuous mode)",
+    "Voice navigation works: saying 'abre inventario' triggers view switch",
+    "Opening modal by voice works: 'nueva salida' opens the order modal and sets agent to en_modal state",
+    "Field filling works: in en_modal state, 'responsable Pedro' fills the responsable field",
+    "confirmarModalPorVoz() clicks #o-guardar to save the order",
+    "ejecutarDirectoIA() calls registrarOrden() directly when all data is present",
+    "consulta responses are spoken aloud via TTS",
+    "Stop words ('para', 'detente') stop the agent locally",
+    "The panel shows conversation log and agent state",
+    "Recognition auto-sends to Cloud Function on final result (no manual Enviar click needed in continuous mode)",
+    "File passes NODE_OPTIONS='' node --check src/renderer/renderer.js"
+  ],
+  "verification": [
+    "NODE_OPTIONS='' node --check src/renderer/renderer.js"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
