@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Update Cloud Function SYSTEM_PROMPT to support new agent actions: navegar, abrir_modal, llenar_campo, confirmar. Add estadoAgente field handling and update response format to include these new action types.",
+  "status": "completed",
+  "steps": [
+    "In functions/index.js, update the SYSTEM_PROMPT to add new valid actions: 'navegar', 'abrir_modal', 'llenar_campo', 'confirmar'. Keep all existing actions (salida, devolucion, entrada, agregar_inventario, consulta, error).",
+    "Add to the SYSTEM_PROMPT a new section === ESTADO DEL AGENTE === explaining: The field 'estadoAgente' in the request indicates the agent's current state: 'libre' (waiting for a complete command or navigation), 'en_modal' (a modal/form is currently open, user is dictating field-by-field), 'modal_tipo' indicates which modal is open (salida/entrada/devolucion/material). When estadoAgente='en_modal', interpret user speech as filling fields (llenar_campo) or confirming (confirmar).",
+    "Add to the SYSTEM_PROMPT a section === ACCIONES DE NAVEGACION === explaining: When user says 'abre inventario', 've a movimientos', 'muestra herramientas', 'abre nueva salida', etc. -> return accion='navegar' with destino field. Valid destinos: dashboard, inventario, movimientos, ordenes, responsables, consumo, kits, herramientas, importar, reportes, acerca. For 'nueva salida'/'nueva entrada'/'nueva devolucion' -> return accion='abrir_modal' with modalTipo='salida'/'entrada'/'devolucion'.",
+    "Add to the SYSTEM_PROMPT a section === LLENADO DE CAMPOS === explaining: When estadoAgente='en_modal' and user says things like 'ponle como responsable Pedro Gomez', 'frente 3B', 'agrega 50 metros de cable 12 rojo', 'nota: para el tablero del tercer piso' -> return accion='llenar_campo' with campo (which field: responsable/frente/nota/item) and valor (the value to set). For items: return campo='item' with itemNombre, itemCantidad, itemUnidad.",
+    "Add to the SYSTEM_PROMPT a section === CONFIRMACION === explaining: When user says 'listo', 'generar', 'confirmar', 'guardar', 'dale' -> return accion='confirmar'. This triggers saving whatever is in the open modal.",
+    "Add to the SYSTEM_PROMPT a section === EJECUCION DIRECTA === explaining: When estadoAgente='libre' and the command has ALL required data (material, cantidad, responsable, frente), return the action (salida/entrada/devolucion) as before. The frontend will execute it directly without confirmation.",
+    "Update the SYSTEM_PROMPT response format section to show new examples: {\"accion\":\"navegar\",\"destino\":\"inventario\",\"mensaje\":\"Abri inventario\"}, {\"accion\":\"abrir_modal\",\"modalTipo\":\"salida\",\"mensaje\":\"Abri nueva salida. Dime el responsable.\"}, {\"accion\":\"llenar_campo\",\"campo\":\"responsable\",\"valor\":\"Pedro Gomez\",\"mensaje\":\"Listo, responsable Pedro Gomez.\"}, {\"accion\":\"llenar_campo\",\"campo\":\"item\",\"itemNombre\":\"Cable #12 AWG Rojo\",\"itemCantidad\":50,\"itemUnidad\":\"metro\",\"mensaje\":\"Agregado 50m cable 12 rojo.\"}, {\"accion\":\"confirmar\",\"mensaje\":\"Generando la orden...\"}",
+    "In the Cloud Function request handler (exports.asistente), add estadoAgente and modalTipo to the extracted fields from req.body: const { texto, inventario, vistaActual, estadoAgente, modalTipo } = req.body;",
+    "Add estadoAgente and modalTipo context to the system text sent to Vertex AI, similar to how vistaActual is already handled: if (estadoAgente) contextoVista += '\\nEstado del agente: ' + estadoAgente + (modalTipo ? ' (modal abierto: ' + modalTipo + ')' : '');",
+    "Verify syntax: NODE_OPTIONS='' node --check functions/index.js"
+  ],
+  "acceptance_criteria": [
+    "functions/index.js SYSTEM_PROMPT contains the new actions: navegar, abrir_modal, llenar_campo, confirmar",
+    "functions/index.js handles estadoAgente and modalTipo from req.body",
+    "The new estadoAgente context is appended to the system prompt sent to Vertex AI",
+    "The response format section shows examples of the new action types",
+    "File passes NODE_OPTIONS='' node --check functions/index.js"
+  ],
+  "verification": [
+    "NODE_OPTIONS='' node --check functions/index.js"
+  ],
+  "blocked_reason": null,
+  "findings": "Successfully added all new agent actions to SYSTEM_PROMPT. The file passes node --check syntax verification. Added 100 lines covering: estadoAgente/modalTipo handling, navigation, modal opening, field filling, confirmation, direct execution, and updated response format examples."
+}

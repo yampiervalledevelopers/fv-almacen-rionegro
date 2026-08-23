@@ -151,10 +151,104 @@ Usa esta informacion para decidir la accion mas apropiada:
 7. Buscar coincidencias en el inventario actual: si el nombre es similar a algo existente, usar el nombre exacto del inventario.
 8. Si el comando es ambiguo o incompleto, devolver accion="error" con mensaje pidiendo mas informacion.
 
+=== ESTADO DEL AGENTE ===
+El request incluye un campo "estadoAgente" que indica el estado actual del agente en el frontend:
+- "libre": El agente no tiene ningun modal abierto. Puede recibir comandos completos, de navegacion, o abrir modales.
+- "en_modal": Hay un modal/formulario abierto. El usuario esta dictando campos paso a paso.
+  El campo "modalTipo" indica cual modal esta abierto: "salida", "entrada", "devolucion", o "material".
+
+Cuando estadoAgente="en_modal":
+- Interpretar el habla del usuario como llenado de campos (accion="llenar_campo") o confirmacion (accion="confirmar").
+- NO devolver acciones de navegacion ni abrir otro modal mientras ya hay uno abierto.
+- Si el usuario dice algo que no corresponde a un campo del modal actual, devolver accion="error" pidiendo aclaracion.
+
+Cuando estadoAgente="libre":
+- El usuario puede navegar, abrir modales, hacer consultas, o dar comandos completos.
+- Si el comando tiene TODOS los datos necesarios (material, cantidad, responsable, frente), ejecutar la accion directamente (salida/entrada/devolucion).
+- Si el usuario quiere ir paso a paso, primero abrira el modal y luego dictara campo por campo.
+
+=== ACCIONES DE NAVEGACION ===
+Cuando el usuario dice "abre inventario", "ve a movimientos", "muestra herramientas", "ir a reportes", "abre dashboard", etc.:
+- Devolver accion="navegar" con el campo "destino".
+- Destinos validos: dashboard, inventario, movimientos, ordenes, responsables, consumo, kits, herramientas, importar, reportes, acerca.
+- Frases tipicas: "abre X", "ve a X", "muestra X", "ir a X", "lleva me a X", "ensenha X".
+- Mapeo de sinonimos: "inicio"/"principal" -> dashboard, "despachos"/"salidas" -> movimientos, "pedidos" -> ordenes.
+
+IMPORTANTE: Si el usuario dice "nueva salida", "generar salida", "abrir nueva entrada", "nueva devolucion", "agregar material":
+- Esto NO es navegacion, es abrir un modal. Devolver accion="abrir_modal".
+
+=== ABRIR MODAL ===
+Cuando el usuario quiere iniciar un formulario nuevo:
+- "nueva salida" / "generar salida" / "abrir salida" -> accion="abrir_modal", modalTipo="salida"
+- "nueva entrada" / "abrir entrada" / "registrar entrada" -> accion="abrir_modal", modalTipo="entrada"
+- "nueva devolucion" / "abrir devolucion" -> accion="abrir_modal", modalTipo="devolucion"
+- "agregar material" / "nuevo material" / "registrar material" -> accion="abrir_modal", modalTipo="material"
+
+Despues de abrir un modal, el agente pasa a estadoAgente="en_modal" en el frontend.
+
+=== LLENADO DE CAMPOS ===
+Cuando estadoAgente="en_modal" y el usuario dicta datos para llenar el formulario:
+- "ponle como responsable Pedro Gomez" / "responsable Pedro" -> accion="llenar_campo", campo="responsable", valor="Pedro Gomez"
+- "frente 3B" / "es para el frente 5" -> accion="llenar_campo", campo="frente", valor="3B"
+- "nota: para el tablero del tercer piso" / "nota es para el circuito de iluminacion" -> accion="llenar_campo", campo="nota", valor="para el tablero del tercer piso"
+- "agrega 50 metros de cable 12 rojo" / "pon 20 unidades de tomas dobles" -> accion="llenar_campo", campo="item", itemNombre="Cable #12 AWG Rojo", itemCantidad=50, itemUnidad="metro", mensaje="Agregado 50m cable 12 rojo."
+
+Para items (campo="item"):
+- Siempre incluir: itemNombre (nombre exacto del material buscando en inventario), itemCantidad (numero), itemUnidad (metro/unidad/rollo/etc).
+- Si es circuito: desglosar en multiples respuestas NO es posible en una sola accion. Devolver un item a la vez pidiendo confirmacion, o usar accion anterior de salida con items[] si tiene todos los datos.
+- Buscar coincidencia en el inventario para itemNombre.
+
+=== CONFIRMACION ===
+Cuando el usuario dice "listo", "generar", "confirmar", "guardar", "dale", "ya", "ejecuta", "hazlo":
+- Devolver accion="confirmar".
+- Esto indica al frontend que debe guardar/ejecutar lo que este en el modal abierto.
+- Solo aplica cuando hay un modal abierto (estadoAgente="en_modal").
+- Si estadoAgente="libre" y dice "confirmar" sin contexto, devolver accion="error" indicando que no hay nada que confirmar.
+
+=== EJECUCION DIRECTA ===
+Cuando estadoAgente="libre" y el comando tiene TODOS los datos necesarios:
+- Material(es) con nombre, cantidad y unidad
+- Responsable(s)
+- Frente (o contexto que lo indique)
+- Tipo de accion claro (despachar=salida, devolver=devolucion, ingreso=entrada)
+
+En ese caso, devolver la accion completa (salida/devolucion/entrada) con todos los campos como ya se hacia antes.
+El frontend la ejecutara directamente sin necesidad de abrir modal.
+
 === FORMATO DE RESPUESTA (SIEMPRE JSON PURO, SIN MARKDOWN) ===
+Ejemplos de respuestas validas:
+
+Salida completa (ejecucion directa):
 {"accion":"salida","confianza":0.95,"items":[{"nombre":"Cable #12 AWG Rojo","cantidad":20,"unidad":"metro","esHerramienta":false,"serial":"","esNuevo":false}],"responsables":["Jorge Celis"],"frente":"5B","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"Despachar 20m cable #12 rojo al frente 5B"}
 
-Acciones validas: salida, devolucion, entrada, agregar_inventario, consulta, error
+Navegacion:
+{"accion":"navegar","destino":"inventario","mensaje":"Abri inventario."}
+
+Abrir modal:
+{"accion":"abrir_modal","modalTipo":"salida","mensaje":"Abri nueva salida. Dime el responsable."}
+
+Llenar campo - responsable:
+{"accion":"llenar_campo","campo":"responsable","valor":"Pedro Gomez","mensaje":"Listo, responsable Pedro Gomez."}
+
+Llenar campo - frente:
+{"accion":"llenar_campo","campo":"frente","valor":"3B","mensaje":"Frente 3B seleccionado."}
+
+Llenar campo - nota:
+{"accion":"llenar_campo","campo":"nota","valor":"para el tablero del tercer piso","mensaje":"Nota agregada."}
+
+Llenar campo - item:
+{"accion":"llenar_campo","campo":"item","itemNombre":"Cable #12 AWG Rojo","itemCantidad":50,"itemUnidad":"metro","mensaje":"Agregado 50m cable 12 rojo."}
+
+Confirmar:
+{"accion":"confirmar","mensaje":"Generando la orden..."}
+
+Consulta:
+{"accion":"consulta","consulta":"Cable #10 AWG Blanco: 230 metros disponibles.","mensaje":"Tienes 230 metros de cable 10 blanco."}
+
+Error:
+{"accion":"error","mensaje":"No entendi. Que material necesitas despachar?"}
+
+Acciones validas: salida, devolucion, entrada, agregar_inventario, consulta, error, navegar, abrir_modal, llenar_campo, confirmar
 `;
 
 const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
@@ -166,7 +260,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
   try {
-    const { texto, inventario, vistaActual } = req.body;
+    const { texto, inventario, vistaActual, estadoAgente, modalTipo } = req.body;
     if (!texto) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
 
     let contextoInv = '';
@@ -180,6 +274,10 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
     let contextoVista = '';
     if (vistaActual) {
       contextoVista = '\n\n=== VISTA ACTUAL DEL USUARIO ===\nEl usuario esta en la seccion: "' + vistaActual + '". Ten esto en cuenta para elegir la accion mas apropiada.';
+    }
+
+    if (estadoAgente) {
+      contextoVista += '\n\nEstado del agente: ' + estadoAgente + (modalTipo ? ' (modal abierto: ' + modalTipo + ')' : ' (sin modal abierto)');
     }
 
     // Instrucciones del sistema separadas del input del usuario (mejora fidelidad y seguridad)
