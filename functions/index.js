@@ -39,6 +39,11 @@ Circuito 220V SIN neutro (bifasico):
   3. Cable VERDE (tierra) - misma cantidad
   NO incluye cable blanco.
 
+Si el usuario NO indica calibre:
+- Para circuitos 120V: asumir calibre #12 AWG por defecto.
+- Para circuitos 220V: asumir calibre #10 AWG por defecto.
+- Si el contexto es ambiguo o critico, devolver accion="error" pidiendo aclaracion del calibre.
+
 Calibres comunes: #14, #12, #10, #8, #6, #4, #2, #1/0, #2/0, #4/0 AWG.
 Tipos de cable: THHN, THWN, LSHF (Low Smoke Halogen Free).
 
@@ -177,7 +182,8 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       contextoVista = '\n\n=== VISTA ACTUAL DEL USUARIO ===\nEl usuario esta en la seccion: "' + vistaActual + '". Ten esto en cuenta para elegir la accion mas apropiada.';
     }
 
-    const prompt = SYSTEM_PROMPT + contextoInv + contextoVista + '\n\n=== COMANDO DEL USUARIO ===\n' + texto;
+    // Instrucciones del sistema separadas del input del usuario (mejora fidelidad y seguridad)
+    const systemText = SYSTEM_PROMPT + contextoInv + contextoVista;
 
     // Obtener token de autenticacion (automatico en Cloud Functions)
     const client = await auth.getClient();
@@ -190,7 +196,8 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
         'Authorization': `Bearer ${token.token}`
       },
       body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        systemInstruction: { parts: [{ text: systemText }] },
+        contents: [{ role: 'user', parts: [{ text: texto }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
       })
     });
@@ -198,7 +205,8 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
     if (!response.ok) {
       const errText = await response.text();
       console.error('Vertex AI error:', response.status, errText);
-      res.status(500).json({ error: 'Error de Gemini: ' + response.status, detalle: errText.substring(0, 200) });
+      // No exponer detalles internos de Vertex AI al cliente
+      res.status(500).json({ error: 'Error procesando el comando de voz. Intenta de nuevo.' });
       return;
     }
 

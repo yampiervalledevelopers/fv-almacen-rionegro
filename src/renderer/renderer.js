@@ -3532,7 +3532,7 @@ function initAsistente() {
       const resp = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ texto, inventario: inv, vistaActual: document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard' })
+        body: JSON.stringify({ texto, inventario: inv, vistaActual })
       });
 
       if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);

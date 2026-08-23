@@ -1,0 +1,14 @@
+{
+  "task_id": "task-asistente-voz-mejoras",
+  "task_description": "Merge fix/csp-cloud-function branch, enhance Gemini prompt with complete electrical circuit logic and Colombian jargon, and make the voice assistant context-aware and active across all app sections/views.",
+  "status": "completed",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "skipped",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "Both files pass node --check syntax validation. Review issues addressed: (1) SYSTEM_PROMPT moved to systemInstruction field, (2) user text isolated in separate contents turn, (3) vistaActual reuses captured const, (4) CSP pinned to specific Cloud Run URL and *.cloudfunctions.net removed, (5) Vertex AI error details no longer forwarded to client, (6) Default calibre rule added for omitted calibre scenarios."
+  }
+}
