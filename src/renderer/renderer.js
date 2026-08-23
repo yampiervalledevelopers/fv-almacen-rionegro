@@ -3620,11 +3620,29 @@ function confirmarModalPorVoz() {
   const btnGuardar = $('#o-guardar');
   if (btnGuardar) {
     btnGuardar.click();
-    asistente.estadoAgente = 'libre';
-    asistente.modalTipo = null;
-    const msg = 'Orden generada exitosamente.';
-    agregarAlHistorial('agente', msg);
-    return hablarAgente(msg);
+    // Observar si el modal se cierra (indicador de exito)
+    // El modal se cierra via cerrarModal() que sets #modal.hidden = true
+    const checkCierre = setInterval(async () => {
+      const modal = $('#modal');
+      if (modal && modal.hidden) {
+        clearInterval(checkCierre);
+        asistente.estadoAgente = 'libre';
+        asistente.modalTipo = null;
+        const msg = 'Orden generada exitosamente.';
+        agregarAlHistorial('agente', msg);
+        await hablarAgente(msg);
+      }
+    }, 300);
+    // Timeout: si despues de 10s no se cierra, asumir error
+    setTimeout(() => {
+      clearInterval(checkCierre);
+      if (!$('#modal').hidden) {
+        const msg = 'Hubo un problema al generar la orden. Revisa los datos.';
+        agregarAlHistorial('agente', msg);
+        hablarAgente(msg);
+      }
+    }, 10000);
+    return Promise.resolve();
   } else {
     const msg = 'No hay modal abierto para confirmar.';
     agregarAlHistorial('agente', msg);
@@ -3693,6 +3711,16 @@ async function ejecutarDirectoIA(json) {
       items,
       fecha: null
     });
+
+    // Actualizar estado de herramientas despachadas
+    if (tipo === 'salida') {
+      for (const it of items) {
+        const mat = estado.materiales.find((m) => m.id === it.materialId);
+        if (mat && mat.esHerramienta) {
+          await actualizarHerramientaDespacho(it.materialId, responsablePrincipal, frenteVal, 'salida');
+        }
+      }
+    }
 
     // Construir mensaje de confirmacion
     const resumen = items.map((it) => `${fmtNum(it.cantidad)} ${it.unidad} de ${it.materialNombre}`).join(', ');
