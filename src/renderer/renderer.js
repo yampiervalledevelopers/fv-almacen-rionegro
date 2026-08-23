@@ -3429,6 +3429,8 @@ const asistente = {
   historial: [],
   procesando: false,
   hablando: false,
+  flujoOcupado: false,
+  flujoBuffer: [],
   flujo: {
     paso: null,
     datos: {
@@ -3440,6 +3442,15 @@ const asistente = {
     esperandoConfirmacionMaterial: null
   }
 };
+
+// --- Helper: resetear estado del flujo (evita duplicacion) ---
+function resetFlujo() {
+  asistente.flujo.paso = null;
+  asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
+  asistente.flujo.esperandoConfirmacionMaterial = null;
+  asistente.flujoOcupado = false;
+  asistente.flujoBuffer = [];
+}
 
 // Palabras de parada
 const STOP_WORDS = ['detente', 'silencio', 'deja de escuchar', 'apaga el asistente', 'listo con todo'];
@@ -3458,12 +3469,17 @@ const ALIAS_VISTAS = {
   info: 'acerca', acercade: 'acerca'
 };
 
+// --- Timer de reactivacion (declarado temprano para uso en hablarAgente) ---
+let _reactivarTimer = null;
+
 // --- Text-to-Speech con pausa/reanudacion de reconocimiento ---
 function hablarAgente(texto) {
+  // Set hablando IMMEDIATELY to prevent any pending reactivarMicrofono from firing
+  asistente.hablando = true;
+  if (_reactivarTimer) { clearTimeout(_reactivarTimer); _reactivarTimer = null; }
   return new Promise((resolve) => {
-    if (!window.speechSynthesis) { resolve(); return; }
+    if (!window.speechSynthesis) { asistente.hablando = false; resolve(); return; }
     // Pausar reconocimiento mientras habla el agente
-    asistente.hablando = true;
     if (asistente.recognition && asistente.grabando) {
       try { asistente.recognition.stop(); } catch (e) { /* ignorar */ }
       asistente.grabando = false;
@@ -3500,10 +3516,13 @@ function hablarAgente(texto) {
   });
 }
 
-// --- Reactivacion inmediata del microfono (100ms max) ---
+// --- Reactivacion inmediata del microfono (debounced 150ms) ---
 function reactivarMicrofono() {
   if (!asistente.escuchando || !asistente.recognition || asistente.hablando) return;
-  setTimeout(() => {
+  // Debounce: si ya hay un timer pendiente, no programar otro
+  if (_reactivarTimer) return;
+  _reactivarTimer = setTimeout(() => {
+    _reactivarTimer = null;
     if (!asistente.escuchando || asistente.hablando) return;
     try {
       asistente.recognition.start();
@@ -3514,7 +3533,7 @@ function reactivarMicrofono() {
     } catch (e) {
       // Si ya esta corriendo, ignorar
     }
-  }, 100);
+  }, 150);
 }
 
 // --- Navegacion por voz ---
@@ -3641,9 +3660,7 @@ function confirmarModalPorVoz() {
         clearInterval(checkCierre);
         asistente.estadoAgente = 'libre';
         asistente.modalTipo = null;
-        asistente.flujo.paso = null;
-        asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
-        asistente.flujo.esperandoConfirmacionMaterial = null;
+        resetFlujo();
         const msg = 'Orden generada exitosamente.';
         agregarAlHistorial('agente', msg);
         await hablarAgente(msg);
@@ -3993,14 +4010,51 @@ function parsearMaterialLocal(texto) {
     return { encontrado: false, cantidad, unidad: unidadDetectada, nombre: '', material: null, sugerencia: null };
   }
 
-  // Buscar en inventario: coincidencia exacta (includes)
+  // Buscar en inventario: coincidencia exacta (includes) con desambiguacion
   const busquedaNorm = normTxt(nombreBusqueda);
-  let encontrado = estado.materiales.find((m) => normTxt(m.nombre).includes(busquedaNorm));
+  const coincidencias = estado.materiales.filter((m) => normTxt(m.nombre).includes(busquedaNorm));
+
+  if (coincidencias.length === 1) {
+    return {
+      encontrado: true,
+      cantidad,
+      unidad: coincidencias[0].unidad || unidadDetectada,
+      nombre: coincidencias[0].nombre,
+      material: coincidencias[0],
+      sugerencia: null,
+      multiples: null
+    };
+  }
+
+  if (coincidencias.length > 1) {
+    // Intentar encontrar la coincidencia mas especifica (nombre mas corto)
+    const ordenadas = coincidencias.slice().sort((a, b) => a.nombre.length - b.nombre.length);
+    // Si la mas corta es mucho mas especifica (nombre completo ~ busqueda), usar esa
+    if (normTxt(ordenadas[0].nombre) === busquedaNorm) {
+      return {
+        encontrado: true,
+        cantidad,
+        unidad: ordenadas[0].unidad || unidadDetectada,
+        nombre: ordenadas[0].nombre,
+        material: ordenadas[0],
+        sugerencia: null,
+        multiples: null
+      };
+    }
+    // Multiples coincidencias: devolver para desambiguacion
+    return {
+      encontrado: false,
+      cantidad,
+      unidad: unidadDetectada,
+      nombre: nombreBusqueda,
+      material: null,
+      sugerencia: null,
+      multiples: coincidencias.slice(0, 5)
+    };
+  }
 
   // Si no encuentra, intentar busqueda inversa (nombre del material incluye la busqueda)
-  if (!encontrado) {
-    encontrado = estado.materiales.find((m) => busquedaNorm.includes(normTxt(m.nombre)));
-  }
+  let encontrado = estado.materiales.find((m) => busquedaNorm.includes(normTxt(m.nombre)));
 
   if (encontrado) {
     return {
@@ -4009,7 +4063,8 @@ function parsearMaterialLocal(texto) {
       unidad: encontrado.unidad || unidadDetectada,
       nombre: encontrado.nombre,
       material: encontrado,
-      sugerencia: null
+      sugerencia: null,
+      multiples: null
     };
   }
 
@@ -4037,11 +4092,12 @@ function parsearMaterialLocal(texto) {
       unidad: mejorMatch.unidad || unidadDetectada,
       nombre: nombreBusqueda,
       material: null,
-      sugerencia: mejorMatch
+      sugerencia: mejorMatch,
+      multiples: null
     };
   }
 
-  return { encontrado: false, cantidad, unidad: unidadDetectada, nombre: nombreBusqueda, material: null, sugerencia: null };
+  return { encontrado: false, cantidad, unidad: unidadDetectada, nombre: nombreBusqueda, material: null, sugerencia: null, multiples: null };
 }
 
 // --- Agregar item al modal DOM ---
@@ -4058,16 +4114,36 @@ function agregarItemAlModal(material, cantidad) {
   }
 }
 
-// --- Procesador del flujo guiado conversacional ---
+// --- Procesador del flujo guiado conversacional (con lock para concurrencia) ---
 async function procesarEnFlujo(texto) {
+  // Fix 2: Lock guard - buffer text if already processing
+  if (asistente.flujoOcupado) {
+    asistente.flujoBuffer.push(texto);
+    return;
+  }
+  asistente.flujoOcupado = true;
+
+  try {
+    await _procesarEnFlujoInterno(texto);
+    // Process any buffered utterances sequentially
+    while (asistente.flujoBuffer.length > 0 && asistente.flujo.paso) {
+      const siguiente = asistente.flujoBuffer.shift();
+      agregarAlHistorial('usuario', siguiente);
+      actualizarPanelConversacion();
+      await _procesarEnFlujoInterno(siguiente);
+    }
+  } finally {
+    asistente.flujoOcupado = false;
+  }
+}
+
+async function _procesarEnFlujoInterno(texto) {
   const t = normTxt(texto).replace(/[.,;:!?]+/g, '').trim().replace(/\s+/g, ' ');
   const paso = asistente.flujo.paso;
 
   // Cancelar flujo si el usuario dice cancelar/salir
   if (/^(cancelar|cancelalo|salir del flujo|no quiero|olvidalo)$/.test(t)) {
-    asistente.flujo.paso = null;
-    asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
-    asistente.flujo.esperandoConfirmacionMaterial = null;
+    resetFlujo();
     asistente.estadoAgente = 'libre';
     asistente.modalTipo = null;
     const msg = 'Flujo cancelado.';
@@ -4084,6 +4160,18 @@ async function procesarEnFlujo(texto) {
     if (afirmativas.includes(t)) {
       const mat = asistente.flujo.esperandoConfirmacionMaterial.material;
       const cant = asistente.flujo.esperandoConfirmacionMaterial.cantidad;
+      // Fix 5: Stock validation on confirmation of suggested material
+      const stockDisponible = Number(mat.cantidad) || 0;
+      if (cant > stockDisponible) {
+        asistente.flujo.esperandoConfirmacionMaterial = null;
+        const msg = stockDisponible > 0
+          ? `Stock insuficiente de "${mat.nombre}". Solo hay ${fmtNum(stockDisponible)} ${mat.unidad} disponibles. Dime otra cantidad o di otro material.`
+          : `"${mat.nombre}" esta en cero. Dime otro material.`;
+        agregarAlHistorial('agente', msg);
+        actualizarPanelConversacion();
+        await hablarAgente(msg);
+        return;
+      }
       asistente.flujo.datos.items.push({ materialId: mat.id, nombre: mat.nombre, cantidad: cant, unidad: mat.unidad });
       agregarItemAlModal(mat, cant);
       asistente.flujo.esperandoConfirmacionMaterial = null;
@@ -4195,6 +4283,17 @@ async function procesarEnFlujo(texto) {
     // Parsear material localmente
     const resultado = parsearMaterialLocal(texto);
     if (resultado.encontrado) {
+      // Fix 5: Stock validation during dictation
+      const stockDisponible = Number(resultado.material.cantidad) || 0;
+      if (resultado.cantidad > stockDisponible) {
+        const msg = stockDisponible > 0
+          ? `Stock insuficiente de "${resultado.material.nombre}". Solo hay ${fmtNum(stockDisponible)} ${resultado.unidad} disponibles. Dime otra cantidad o di otro material.`
+          : `"${resultado.material.nombre}" esta en cero. Dime otro material.`;
+        agregarAlHistorial('agente', msg);
+        actualizarPanelConversacion();
+        await hablarAgente(msg);
+        return;
+      }
       asistente.flujo.datos.items.push({
         materialId: resultado.material.id,
         nombre: resultado.material.nombre,
@@ -4203,6 +4302,13 @@ async function procesarEnFlujo(texto) {
       });
       agregarItemAlModal(resultado.material, resultado.cantidad);
       const msg = `Agregado: ${resultado.cantidad} ${resultado.unidad} de ${resultado.material.nombre}. Que mas?`;
+      agregarAlHistorial('agente', msg);
+      actualizarPanelConversacion();
+      await hablarAgente(msg);
+    } else if (resultado.multiples && resultado.multiples.length > 1) {
+      // Fix 3: Disambiguation - multiple matches found
+      const nombres = resultado.multiples.slice(0, 3).map((m) => m.nombre).join(', ');
+      const msg = `Encontre varios: ${nombres}. Cual necesitas?`;
       agregarAlHistorial('agente', msg);
       actualizarPanelConversacion();
       await hablarAgente(msg);
@@ -4315,8 +4421,8 @@ function detectarIntencionLocal(texto) {
     asistente.estadoAgente = 'en_modal';
     asistente.modalTipo = 'salida';
     asistente.flujo.paso = 'responsable';
-    asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
-    asistente.flujo.esperandoConfirmacionMaterial = null;
+    resetFlujo();
+    asistente.flujo.paso = 'responsable';
     actualizarEstadoPanel();
     const msg = 'Nueva salida. Para que responsable?';
     agregarAlHistorial('agente', msg);
@@ -4420,9 +4526,7 @@ function initAsistente() {
         try { recognition.stop(); } catch (e) { /* ignorar */ }
         asistente.escuchando = false;
         asistente.grabando = false;
-        asistente.flujo.paso = null;
-        asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
-        asistente.flujo.esperandoConfirmacionMaterial = null;
+        resetFlujo();
         btnMic.classList.remove('grabando', 'agente-activo');
         agregarAlHistorial('usuario', textoFinal);
         agregarAlHistorial('agente', 'Entendido, me detengo.');
@@ -4491,9 +4595,7 @@ function initAsistente() {
       asistente.escuchando = false;
       asistente.grabando = false;
       asistente.hablando = false;
-      asistente.flujo.paso = null;
-      asistente.flujo.datos = { responsable: '', frente: '', nota: '', items: [] };
-      asistente.flujo.esperandoConfirmacionMaterial = null;
+      resetFlujo();
       btnMic.classList.remove('grabando', 'agente-activo');
       try { recognition.stop(); } catch (e) { /* ignorar */ }
       window.speechSynthesis.cancel();
