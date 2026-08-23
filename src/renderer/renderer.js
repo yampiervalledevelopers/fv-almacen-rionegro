@@ -3927,7 +3927,10 @@ function esStopWord(texto) {
 // --- Deteccion local de intencion (antes de enviar a la IA) ---
 // Resuelve navegacion, modales y confirmacion de forma instantanea sin Cloud Function.
 function detectarIntencionLocal(texto) {
-  const t = normTxt(texto);
+  let t = normTxt(texto);
+  // Limpiar puntuacion y espacios extra del speech recognition
+  t = t.replace(/[.,;:!?]+/g, '').replace(/\.{2,}/g, '').trim().replace(/\s+/g, ' ');
+  console.log('[AGENTE LOCAL]', texto, '->', t);
 
   // --- 1. Patrones de navegacion ---
   // Detectar: "abre X", "ve a X", "ve al X", "muestra X", "ir a X", "ir al X", "muestrame X"
@@ -4013,6 +4016,7 @@ function detectarIntencionLocal(texto) {
   // No se resolvio localmente
   return false;
 }
+window.detectarIntencionLocal = detectarIntencionLocal;
 
 // --- STEP 11 + Inicializacion principal ---
 function initAsistente() {
