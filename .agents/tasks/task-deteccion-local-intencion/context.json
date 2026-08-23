@@ -1,0 +1,8 @@
+{
+  "project_type": "Electron + Web app with Firebase backend",
+  "language": "JavaScript",
+  "build_command": "NODE_OPTIONS='' node --check src/renderer/renderer.js",
+  "test_command": "NODE_OPTIONS='' node --check src/renderer/renderer.js",
+  "verification_instructions": "Run NODE_OPTIONS='' node --check src/renderer/renderer.js to verify syntax.",
+  "relevant_files": ["src/renderer/renderer.js"]
+}

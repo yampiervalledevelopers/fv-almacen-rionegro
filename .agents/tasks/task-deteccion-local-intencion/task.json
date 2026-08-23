@@ -1,0 +1,14 @@
+{
+  "task_id": "task-deteccion-local-intencion",
+  "task_description": "Add local intent detection to the voice assistant frontend so navigation, modal opening, and confirmation commands are resolved instantly without calling the Cloud Function.",
+  "status": "completed",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null,
+  "verification": {
+    "build": "pass",
+    "tests": "pass",
+    "test_quality": "pass",
+    "docker_build": "skipped",
+    "summary": "renderer.js passes NODE_OPTIONS='' node --check. functions/index.js also passes. detectarIntencionLocal function added with navigation, modal, and confirmation pattern matching. Intercept point in recognition.onresult works correctly."
+  }
+}
