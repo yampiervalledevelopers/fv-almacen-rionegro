@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Merge branch fix/csp-cloud-function into main, then enhance the Cloud Function SYSTEM_PROMPT with complete electrical circuit logic and more Colombian electrical jargon, and make the voice assistant context-aware of the current view/section for smarter responses.",
+  "status": "completed",
+  "steps": [
+    "Create a new branch from main called 'feat/asistente-mejoras-completas'",
+    "Merge the content from fix/csp-cloud-function into this new branch (git merge fix/csp-cloud-function)",
+    "In functions/index.js, enhance the SYSTEM_PROMPT with: (a) More detailed circuit desglose logic - Circuito rojo #12 a 120V = 3 cables (ROJO + BLANCO + VERDE tierra) with quantity applying to EACH cable; Circuito 220 con neutro = 4 cables (AMARILLO + ROJO + BLANCO neutro + VERDE tierra); Circuito 220 sin neutro = 3 cables (AMARILLO + ROJO + VERDE tierra). (b) Add more Colombian electrical jargon: 'Roseta' = base para lampara, 'Prensa estopa' = conector para cable, 'Minibreaker' = breaker/disyuntor en miniatura, 'Taco' = breaker/interruptor automatico, 'Acoples' = acoplamiento de tuberia, 'Conduleta' = caja de conexion para tuberia, 'Canaleta' = canal/ducteria para cableado, 'Manguera corrugada' = tubo flexible corrugado para proteger cables, 'Encintada' = empalme aislado con cinta, 'Abrazaderas' / 'grapas' = soportes para fijar tuberia, 'Chazo expansivo' / 'supra mas' = anclaje de expansion, 'Bajante' = tubo vertical, 'Acometida' = linea de alimentacion electrica desde el transformador, 'Bornera' = regleta de conexion, 'Prensacable' = conector para sujetar cable, 'Tomacorriente GFCI' = toma con proteccion diferencial, 'Interruptor sencillo/doble/triple' = switch de 1/2/3 vias, 'Caja 2x4' / 'Caja 4x4' = cajas electricas estandar, 'Reductor' = adaptador de diametro de tubo. (c) Improve quantity/unit interpretation: when user says 'metros' or 'mt' -> unidad='metro'; when they say numbers like 'cien' -> 100, 'cincuenta' -> 50. (d) Add awareness of the current user's view/section - the prompt will receive a 'vistaActual' field indicating where the user is in the app",
+    "In src/renderer/renderer.js, modify the voice assistant (initAsistente function and the fetch call) to: (a) Detect the current active view by reading document.querySelector('.menu-item.active').dataset.vista. (b) Include the current view as 'vistaActual' in the JSON body sent to the Cloud Function. (c) Add 'vistaActual' context to the Cloud Function SYSTEM_PROMPT so Gemini knows which section the user is in",
+    "In src/renderer/renderer.js, modify initAsistente() to ensure the mic button and panel work from ALL views/sections. Currently the button is appended to the topbar which is always visible, so it should work everywhere. Verify this by confirming the panel is appended to document.body (global scope) and that no view-switching code hides or removes the assistant. Add logic so that if the user gives an order from a specific section, the assistant can provide contextual actions (e.g., from inventario: can directly open material modal; from movimientos: can pre-fill orders).",
+    "In functions/index.js, update the SYSTEM_PROMPT to include awareness of vistaActual: add a section explaining that the user's current view is provided, and that the AI should tailor its responses accordingly (e.g., if on 'inventario' view and user asks to add material, use 'agregar_inventario' action; if on 'movimientos' or 'ordenes' view, default to salida/entrada/devolucion as appropriate)",
+    "Verify syntax: run 'node --check functions/index.js' and 'node --check src/renderer/renderer.js'"
+  ],
+  "acceptance_criteria": [
+    "Branch feat/asistente-mejoras-completas exists with all changes from fix/csp-cloud-function merged",
+    "CSP in index.html includes https://*.a.run.app and https://*.cloudfunctions.net in connect-src",
+    "CLOUD_FUNCTION_URL in renderer.js is 'https://asistente-5lyachxl4a-uc.a.run.app'",
+    "functions/index.js SYSTEM_PROMPT contains detailed Colombian electrical jargon (at least 10 new terms beyond what was there)",
+    "functions/index.js SYSTEM_PROMPT contains explicit circuito desglose rules for 120V and 220V (with and without neutro)",
+    "The fetch call in renderer.js sends 'vistaActual' field alongside 'texto' and 'inventario'",
+    "functions/index.js SYSTEM_PROMPT references vistaActual and provides guidance on context-aware responses",
+    "Both files pass 'node --check' syntax validation",
+    "The mic button remains in the topbar (visible across all views) and the panel is on document.body"
+  ],
+  "verification": [
+    "node --check functions/index.js",
+    "node --check src/renderer/renderer.js",
+    "node test/logic.test.js",
+    "grep -c 'vistaActual' src/renderer/renderer.js (should be >= 2)",
+    "grep -c 'vistaActual' functions/index.js (should be >= 1)",
+    "grep -c 'a.run.app' src/renderer/index.html (should be >= 1)",
+    "grep 'CLOUD_FUNCTION_URL' src/renderer/renderer.js | grep 'asistente-5lyachxl4a-uc.a.run.app'"
+  ],
+  "blocked_reason": null,
+  "findings": "1. The test file test/logic.test.js has a pre-existing syntax error (invalid token at line 30 with literal newlines inside console.log strings) - this is NOT caused by our changes and fails on the base branch as well. 2. NODE_OPTIONS env var must be cleared (NODE_OPTIONS='') to run node --check due to a missing preload module in the sandbox. 3. The merge from fix/csp-cloud-function was a fast-forward (clean merge). 4. The mic button (#btn-asistente-voz) is in the topbar which is always visible across all views - no code changes were needed to make it visible on all views. 5. The panel is appended to document.body (global scope) so it overlays any view. 6. Review fixes applied: systemInstruction field used instead of user-turn prompt, user text in separate contents turn, vistaActual const reused, CSP pinned to specific subdomain, error detail leakage removed, default calibre rule added. 7. V2 review fixes: (a) outer catch no longer leaks error.message - replaced with generic 'Error procesando el comando. Intenta de nuevo.', (b) parse-failure no longer sends raw model output to client - raw text logged server-side instead, (c) model ID gemini-3.7-flash kept intentionally per commit history confirmation (8990b96)."
+}

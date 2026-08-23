@@ -1,0 +1,21 @@
+{
+  "project_type": "Electron + Web app (GitHub Pages) with Firebase backend and Cloud Function (Vertex AI)",
+  "language": "JavaScript (ES Modules for renderer, CommonJS for Cloud Function)",
+  "build_system": "npm + electron-builder (desktop), static files served for web",
+  "test_framework": "Custom assert-based test runner in test/logic.test.js (only tests PDF parser)",
+  "build_command": "No standard build - static files. Electron: npm start",
+  "test_command": "node test/logic.test.js",
+  "verification_instructions": "1. Run 'node test/logic.test.js' to ensure existing tests pass. 2. Verify JS syntax with 'node --check src/renderer/renderer.js'. 3. Verify Cloud Function syntax with 'node --check functions/index.js'.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "npm install (root for Electron deps). cd functions && npm install (for Cloud Function deps). Not needed for syntax checks.",
+  "environment_constraints": "No Electron runtime available in sandbox (cannot run GUI). Verification limited to syntax checks and existing test runner. No Firebase/Firestore connection available. Cannot test the Cloud Function live.",
+  "contribution_requirements": "Code comments and UI in Spanish. The app serves Colombian electricians at an airport construction site. Voice assistant uses Colombian Spanish (es-CO).",
+  "key_patterns": "- Single-file renderer.js (~3633 lines) with all UI logic. - Views toggled by data-vista attribute on .menu-item buttons. - activarNavegacion() at ~line 869 sets up click handlers. - Navigation tracked via active class on .menu-item. - Current view can be determined by: document.querySelector('.menu-item.active').dataset.vista. - initAsistente() creates floating panel + mic button. - ejecutarAccionIA(json, soloEditar) dispatches actions to modals. - CLOUD_FUNCTION_URL constant at line 3417. - Cloud Function in functions/index.js uses Vertex AI (GoogleAuth + fetch). - SYSTEM_PROMPT contains electrical jargon and JSON format spec.",
+  "relevant_files": [
+    "src/renderer/renderer.js",
+    "src/renderer/index.html",
+    "functions/index.js",
+    "functions/package.json"
+  ],
+  "directory_structure": "Root: package.json, firebase.json, firestore.rules. src/renderer/: index.html, renderer.js, styles.css, auth.js, db.js, firebase-config.js, assets/. src/main/: main.js, preload.js, pdfParser.js, pdfExport.js. functions/: index.js, package.json. test/: logic.test.js."
+}
