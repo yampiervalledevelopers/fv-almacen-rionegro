@@ -8,7 +8,7 @@ const { GoogleAuth } = require('google-auth-library');
 const PROJECT_ID = 'almacen-rio-jmc';
 const LOCATION = 'global';
 const MODEL = 'gemini-3.7-flash';
-const VERTEX_URL = `https://${LOCATION}-aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent`;
+const VERTEX_URL = `https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/${LOCATION}/publishers/google/models/${MODEL}:generateContent`;
 
 const SYSTEM_PROMPT = `Eres el asistente de voz del sistema de inventario de FVIECOM S.A.S (empresa de ingenieria electrica y telecomunicaciones) en el proyecto del Aeropuerto Internacional Jose Maria Cordova, Rionegro, Colombia.
 
