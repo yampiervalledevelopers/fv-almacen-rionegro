@@ -218,12 +218,13 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       const limpio = textResp.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
       json = JSON.parse(limpio);
     } catch (e) {
-      json = { accion: 'error', confianza: 0, mensaje: 'No pude interpretar la respuesta.', raw: textResp.substring(0, 300) };
+      console.error('Error parseando respuesta del modelo:', textResp.substring(0, 500));
+      json = { accion: 'error', confianza: 0, mensaje: 'No pude interpretar la respuesta.' };
     }
 
     res.status(200).json(json);
   } catch (error) {
     console.error('Error en asistente:', error);
-    res.status(500).json({ error: 'Error interno: ' + (error.message || 'desconocido') });
+    res.status(500).json({ error: 'Error procesando el comando. Intenta de nuevo.' });
   }
 });
