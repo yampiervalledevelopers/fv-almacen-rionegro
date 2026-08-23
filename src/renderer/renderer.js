@@ -3517,7 +3517,8 @@ function initAsistente() {
   $('#ap-enviar').addEventListener('click', async () => {
     const texto = ($('#ap-texto').textContent || '').trim();
     if (!texto) { toast('Escribe o dicta un comando primero', 'error'); return; }
-    $('#ap-estado').textContent = '🧠 Procesando con IA...';
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
+    $('#ap-estado').textContent = '🧠 Procesando con IA... (vista: ' + vistaActual + ')';
     $('#ap-enviar').disabled = true;
     $('#ap-resultado').hidden = true;
 
@@ -3531,7 +3532,7 @@ function initAsistente() {
       const resp = await fetch(CLOUD_FUNCTION_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ texto, inventario: inv })
+        body: JSON.stringify({ texto, inventario: inv, vistaActual: document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard' })
       });
 
       if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);

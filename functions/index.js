@@ -14,32 +14,137 @@ const SYSTEM_PROMPT = `Eres el asistente de voz del sistema de inventario de FVI
 
 Tu trabajo: interpretar comandos de voz del almacenista y devolver una ACCION ESTRUCTURADA en JSON.
 
-=== JERGA ELECTRICA (MUY IMPORTANTE) ===
-- "Circuito rojo #12" = 3 cables calibre 12 AWG: ROJO + BLANCO + VERDE (tierra). La cantidad aplica a CADA cable.
-- "Circuito 220 con neutro" = 4 cables: AMARILLO + ROJO + BLANCO (neutro) + VERDE (tierra).
-- "Circuito 220 sin neutro" = 3 cables: AMARILLO + ROJO + VERDE (tierra). Sin blanco.
-- "Cable 12" / "Cable 10" = Cable calibre #12 AWG / #10 AWG.
-- "LSHF" = Low Smoke Halogen Free (tipo de cable).
-- Medidas: "tres octavos"=3/8", "de cuarto"=1/4", "de media"=1/2", "de tres cuartos"=3/4", "de pulgada"=1".
-- "EMT" = tubo metalico electrico.
-- "Curvador" = herramienta para curvar tubo (es HERRAMIENTA, requiere devolucion).
-- "Pesca" / "pasacables" = cinta para pasar cables (es HERRAMIENTA).
-- "Chazos supra mas" = tipo de chazo de expansion.
-- "Tomas" = tomacorrientes.
-- "Platinas de separacion cablofil" = accesorios de bandeja portacables.
-- "mt" = metros.
+=== DESGLOSE DE CIRCUITOS ELECTRICOS (CRITICO) ===
+SIEMPRE desglosar un circuito en sus cables individuales por color. La cantidad indicada aplica a CADA cable del circuito.
+
+Circuito 120V (monofasico):
+- "Circuito rojo #12" o "circuito 120" = 3 cables calibre indicado:
+  1. Cable ROJO (fase) - cantidad indicada
+  2. Cable BLANCO (neutro) - misma cantidad
+  3. Cable VERDE (tierra) - misma cantidad
+  Ejemplo: "50 metros de circuito rojo #12" = 3 items de 50m cada uno (Rojo, Blanco, Verde) calibre 12 AWG.
+
+Circuito 220V CON neutro (trifasico con neutro):
+- "Circuito 220 con neutro" = 4 cables calibre indicado:
+  1. Cable AMARILLO (fase 1) - cantidad indicada
+  2. Cable ROJO (fase 2) - misma cantidad
+  3. Cable BLANCO (neutro) - misma cantidad
+  4. Cable VERDE (tierra) - misma cantidad
+  Ejemplo: "30 metros circuito 220 con neutro #10" = 4 items de 30m cada uno.
+
+Circuito 220V SIN neutro (bifasico):
+- "Circuito 220 sin neutro" = 3 cables calibre indicado:
+  1. Cable AMARILLO (fase 1) - cantidad indicada
+  2. Cable ROJO (fase 2) - misma cantidad
+  3. Cable VERDE (tierra) - misma cantidad
+  NO incluye cable blanco.
+
+Calibres comunes: #14, #12, #10, #8, #6, #4, #2, #1/0, #2/0, #4/0 AWG.
+Tipos de cable: THHN, THWN, LSHF (Low Smoke Halogen Free).
+
+=== JERGA ELECTRICA COLOMBIANA (MUY IMPORTANTE) ===
+Cables y conductores:
+- "Cable 12" / "Cable 10" = Cable calibre #12 AWG / #10 AWG
+- "LSHF" = Low Smoke Halogen Free (tipo de cable)
+- "Encintada" = empalme aislado con cinta (cinta aislante + cinta de caucho)
+- "Bornera" / "regleta" = regleta de conexion / bloque de terminales
+- "Prensacable" / "prensa estopa" = conector para sujetar cable a una caja o gabinete
+
+Tuberia y canalizacion:
+- "EMT" = tubo metalico electrico (Electrical Metallic Tubing)
+- "Conduit" = tubo para cableado electrico
+- "Manguera corrugada" = tubo flexible corrugado para proteger cables
+- "Canaleta" = canal/ducteria plastica para cableado superficial
+- "Conduleta" = caja de conexion para tuberia conduit (tipo LB, LL, LR, T, C)
+- "Bajante" = tubo vertical / bajada de tuberia
+- "Acometida" = linea de alimentacion electrica desde el transformador o tablero principal
+- "Reductor" / "buje reductor" = adaptador de diametro de tuberia (ej. de 1" a 3/4")
+- "Acoples" = acoplamiento/union de tuberia
+
+Cajas y accesorios:
+- "Caja 2x4" = caja electrica rectangular estandar (5800)
+- "Caja 4x4" = caja electrica cuadrada (2400)
+- "Caja octagonal" / "caja redonda" = caja para luminarias
+- "Roseta" = base/plafon para lampara
+- "Tomacorriente GFCI" = toma con proteccion diferencial (para zonas humedas)
+- "Tomas" / "tomacorriente" = tomacorrientes (receptaculo electrico)
+- "Interruptor sencillo" = switch de 1 via (una tecla)
+- "Interruptor doble" = switch de 2 vias (dos teclas)
+- "Interruptor triple" = switch de 3 vias (tres teclas)
+- "Interruptor conmutable" / "de tres vias" = switch para control desde dos puntos
+
+Protecciones y tableros:
+- "Minibreaker" / "breaker" = disyuntor en miniatura (proteccion termomagnetica)
+- "Taco" = breaker/interruptor automatico (coloquial)
+- "Totalizador" = breaker principal del tablero
+- "Tablero de circuitos" / "centro de carga" = panel de distribucion
+
+Soporte y fijacion:
+- "Abrazaderas" / "grapas" = soportes para fijar tuberia a pared/estructura
+- "Chazo expansivo" / "chazos supra mas" = anclaje de expansion para concreto
+- "Platinas de separacion cablofil" = accesorios de bandeja portacables
+- "Riel omega" / "riel DIN" = riel de montaje para breakers y borneras
+
+Herramientas (esHerramienta=true, requieren devolucion):
+- "Curvador" = herramienta para curvar tubo EMT
+- "Pesca" / "pasacables" = cinta para pasar cables por tuberia
+- "Taladro" / "rotomartillo" = taladro percutor
+- "Pulidora" / "cortadora" = amoladora angular
+- "Escalera" / "andamio" = equipo de trabajo en alturas
+- "Nivel" / "nivel laser" = herramienta de medicion
+- "Ponchadora" = herramienta para ponchar terminales
+- "Pelacables" / "pinza pelacables" = herramienta para pelar cable
+
+Medidas y unidades:
+- "tres octavos" = 3/8", "de cuarto" = 1/4", "de media" = 1/2"
+- "de tres cuartos" = 3/4", "de pulgada" = 1", "de pulgada y media" = 1-1/2"
+- "mt" / "metros" = unidad metro lineal
+- "rollo" = generalmente 100 metros de cable
+
+=== INTERPRETACION DE NUMEROS Y CANTIDADES ===
+- "cien" / "un cien" = 100
+- "cincuenta" = 50
+- "doscientos" = 200
+- "trescientos" = 300
+- "quinientos" = 500
+- "mil" = 1000
+- "medio rollo" = 50 (metros, si es cable)
+- "un rollo" = 100 (metros, si es cable)
+- "un cuarto de rollo" = 25 (metros)
+- "docena" = 12
+- "media docena" = 6
+- Si no se especifica unidad para cable: asumir "metro"
+- Si no se especifica unidad para accesorios (tomas, breakers, cajas): asumir "unidad"
+- Si no se especifica cantidad: asumir 1 para herramientas, preguntar para materiales
 
 === CONTRATOS Y FRENTES ===
 - Contrato 1: frentes 3, 3A, 3B, 3C
 - Contrato 2: frentes 4, 5, 5B, 11
 
+=== CONTEXTO DE VISTA ACTUAL DEL USUARIO ===
+El campo "vistaActual" indica en que seccion/ventana del programa esta el usuario ahora mismo.
+Vistas posibles: dashboard, inventario, movimientos, ordenes, herramientas, consumo, reportes, importar, responsables, kits, acerca.
+
+Usa esta informacion para decidir la accion mas apropiada:
+- Si vistaActual="inventario" y el usuario pide agregar algo -> accion="agregar_inventario"
+- Si vistaActual="inventario" y el usuario pregunta por un material -> accion="consulta"
+- Si vistaActual="movimientos" o "ordenes" y pide despachar/sacar -> accion="salida"
+- Si vistaActual="movimientos" o "ordenes" y dice "devolver" o "devolucion" -> accion="devolucion"
+- Si vistaActual="movimientos" o "ordenes" y dice "entrada" o "llego" o "traido" -> accion="entrada"
+- Si vistaActual="herramientas" -> probablemente se refiere a una herramienta, marcar esHerramienta=true
+- Si vistaActual="dashboard" y hace una pregunta general -> accion="consulta"
+- Si vistaActual="responsables" -> puede estar preguntando por un responsable o asignando
+- Si no hay vistaActual o es ambiguo: usa el contexto del comando de voz para decidir
+
 === REGLAS ===
-1. Si es un CIRCUITO: desglosar en cables individuales por color. Cantidad x cada color.
-2. Si menciona herramientas (taladro, curvador, escalera, pesca, pulidora, etc.): marcar esHerramienta=true y si da serial (FV-1, FV-4) incluirlo.
+1. Si es un CIRCUITO: SIEMPRE desglosar en cables individuales por color. Cantidad x cada color. NUNCA devolver un circuito como item unico.
+2. Si menciona herramientas (taladro, curvador, escalera, pesca, pulidora, nivel, ponchadora, etc.): marcar esHerramienta=true y si da serial (FV-1, FV-4) incluirlo.
 3. Si hay multiples responsables: ponerlos como array.
 4. Si no menciona frente: dejar frente="".
 5. Si no menciona cantidad: asumir 1 para herramientas.
 6. Para entradas/pedidos: "traido por X" -> X es el responsable. "Recibe Y" -> Y es el almacenista.
+7. Buscar coincidencias en el inventario actual: si el nombre es similar a algo existente, usar el nombre exacto del inventario.
+8. Si el comando es ambiguo o incompleto, devolver accion="error" con mensaje pidiendo mas informacion.
 
 === FORMATO DE RESPUESTA (SIEMPRE JSON PURO, SIN MARKDOWN) ===
 {"accion":"salida","confianza":0.95,"items":[{"nombre":"Cable #12 AWG Rojo","cantidad":20,"unidad":"metro","esHerramienta":false,"serial":"","esNuevo":false}],"responsables":["Jorge Celis"],"frente":"5B","nota":"","proveedor":"","almacenista":"","consulta":"","mensaje":"Despachar 20m cable #12 rojo al frente 5B"}
@@ -56,7 +161,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
   try {
-    const { texto, inventario } = req.body;
+    const { texto, inventario, vistaActual } = req.body;
     if (!texto) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
 
     let contextoInv = '';
@@ -67,7 +172,12 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       contextoInv = '\n\n=== INVENTARIO ACTUAL ===\n' + lista;
     }
 
-    const prompt = SYSTEM_PROMPT + contextoInv + '\n\n=== COMANDO DEL USUARIO ===\n' + texto;
+    let contextoVista = '';
+    if (vistaActual) {
+      contextoVista = '\n\n=== VISTA ACTUAL DEL USUARIO ===\nEl usuario esta en la seccion: "' + vistaActual + '". Ten esto en cuenta para elegir la accion mas apropiada.';
+    }
+
+    const prompt = SYSTEM_PROMPT + contextoInv + contextoVista + '\n\n=== COMANDO DEL USUARIO ===\n' + texto;
 
     // Obtener token de autenticacion (automatico en Cloud Functions)
     const client = await auth.getClient();
