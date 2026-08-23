@@ -1,0 +1,28 @@
+{
+  "id": "FEAT-003",
+  "type": "fix",
+  "description": "Fix 5 issues identified in semantic review: (1) 'para' stop-word false positive, (2) add confidence threshold for direct execution, (3) item field-fill dual-write, (4) TTS/mic timing race condition, (6) state desync on external modal close.",
+  "status": "in_progress",
+  "steps": [
+    "STEP 1 - Fix 'para' stop-word: Remove 'para' from STOP_WORDS and change esStopWord to use exact match only (remove startsWith logic).",
+    "STEP 2 - Add confidence threshold: In despacharAccionIA, before calling ejecutarDirectoIA, check json.confianza >= 0.85. If below threshold, open modal pre-filled instead of executing directly.",
+    "STEP 3 - Fix item dual-write: In llenarCampoPorVoz campo='item', remove the direct push to estado.itemsOrden and only click #o-add, then fill the newly created row.",
+    "STEP 4 - Fix TTS/mic timing race: In hablarAgente, add polling fallback that checks speechSynthesis.speaking every 200ms if onend doesn't fire within 5s.",
+    "STEP 5 - Fix state desync on modal close: Add hook to cerrarModal and modal close listeners that resets asistente.estadoAgente='libre' and asistente.modalTipo=null when modal is closed externally.",
+    "STEP 6 - Verify syntax: NODE_OPTIONS='' node --check src/renderer/renderer.js && NODE_OPTIONS='' node --check functions/index.js"
+  ],
+  "acceptance_criteria": [
+    "STOP_WORDS no longer contains 'para'; esStopWord uses exact match only",
+    "Direct execution requires confianza >= 0.85; below threshold opens pre-filled modal",
+    "llenarCampoPorVoz for item does not dual-write (only clicks #o-add OR only pushes to state)",
+    "hablarAgente has polling fallback for when onend doesn't fire",
+    "Closing modal externally resets asistente.estadoAgente to 'libre'",
+    "File passes NODE_OPTIONS='' node --check src/renderer/renderer.js"
+  ],
+  "verification": [
+    "NODE_OPTIONS='' node --check src/renderer/renderer.js",
+    "NODE_OPTIONS='' node --check functions/index.js"
+  ],
+  "blocked_reason": null,
+  "findings": null
+}

@@ -181,7 +181,7 @@ function abrirModal(titulo, htmlBody, ancho) {
   // Habilitar arrastre despues de abrir
   setTimeout(() => habilitarDragModal(), 50);
 }
-function cerrarModal() { $('#modal').hidden = true; $('#modal-body').innerHTML = ''; const m = $('#modal .modal'); if (m) { m.classList.remove('modal-minimizado'); m.style.left = ''; m.style.top = ''; m.style.position = ''; } $('#modal').classList.remove('modal-draggable'); }
+function cerrarModal() { $('#modal').hidden = true; $('#modal-body').innerHTML = ''; const m = $('#modal .modal'); if (m) { m.classList.remove('modal-minimizado'); m.style.left = ''; m.style.top = ''; m.style.position = ''; } $('#modal').classList.remove('modal-draggable'); try { if (asistente && asistente.estadoAgente === 'en_modal') { asistente.estadoAgente = 'libre'; asistente.modalTipo = null; } } catch (_e) { /* asistente aun no inicializado */ } }
 function minimizarModal() {
   const m = $('#modal .modal');
   if (m) m.classList.toggle('modal-minimizado');
@@ -3431,7 +3431,7 @@ const asistente = {
 };
 
 // Palabras de parada (deteccion local, no se envian a la IA)
-const STOP_WORDS = ['para', 'detente', 'silencio', 'deja de escuchar', 'apaga el asistente'];
+const STOP_WORDS = ['detente', 'silencio', 'deja de escuchar', 'apaga el asistente'];
 
 // Alias de navegacion
 const ALIAS_VISTAS = {
@@ -3463,11 +3463,17 @@ function hablarAgente(texto) {
     const vozES = voces.find((v) => v.lang.startsWith('es'));
     if (vozCO) utt.voice = vozCO;
     else if (vozES) utt.voice = vozES;
-    utt.onend = () => resolve();
-    utt.onerror = () => resolve();
+    let resuelto = false;
+    const resolver = () => { if (!resuelto) { resuelto = true; clearInterval(pollId); clearTimeout(maxTimeout); resolve(); } };
+    utt.onend = resolver;
+    utt.onerror = resolver;
     window.speechSynthesis.speak(utt);
-    // Timeout de seguridad (si no termina en 15s, resolver igual)
-    setTimeout(resolve, 15000);
+    // Polling fallback: si onend no se dispara, revisar cada 200ms si ya dejo de hablar
+    const pollId = setInterval(() => {
+      if (!window.speechSynthesis.speaking) resolver();
+    }, 200);
+    // Timeout maximo de seguridad (15s)
+    const maxTimeout = setTimeout(resolver, 15000);
   });
 }
 
@@ -3583,12 +3589,10 @@ function llenarCampoPorVoz(campo, valor, json) {
       // Buscar material en inventario
       const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(itemNombre)));
       if (mat) {
-        // Agregar al itemsOrden y re-renderizar
-        estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: mat.id, cantidad: itemCantidad, _filtro: '' });
-        // Disparar click en #o-add y luego setear el ultimo item (o manipular directo)
+        // Disparar click en #o-add para crear una nueva fila
         const addBtn = $('#o-add');
         if (addBtn) addBtn.click();
-        // Setear el ultimo row
+        // Setear el ultimo row con los datos del material
         const rows = document.querySelectorAll('.orden-item-row');
         if (rows.length > 0) {
           const lastRow = rows[rows.length - 1];
@@ -3740,8 +3744,30 @@ async function despacharAccionIA(json, textoOriginal) {
   } else if (accion === 'consulta') {
     await consultaPorVoz(json, textoOriginal);
   } else if ((accion === 'salida' || accion === 'entrada' || accion === 'devolucion') && json.items && json.items.length && json.responsables && json.responsables.length) {
-    // Ejecucion directa: tiene todos los datos completos
-    await ejecutarDirectoIA(json);
+    // Ejecucion directa: tiene todos los datos completos y confianza alta
+    const confianza = Number(json.confianza) || 0;
+    if (confianza >= 0.85) {
+      await ejecutarDirectoIA(json);
+    } else {
+      // Confianza baja: abrir modal pre-llenado en vez de ejecutar directo
+      const items = (json.items || []).map((it) => {
+        const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
+        return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
+      });
+      const precarga = {
+        frente: json.frente || '',
+        responsable: (json.responsables && json.responsables[0]) || '',
+        responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+        nota: json.nota || '',
+        items: items.length ? items : [{ materialId: '', cantidad: '' }]
+      };
+      modalOrden(accion, precarga);
+      asistente.estadoAgente = 'en_modal';
+      asistente.modalTipo = accion;
+      const msg = json.mensaje || 'No estoy seguro del comando. Revisa los datos y confirma.';
+      agregarAlHistorial('agente', msg);
+      await hablarAgente(msg);
+    }
   } else if (accion === 'salida' || accion === 'entrada' || accion === 'devolucion') {
     // Datos incompletos: abrir modal pre-llenado
     const items = (json.items || []).map((it) => {
@@ -3867,7 +3893,7 @@ function actualizarEstadoPanel(custom) {
 // --- STEP 13: Deteccion de palabras de parada ---
 function esStopWord(texto) {
   const t = normTxt(texto);
-  return STOP_WORDS.some((sw) => t === normTxt(sw) || t.startsWith(normTxt(sw)));
+  return STOP_WORDS.some((sw) => t === normTxt(sw));
 }
 
 // --- STEP 11 + Inicializacion principal ---
