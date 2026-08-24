@@ -3403,7 +3403,9 @@ const asistente = {
   procesando: false,
   panelVisible: false,
   historial: [],
-  buffer: ''
+  buffer: '',
+  lastText: '',
+  lastTextTime: 0
 };
 
 const ALIAS_VISTAS = {
@@ -3428,7 +3430,7 @@ async function hablarAgente(texto) {
   return;
 }
 
-// --- Reactivar microfono (100ms debounce) ---
+// --- Reactivar microfono (300ms debounce) ---
 function reactivarMicrofono() {
   if (!asistente.escuchando || !asistente.recognition || asistente.hablando) return;
   if (_reactivarTimer) return;
@@ -3441,7 +3443,7 @@ function reactivarMicrofono() {
       const btn = $('.ai-fab-mic');
       if (btn) btn.classList.add('grabando');
     } catch (e) { /* ya corriendo */ }
-  }, 100);
+  }, 300);
 }
 
 // --- Historial y panel ---
@@ -3988,7 +3990,7 @@ function initAsistente() {
 
   const recognition = new SpeechRecognition();
   recognition.lang = 'es-CO';
-  recognition.continuous = true;
+  recognition.continuous = false;
   recognition.interimResults = true;
   asistente.recognition = recognition;
 
@@ -4007,6 +4009,12 @@ function initAsistente() {
     if (!finalText) return;
     const texto = finalText.trim();
     if (!texto) return;
+
+    // Deduplicacion: ignorar si es el mismo texto en menos de 2s
+    const ahora = Date.now();
+    if (texto === asistente.lastText && (ahora - asistente.lastTextTime) < 2000) return;
+    asistente.lastText = texto;
+    asistente.lastTextTime = ahora;
 
     // Stop words
     const t = normTxt(texto);
