@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "feat",
   "description": "Add Gemini Vision support to Cloud Function AND completely redesign the voice assistant UI as a spectacular floating widget with camera support, drag, glassmorphism, and chat-style panel",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "CLOUD FUNCTION (functions/index.js): Add support for optional 'imagen' field in request body. When imagen is present, add it as inlineData part ({inlineData:{mimeType:'image/jpeg',data:imagen}}) alongside the text part in the user message sent to Vertex AI. Keep backward compatibility - if no imagen field, works exactly as before.",
     "RENDERER - REMOVE OLD WIDGET: Remove the old btn-mic creation code at lines 607-616 (the section '// ---- Asistente de voz (boton microfono en topbar) ----' that creates a button and appends to topbar). Remove the old CSS styles for .btn-mic and .asistente-panel at lines 362-373 (the block starting with '/* --- Asistente de voz --- */' through the @media query for mobile mic).",
@@ -38,5 +38,5 @@
     "Verify image support in Cloud Function: grep 'inlineData' functions/index.js"
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "node --check requires NODE_OPTIONS='' to work in this sandbox due to a missing proxy-bootstrap.js preload module. All syntax checks pass. Old btn-asistente-voz completely removed (0 references). New widget uses .ai-fab-mic, .ai-fab-cam, .ai-fab-main classes."
 }
