@@ -3421,39 +3421,11 @@ const ALIAS_VISTAS = {
 
 let _reactivarTimer = null;
 
-// --- TTS con pausa de recognition ---
-function hablarAgente(texto) {
-  asistente.hablando = true;
-  if (_reactivarTimer) { clearTimeout(_reactivarTimer); _reactivarTimer = null; }
-  return new Promise((resolve) => {
-    if (!window.speechSynthesis) { asistente.hablando = false; resolve(); return; }
-    if (asistente.recognition && asistente.grabando) {
-      try { asistente.recognition.stop(); } catch (e) { /* ok */ }
-      asistente.grabando = false;
-    }
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(texto);
-    utt.lang = 'es-CO';
-    utt.rate = 1.1;
-    const voces = window.speechSynthesis.getVoices();
-    const voz = voces.find((v) => v.lang === 'es-CO') || voces.find((v) => v.lang.startsWith('es'));
-    if (voz) utt.voice = voz;
-    let resuelto = false;
-    const done = () => {
-      if (resuelto) return;
-      resuelto = true;
-      clearInterval(poll);
-      clearTimeout(maxT);
-      asistente.hablando = false;
-      if (asistente.escuchando) reactivarMicrofono();
-      resolve();
-    };
-    utt.onend = done;
-    utt.onerror = done;
-    window.speechSynthesis.speak(utt);
-    const poll = setInterval(() => { if (!window.speechSynthesis.speaking) done(); }, 200);
-    const maxT = setTimeout(done, 15000);
-  });
+// --- TTS (desactivado) ---
+async function hablarAgente(texto) {
+  // TTS desactivado para evitar que el microfono capture el audio del parlante (eco)
+  // La respuesta se muestra en el panel de chat
+  return;
 }
 
 // --- Reactivar microfono (100ms debounce) ---
