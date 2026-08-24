@@ -3402,7 +3402,8 @@ const asistente = {
   hablando: false,
   procesando: false,
   panelVisible: false,
-  historial: []
+  historial: [],
+  buffer: ''
 };
 
 const ALIAS_VISTAS = {
@@ -3520,6 +3521,25 @@ function intentarNavLocal(texto) {
   actualizarPanel();
   hablarAgente(`Listo, abri ${TITULOS[vista] || vista}.`);
   return true;
+}
+
+// --- Mostrar/ocultar boton Enviar del buffer ---
+function mostrarBtnEnviar(visible) {
+  const btn = document.getElementById('ai-btn-send');
+  if (!btn) return;
+  btn.hidden = !visible;
+}
+
+// --- Enviar buffer acumulado ---
+function enviarBuffer() {
+  const texto = asistente.buffer.trim();
+  asistente.buffer = '';
+  mostrarBtnEnviar(false);
+  actualizarEstado();
+  if (!texto) return;
+  // Navegacion local primero
+  if (intentarNavLocal(texto)) return;
+  enviarAGemini(texto);
 }
 
 // --- Enviar a Gemini ---
@@ -3750,8 +3770,21 @@ async function enviarImagenAGemini(base64Data, mimeType) {
       body: JSON.stringify({ texto, imagen: base64Data, mimeType: mimeType || 'image/jpeg', inventario: inv, vistaActual, historial: histCtx })
     });
 
-    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+    if (!resp.ok) {
+      const msg = 'Para usar la camara necesitas actualizar la Cloud Function. Ejecuta en CMD: firebase deploy --only functions --project almacen-rio-jmc';
+      agregarAlHistorial('agente', msg);
+      actualizarPanel();
+      await hablarAgente('Necesitas actualizar la Cloud Function para usar la camara.');
+      return;
+    }
     const json = await resp.json();
+    if (json.error) {
+      const msg = 'Error del servidor: ' + json.error;
+      agregarAlHistorial('agente', msg);
+      actualizarPanel();
+      await hablarAgente(msg);
+      return;
+    }
     await ejecutarRespuesta(json);
   } catch (err) {
     const msg = 'Error de comunicacion. Intenta de nuevo.';
@@ -3797,6 +3830,10 @@ function initAsistente() {
     .ai-panel-body::-webkit-scrollbar { width:4px; }
     .ai-panel-body::-webkit-scrollbar-thumb { background:rgba(0,200,255,0.2); border-radius:4px; }
     .ai-panel-status { padding:8px 14px; border-top:1px solid rgba(0,200,255,0.1); font-size:12px; color:#7a8ba5; min-height:32px; display:flex; align-items:center; }
+
+    /* === Send Buffer Button === */
+    .ai-btn-send { margin:8px 14px; padding:8px 16px; border:none; border-radius:20px; background:linear-gradient(135deg, #00c8ff, #0d6efd); color:#fff; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.3s ease; box-shadow:0 3px 12px rgba(0,200,255,0.3); }
+    .ai-btn-send:hover { transform:scale(1.04); box-shadow:0 4px 16px rgba(0,200,255,0.5); }
 
     /* === Chat Bubbles === */
     .ai-bubble { max-width:85%; padding:8px 12px; border-radius:12px; font-size:12.5px; line-height:1.5; word-break:break-word; animation:ai-bubble-in 0.2s ease; }
@@ -3860,7 +3897,8 @@ function initAsistente() {
       </div>
     </div>
     <div class="ai-panel-body"></div>
-    <div class="ai-panel-status"><span class="ai-status-text">Toca el mic para activar</span></div>`;
+    <div class="ai-panel-status"><span class="ai-status-text">Toca el mic para activar</span></div>
+    <button class="ai-btn-send" id="ai-btn-send" hidden>\u2708\uFE0F Enviar</button>`;
   document.body.appendChild(panel);
 
   // --- Elements ---
@@ -3904,6 +3942,13 @@ function initAsistente() {
   btnClose.addEventListener('click', () => {
     panel.classList.remove('visible');
     asistente.panelVisible = false;
+  });
+
+  // --- Send buffer button ---
+  const btnSend = panel.querySelector('#ai-btn-send');
+  btnSend.addEventListener('click', (e) => {
+    e.stopPropagation();
+    enviarBuffer();
   });
 
   // --- Drag widget (FAB group) ---
@@ -3985,7 +4030,8 @@ function initAsistente() {
         interim += event.results[i][0].transcript;
       }
     }
-    if (interim) actualizarEstado(interim);
+    // Mostrar texto interim + buffer acumulado en el estado
+    if (interim) actualizarEstado('\uD83C\uDFA4 ' + (asistente.buffer ? asistente.buffer + ' ' : '') + interim);
     if (!finalText) return;
     const texto = finalText.trim();
     if (!texto) return;
@@ -3996,6 +4042,8 @@ function initAsistente() {
       try { recognition.stop(); } catch (e) { /* ok */ }
       asistente.escuchando = false;
       asistente.grabando = false;
+      asistente.buffer = '';
+      mostrarBtnEnviar(false);
       fabMic.classList.remove('grabando');
       fabMain.classList.remove('activo');
       agregarAlHistorial('usuario', texto);
@@ -4006,11 +4054,29 @@ function initAsistente() {
       return;
     }
 
-    // Navegacion local instantanea
+    // Navegacion local instantanea (sin buffer, se ejecuta ya)
     if (intentarNavLocal(texto)) return;
 
-    // Todo lo demas va a Gemini
-    enviarAGemini(texto);
+    // Detectar palabras de envio: "listo", "enviar", "eso es todo"
+    const tNorm = normTxt(texto);
+    const envioTriggers = ['listo', 'enviar', 'eso es todo'];
+    const esTriggerEnvio = envioTriggers.some((tr) => tNorm === tr || tNorm.endsWith(' ' + tr) || tNorm.startsWith(tr + ' '));
+    if (esTriggerEnvio) {
+      // Quitar la palabra trigger del texto antes de agregar al buffer
+      let textoLimpio = texto;
+      for (const tr of envioTriggers) {
+        const regex = new RegExp('\\b' + tr + '\\b', 'gi');
+        textoLimpio = textoLimpio.replace(regex, '').trim();
+      }
+      if (textoLimpio) asistente.buffer += (asistente.buffer ? ' ' : '') + textoLimpio;
+      enviarBuffer();
+      return;
+    }
+
+    // Acumular en buffer
+    asistente.buffer += (asistente.buffer ? ' ' : '') + texto;
+    mostrarBtnEnviar(true);
+    actualizarEstado('\uD83C\uDFA4 ' + asistente.buffer);
   };
 
   recognition.onend = () => {
@@ -4039,6 +4105,10 @@ function initAsistente() {
       asistente.panelVisible = true;
     }
     if (asistente.escuchando) {
+      // Si hay buffer acumulado, enviarlo antes de parar
+      if (asistente.buffer.trim()) {
+        enviarBuffer();
+      }
       asistente.escuchando = false;
       asistente.grabando = false;
       asistente.hablando = false;
@@ -4050,6 +4120,8 @@ function initAsistente() {
     } else {
       asistente.escuchando = true;
       asistente.grabando = true;
+      asistente.buffer = '';
+      mostrarBtnEnviar(false);
       fabMic.classList.add('grabando');
       fabMain.classList.add('activo');
       actualizarEstado();
