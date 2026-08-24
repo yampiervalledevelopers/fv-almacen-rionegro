@@ -3715,8 +3715,21 @@ async function ejecutarOrden(json) {
 }
 
 // --- Enviar imagen a Gemini ---
-async function enviarImagenAGemini(base64Data) {
+const MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024; // 4 MB limit
+
+async function enviarImagenAGemini(base64Data, mimeType) {
   if (asistente.procesando) return;
+
+  // Check approximate original file size (base64 inflates by ~33%)
+  const approxBytes = Math.ceil(base64Data.length * 3 / 4);
+  if (approxBytes > MAX_IMAGE_SIZE_BYTES) {
+    const msg = 'La imagen es demasiado grande (max 4 MB). Intenta con una imagen mas pequena o de menor resolucion.';
+    agregarAlHistorial('agente', msg);
+    actualizarPanel();
+    await hablarAgente(msg);
+    return;
+  }
+
   asistente.procesando = true;
   const texto = 'Analiza esta imagen';
   agregarAlHistorial('usuario', '[Imagen enviada] ' + texto);
@@ -3734,7 +3747,7 @@ async function enviarImagenAGemini(base64Data) {
     const resp = await fetch(CLOUD_FUNCTION_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, imagen: base64Data, inventario: inv, vistaActual, historial: histCtx })
+      body: JSON.stringify({ texto, imagen: base64Data, mimeType: mimeType || 'image/jpeg', inventario: inv, vistaActual, historial: histCtx })
     });
 
     if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
@@ -3860,14 +3873,19 @@ function initAsistente() {
 
   // --- FAB expand/collapse ---
   let fabExpanded = false;
+  let clickTimer = null;
   fabMain.addEventListener('click', () => {
-    fabExpanded = !fabExpanded;
-    fabGroup.classList.toggle('expanded', fabExpanded);
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
+    clickTimer = setTimeout(() => {
+      clickTimer = null;
+      fabExpanded = !fabExpanded;
+      fabGroup.classList.toggle('expanded', fabExpanded);
+    }, 250);
   });
 
   // --- Double click main FAB to show/hide panel ---
-  let dblClickTimer = null;
   fabMain.addEventListener('dblclick', () => {
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
     if (panel.classList.contains('visible')) {
       panel.classList.remove('visible');
       asistente.panelVisible = false;
@@ -3908,7 +3926,6 @@ function initAsistente() {
       origX = rect.left;
       origY = rect.top;
       el.classList.add('dragging');
-      e.preventDefault();
     };
 
     const onMove = (e) => {
@@ -3918,6 +3935,7 @@ function initAsistente() {
       const dy = touch.clientY - startY;
       if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
       if (!moved) return;
+      e.preventDefault();
       const newX = origX + dx;
       const newY = origY + dy;
       el.style.position = 'fixed';
@@ -3925,7 +3943,6 @@ function initAsistente() {
       el.style.top = newY + 'px';
       el.style.right = 'auto';
       el.style.bottom = 'auto';
-      e.preventDefault();
     };
 
     const onEnd = () => {
@@ -4058,13 +4075,16 @@ function initAsistente() {
       if (!file) { input.remove(); return; }
       const reader = new FileReader();
       reader.onload = () => {
+        const match = reader.result.match(/^data:([^;]+);base64,/);
+        const mimeType = match ? match[1] : 'image/jpeg';
         const base64 = reader.result.replace(/^data:[^;]+;base64,/, '');
-        enviarImagenAGemini(base64);
+        enviarImagenAGemini(base64, mimeType);
         input.remove();
       };
       reader.onerror = () => { input.remove(); };
       reader.readAsDataURL(file);
     });
+    input.addEventListener('cancel', () => { input.remove(); });
     input.click();
   });
 

@@ -133,7 +133,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
   try {
-    const { texto, inventario, vistaActual, historial, imagen } = req.body;
+    const { texto, inventario, vistaActual, historial, imagen, mimeType } = req.body;
     if (!texto) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
 
     // Construir contexto de inventario
@@ -166,7 +166,8 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
     // Agregar el mensaje actual del usuario
     const userParts = [{ text: texto }];
     if (imagen) {
-      userParts.push({ inlineData: { mimeType: 'image/jpeg', data: imagen } });
+      const imgMime = mimeType || 'image/jpeg';
+      userParts.push({ inlineData: { mimeType: imgMime, data: imagen } });
     }
     messages.push({ role: 'user', parts: userParts });
 

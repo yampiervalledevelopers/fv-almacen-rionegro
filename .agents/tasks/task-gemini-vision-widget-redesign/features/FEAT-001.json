@@ -38,5 +38,5 @@
     "Verify image support in Cloud Function: grep 'inlineData' functions/index.js"
   ],
   "blocked_reason": null,
-  "findings": "node --check requires NODE_OPTIONS='' to work in this sandbox due to a missing proxy-bootstrap.js preload module. All syntax checks pass. Old btn-asistente-voz completely removed (0 references). New widget uses .ai-fab-mic, .ai-fab-cam, .ai-fab-main classes."
+  "findings": "Review fixes applied: (1) 4MB image size limit with base64 length check, (2) MIME type extracted from data URL and passed to Cloud Function, (3) cancel event listener cleans up orphan file input, (4) click debounced with 250ms setTimeout so dblclick cancels single-click expand/collapse, (5) e.preventDefault moved from onStart to onMove so taps are not suppressed on Safari/iOS."
 }
