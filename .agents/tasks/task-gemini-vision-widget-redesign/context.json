@@ -1,0 +1,22 @@
+{
+  "project_type": "Firebase web app with Cloud Functions (Electron-style renderer)",
+  "language": "JavaScript (ES modules frontend, CommonJS Cloud Functions)",
+  "build_system": "Firebase CLI for deployment, no local build step for renderer",
+  "test_framework": "No automated test framework found in the project",
+  "build_command": "No build command - static files served directly",
+  "test_command": "No test command available",
+  "verification_instructions": "1. Check that renderer.js has valid JS syntax (node --check). 2. Verify functions/index.js has valid syntax. 3. Verify index.html cache buster is updated to v=50.",
+  "snapshot_or_generated_files": null,
+  "setup_instructions": "No setup needed - direct file editing",
+  "environment_constraints": "No build system. Firebase deploy happens from user's local PC. We just push code to main.",
+  "contribution_requirements": "Push directly to main branch",
+  "key_patterns": "Single-file renderer.js (~3861 lines) with all UI logic. Styles injected via JS <style> elements. DOM created programmatically. Uses estado global object, $() for querySelector, esc() for escaping. Voice assistant uses Web Speech API with SpeechRecognition. Cloud Function at functions/index.js uses Vertex AI Gemini. CSS variables defined in styles.css.",
+  "relevant_files": [
+    "src/renderer/renderer.js",
+    "src/renderer/index.html",
+    "src/renderer/styles.css",
+    "functions/index.js",
+    "functions/package.json"
+  ],
+  "directory_structure": "Root: firebase.json, functions/ (Cloud Functions), src/renderer/ (frontend: index.html, renderer.js, styles.css, auth.js, db.js)"
+}

@@ -1,0 +1,42 @@
+{
+  "id": "FEAT-001",
+  "type": "feat",
+  "description": "Add Gemini Vision support to Cloud Function AND completely redesign the voice assistant UI as a spectacular floating widget with camera support, drag, glassmorphism, and chat-style panel",
+  "status": "in_progress",
+  "steps": [
+    "CLOUD FUNCTION (functions/index.js): Add support for optional 'imagen' field in request body. When imagen is present, add it as inlineData part ({inlineData:{mimeType:'image/jpeg',data:imagen}}) alongside the text part in the user message sent to Vertex AI. Keep backward compatibility - if no imagen field, works exactly as before.",
+    "RENDERER - REMOVE OLD WIDGET: Remove the old btn-mic creation code at lines 607-616 (the section '// ---- Asistente de voz (boton microfono en topbar) ----' that creates a button and appends to topbar). Remove the old CSS styles for .btn-mic and .asistente-panel at lines 362-373 (the block starting with '/* --- Asistente de voz --- */' through the @media query for mobile mic).",
+    "RENDERER - NEW WIDGET HTML STRUCTURE: In initAsistente(), replace the current panel creation with the new widget structure: .ai-widget (fixed container, draggable) containing .ai-fab-group (.ai-fab-main brain icon + .ai-fab-mic microphone + .ai-fab-cam camera, with expand/collapse animation), and .ai-panel (glassmorphism chat panel with .ai-panel-header with title + minimize/close buttons, .ai-panel-body for chat messages as bubbles, .ai-panel-status for state indicators).",
+    "RENDERER - INJECT ELABORATE CSS: Create a comprehensive <style> block injected in initAsistente() with: glassmorphism (backdrop-filter:blur(12px), rgba(4,18,43,0.85) background, rgba(0,200,255,0.2) border), @keyframes for pulse/glow (breathing animation on main FAB when active), @keyframes for audio wave ripple (red pulsing when recording), @keyframes for 3-dot thinking animation, @keyframes for listening bars, smooth transitions (0.3s ease) on all interactive elements, FAB group expand/collapse with scale+opacity, chat bubbles (user=right cian, agent=left gray), responsive rules for mobile (smaller buttons, wider panel).",
+    "RENDERER - DRAG FUNCTIONALITY: Implement drag for both .ai-widget (the FAB group) and .ai-panel. Support mouse events (mousedown/mousemove/mouseup) AND touch events (touchstart/touchmove/touchend). Store position in CSS transform or top/left. Prevent drag when clicking buttons inside.",
+    "RENDERER - CAMERA/IMAGE FEATURE: Add click handler on .ai-fab-cam that creates a hidden input[type=file][accept=image/*][capture=camera], triggers click, on change reads the file as base64 (FileReader.readAsDataURL, strip the data:...;base64, prefix), then calls a new function enviarImagenAGemini(base64Data) that sends to the Cloud Function with both texto:'Analiza esta imagen' and imagen:base64Data fields. Display Gemini's response in the chat panel.",
+    "RENDERER - UPDATE PANEL FUNCTIONS: Rewrite actualizarPanel() to render chat-style bubbles in .ai-panel-body (user messages right-aligned with cian background, agent messages left-aligned with dark gray background). Rewrite actualizarEstado() to show animated indicators in .ai-panel-status ('pensando' with 3 bouncing dots, 'escuchando' with animated audio bars, idle state). Add panel minimize/maximize toggle on header click. Add panel show/hide on double-click of main FAB.",
+    "RENDERER - FAB BEHAVIOR: Main FAB (.ai-fab-main) single click toggles expand/collapse of mic+cam buttons. Mic button (.ai-fab-mic) toggles voice recognition (same logic as old btn-mic click handler). Cam button (.ai-fab-cam) triggers image capture. Main FAB double-click hides/shows the panel entirely. Main FAB has breathing glow animation when assistant is active (escuchando=true). Mic button has red ripple animation when recording (grabando=true).",
+    "INDEX.HTML: Change the script tag cache-buster from ?v=49 to ?v=50."
+  ],
+  "acceptance_criteria": [
+    "functions/index.js accepts optional 'imagen' field and sends it as inlineData to Vertex AI when present",
+    "Old .btn-mic button creation in topbar is removed from renderer.js",
+    "Old .btn-mic and .asistente-panel CSS styles are removed from renderer.js",
+    "New .ai-widget with .ai-fab-group and .ai-panel is created in initAsistente()",
+    "FAB group has main button (brain/AI icon), mic button, and camera button with expand/collapse animation",
+    "Panel has glassmorphism style with chat bubbles (user=right cian, agent=left gray)",
+    "Drag works with both mouse and touch events on widget and panel",
+    "Camera button triggers file input and sends base64 to Cloud Function",
+    "@keyframes animations exist for: pulse/glow, audio wave, thinking dots, listening bars",
+    "Panel can be minimized (collapsed to header) and hidden (double-click main FAB)",
+    "Responsive CSS makes buttons smaller and panel wider on mobile",
+    "index.html has ?v=50 cache-buster",
+    "node --check passes on both renderer.js and functions/index.js"
+  ],
+  "verification": [
+    "Run: node --check /projects/sandbox/fv-almacen-rionegro/functions/index.js",
+    "Run: node --check /projects/sandbox/fv-almacen-rionegro/src/renderer/renderer.js",
+    "Verify index.html contains v=50: grep 'v=50' /projects/sandbox/fv-almacen-rionegro/src/renderer/index.html",
+    "Verify old btn-mic topbar creation is gone: grep -c 'btn-asistente-voz' should not appear in topbar section",
+    "Verify new widget structure exists: grep 'ai-widget' renderer.js",
+    "Verify image support in Cloud Function: grep 'inlineData' functions/index.js"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}

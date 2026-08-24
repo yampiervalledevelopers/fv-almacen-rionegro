@@ -358,19 +358,7 @@ function inyectarExtras() {
   .fecha-picker { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   .fecha-picker input[type="datetime-local"] { flex:1; min-width:180px; }
   .fecha-picker .btn-ahora { font-size:11.5px; padding:7px 12px; white-space:nowrap; }
-  /* --- Asistente de voz --- */
-  .btn-mic { position:fixed; bottom:24px; right:24px; z-index:100; width:56px; height:56px; border-radius:50%; background:linear-gradient(135deg, var(--azul), var(--cian)); color:#04122b; font-size:24px; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 24px rgba(0,200,255,0.4); cursor:pointer; border:none; transition:all .2s ease; }
-  .btn-mic:hover { transform:scale(1.1); box-shadow:0 8px 30px rgba(0,200,255,0.6); }
-  .btn-mic.grabando { background:linear-gradient(135deg, #ff5470, #c0392b); animation:pulse-mic 1s infinite; }
-  @keyframes pulse-mic { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
-  .asistente-panel { position:fixed; bottom:90px; right:24px; z-index:100; width:380px; max-width:calc(100vw - 48px); background:var(--navy-800); border:1px solid var(--linea); border-radius:16px; box-shadow:0 12px 40px rgba(0,0,0,0.6); padding:16px; display:none; }
-  .asistente-panel.activo { display:block; }
-  .asistente-panel .ap-titulo { font-size:14px; font-weight:700; color:var(--cian); margin-bottom:10px; }
-  .asistente-panel .ap-texto { font-size:13px; color:var(--texto-dim); line-height:1.5; margin-bottom:12px; min-height:40px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border:1px solid var(--linea); }
-  .asistente-panel .ap-estado { font-size:12px; color:var(--texto-mute); margin-bottom:8px; }
-  .asistente-panel .ap-resultado { font-size:12.5px; color:var(--texto); line-height:1.5; padding:10px; background:rgba(46,204,113,0.06); border:1px solid rgba(46,204,113,0.2); border-radius:8px; margin-bottom:10px; max-height:200px; overflow:auto; }
-  .asistente-panel .ap-acciones { display:flex; gap:8px; flex-wrap:wrap; }
-  @media (max-width:600px) { .btn-mic { bottom:16px; right:16px; width:48px; height:48px; font-size:20px; } .asistente-panel { bottom:74px; right:12px; width:calc(100vw - 24px); } }
+  /* --- Asistente de voz (legacy removed - new widget in initAsistente) --- */
   .kit-cargar { display:flex; gap:8px; margin:0 0 10px; }
   .kit-cargar select { flex:1; min-width:0; }
   .tipo-badge { font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:6px; }
@@ -603,17 +591,6 @@ function inyectarExtras() {
   const area = document.createElement('div');
   area.id = 'print-area';
   document.body.appendChild(area);
-
-  // ---- Asistente de voz (boton microfono en topbar) ----
-  const topbarEl = $('.topbar');
-  if (topbarEl) {
-    const btnMic = document.createElement('button');
-    btnMic.className = 'btn-mic';
-    btnMic.id = 'btn-asistente-voz';
-    btnMic.innerHTML = '🎤';
-    btnMic.title = 'Asistente de voz (habla un comando)';
-    topbarEl.appendChild(btnMic);
-  }
 
   // ---- Responsive: hamburger menu + sidebar overlay ----
   const topbar = $('.topbar');
@@ -3488,7 +3465,7 @@ function reactivarMicrofono() {
     try {
       asistente.recognition.start();
       asistente.grabando = true;
-      const btn = $('#btn-asistente-voz');
+      const btn = $('.ai-fab-mic');
       if (btn) btn.classList.add('grabando');
     } catch (e) { /* ya corriendo */ }
   }, 100);
@@ -3501,25 +3478,30 @@ function agregarAlHistorial(rol, texto) {
 }
 
 function actualizarPanel() {
-  const log = $('#ap-log');
-  if (!log) return;
-  const ultimos = asistente.historial.slice(-5);
-  log.innerHTML = ultimos.map((m) => {
-    const cls = m.rol === 'usuario' ? 'ap-msg-user' : 'ap-msg-agent';
-    const icon = m.rol === 'usuario' ? '🗣️' : '🤖';
-    return `<div class="${cls}">${icon} ${esc(m.texto)}</div>`;
+  const body = $('.ai-panel-body');
+  if (!body) return;
+  const ultimos = asistente.historial.slice(-10);
+  body.innerHTML = ultimos.map((m) => {
+    const isUser = m.rol === 'usuario';
+    return `<div class="ai-bubble ${isUser ? 'ai-bubble-user' : 'ai-bubble-agent'}">${esc(m.texto)}</div>`;
   }).join('');
-  log.scrollTop = log.scrollHeight;
+  body.scrollTop = body.scrollHeight;
 }
 
 function actualizarEstado(txt) {
-  const el = $('#ap-estado');
+  const el = $('.ai-panel-status');
   if (!el) return;
-  if (txt) { el.textContent = txt; return; }
-  if (asistente.procesando) { el.textContent = '🧠 Procesando...'; return; }
-  if (asistente.escuchando && asistente.grabando) { el.textContent = '🟢 Escuchando...'; return; }
-  if (asistente.escuchando) { el.textContent = '🟡 Activo'; return; }
-  el.textContent = 'Presiona el microfono para activar.';
+  if (txt) { el.innerHTML = `<span class="ai-status-text">${esc(txt)}</span>`; return; }
+  if (asistente.procesando) {
+    el.innerHTML = '<span class="ai-status-thinking"><span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span> Pensando</span>';
+    return;
+  }
+  if (asistente.escuchando && asistente.grabando) {
+    el.innerHTML = '<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> Escuchando</span>';
+    return;
+  }
+  if (asistente.escuchando) { el.innerHTML = '<span class="ai-status-text">Activo</span>'; return; }
+  el.innerHTML = '<span class="ai-status-text">Toca el mic para activar</span>';
 }
 
 // --- Navegacion local instantanea ---
@@ -3732,34 +3714,241 @@ async function ejecutarOrden(json) {
   }
 }
 
+// --- Enviar imagen a Gemini ---
+async function enviarImagenAGemini(base64Data) {
+  if (asistente.procesando) return;
+  asistente.procesando = true;
+  const texto = 'Analiza esta imagen';
+  agregarAlHistorial('usuario', '[Imagen enviada] ' + texto);
+  actualizarPanel();
+  actualizarEstado();
+
+  try {
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
+    const inv = estado.materiales.slice(0, 200).map((m) => ({
+      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+    }));
+    const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
+
+    const resp = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto, imagen: base64Data, inventario: inv, vistaActual, historial: histCtx })
+    });
+
+    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+    const json = await resp.json();
+    await ejecutarRespuesta(json);
+  } catch (err) {
+    const msg = 'Error de comunicacion. Intenta de nuevo.';
+    agregarAlHistorial('agente', msg);
+    actualizarPanel();
+    await hablarAgente(msg);
+  } finally {
+    asistente.procesando = false;
+    actualizarEstado();
+  }
+}
+
 // --- Inicializacion ---
 function initAsistente() {
-  const panel = document.createElement('div');
-  panel.className = 'asistente-panel';
-  panel.id = 'asistente-panel';
-  panel.innerHTML = `
-    <div class="ap-titulo">🤖 Agente FVIECOM</div>
-    <div class="ap-estado" id="ap-estado">Presiona el microfono para activar.</div>
-    <div class="ap-log" id="ap-log"></div>
-    <div class="ap-acciones"><button class="btn-ghost" id="ap-cerrar">Cerrar</button></div>`;
-  document.body.appendChild(panel);
-
+  // --- Inject spectacular CSS ---
   const style = document.createElement('style');
   style.textContent = `
-    .ap-log { max-height:180px; overflow-y:auto; padding:6px 8px; font-size:12px; line-height:1.6; margin:6px 0; border-radius:8px; background:rgba(255,255,255,0.03); }
-    .ap-msg-user { color:var(--cian,#4fc3f7); margin-bottom:4px; }
-    .ap-msg-agent { color:var(--texto-dim,#b0b8c8); margin-bottom:4px; }
-    .btn-mic.agente-activo { box-shadow:0 0 0 4px rgba(76,175,80,0.4); }
+    /* === AI Widget Container === */
+    .ai-widget { position:fixed; bottom:24px; right:24px; z-index:9999; user-select:none; }
+
+    /* === FAB Group === */
+    .ai-fab-group { display:flex; flex-direction:column-reverse; align-items:center; gap:10px; }
+    .ai-fab-main { width:60px; height:60px; border-radius:50%; border:2px solid rgba(0,200,255,0.3); background:rgba(4,18,43,0.9); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); color:#00c8ff; font-size:26px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 20px rgba(0,200,255,0.3), inset 0 0 20px rgba(0,200,255,0.05); transition:all 0.3s ease; position:relative; }
+    .ai-fab-main:hover { transform:scale(1.08); box-shadow:0 6px 30px rgba(0,200,255,0.5), inset 0 0 30px rgba(0,200,255,0.08); }
+    .ai-fab-main.activo { animation:ai-breathe 2s ease-in-out infinite; }
+    .ai-fab-mic, .ai-fab-cam { width:46px; height:46px; border-radius:50%; border:1.5px solid rgba(0,200,255,0.2); background:rgba(4,18,43,0.85); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); color:#e8edf5; font-size:20px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,0.4); transition:all 0.3s ease; opacity:0; transform:scale(0.5) translateY(10px); pointer-events:none; }
+    .ai-fab-group.expanded .ai-fab-mic, .ai-fab-group.expanded .ai-fab-cam { opacity:1; transform:scale(1) translateY(0); pointer-events:auto; }
+    .ai-fab-mic { transition-delay:0.05s; }
+    .ai-fab-cam { transition-delay:0.1s; }
+    .ai-fab-mic:hover, .ai-fab-cam:hover { transform:scale(1.1) translateY(0); border-color:rgba(0,200,255,0.5); }
+    .ai-fab-mic.grabando { background:rgba(255,84,112,0.25); border-color:rgba(255,84,112,0.6); color:#ff5470; animation:ai-ripple-red 1.2s ease-in-out infinite; }
+
+    /* === AI Panel === */
+    .ai-panel { position:fixed; bottom:100px; right:24px; z-index:9998; width:380px; max-width:calc(100vw - 48px); background:rgba(4,18,43,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid rgba(0,200,255,0.2); border-radius:18px; box-shadow:0 12px 50px rgba(0,0,0,0.6), 0 0 30px rgba(0,200,255,0.08); display:none; flex-direction:column; overflow:hidden; transition:all 0.3s ease; }
+    .ai-panel.visible { display:flex; }
+    .ai-panel.minimized .ai-panel-body, .ai-panel.minimized .ai-panel-status { display:none; }
+    .ai-panel-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:linear-gradient(135deg, rgba(0,200,255,0.08), rgba(13,110,253,0.06)); border-bottom:1px solid rgba(0,200,255,0.12); cursor:move; }
+    .ai-panel-title { font-size:13px; font-weight:700; color:#00c8ff; display:flex; align-items:center; gap:6px; }
+    .ai-panel-btns { display:flex; gap:4px; }
+    .ai-panel-btn { width:26px; height:26px; border-radius:8px; border:none; background:rgba(255,255,255,0.06); color:#7a8ba5; font-size:13px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s ease; }
+    .ai-panel-btn:hover { background:rgba(255,255,255,0.12); color:#e8edf5; }
+    .ai-panel-body { flex:1; max-height:260px; overflow-y:auto; padding:12px 14px; display:flex; flex-direction:column; gap:8px; scroll-behavior:smooth; }
+    .ai-panel-body::-webkit-scrollbar { width:4px; }
+    .ai-panel-body::-webkit-scrollbar-thumb { background:rgba(0,200,255,0.2); border-radius:4px; }
+    .ai-panel-status { padding:8px 14px; border-top:1px solid rgba(0,200,255,0.1); font-size:12px; color:#7a8ba5; min-height:32px; display:flex; align-items:center; }
+
+    /* === Chat Bubbles === */
+    .ai-bubble { max-width:85%; padding:8px 12px; border-radius:12px; font-size:12.5px; line-height:1.5; word-break:break-word; animation:ai-bubble-in 0.2s ease; }
+    .ai-bubble-user { align-self:flex-end; background:rgba(0,200,255,0.15); color:#c8efff; border-bottom-right-radius:4px; }
+    .ai-bubble-agent { align-self:flex-start; background:rgba(255,255,255,0.06); color:#e8edf5; border-bottom-left-radius:4px; }
+
+    /* === Status Indicators === */
+    .ai-status-thinking { display:flex; align-items:center; gap:4px; }
+    .ai-dot { width:6px; height:6px; border-radius:50%; background:#00c8ff; animation:ai-dots 1.4s ease-in-out infinite; }
+    .ai-dot:nth-child(2) { animation-delay:0.2s; }
+    .ai-dot:nth-child(3) { animation-delay:0.4s; }
+    .ai-status-listening { display:flex; align-items:center; gap:3px; }
+    .ai-bar { width:3px; height:12px; border-radius:2px; background:#00c8ff; animation:ai-bars 0.8s ease-in-out infinite; }
+    .ai-bar:nth-child(2) { animation-delay:0.1s; }
+    .ai-bar:nth-child(3) { animation-delay:0.2s; }
+    .ai-bar:nth-child(4) { animation-delay:0.3s; }
+    .ai-bar:nth-child(5) { animation-delay:0.4s; }
+    .ai-status-text { color:#7a8ba5; }
+
+    /* === Keyframes === */
+    @keyframes ai-breathe { 0%,100%{ box-shadow:0 4px 20px rgba(0,200,255,0.3), inset 0 0 20px rgba(0,200,255,0.05); } 50%{ box-shadow:0 6px 35px rgba(0,200,255,0.55), inset 0 0 30px rgba(0,200,255,0.1); } }
+    @keyframes ai-ripple-red { 0%{ box-shadow:0 0 0 0 rgba(255,84,112,0.5); } 70%{ box-shadow:0 0 0 12px rgba(255,84,112,0); } 100%{ box-shadow:0 0 0 0 rgba(255,84,112,0); } }
+    @keyframes ai-dots { 0%,80%,100%{ transform:scale(0.6); opacity:0.4; } 40%{ transform:scale(1); opacity:1; } }
+    @keyframes ai-bars { 0%,100%{ height:4px; opacity:0.4; } 50%{ height:14px; opacity:1; } }
+    @keyframes ai-bubble-in { from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:translateY(0); } }
+
+    /* === Drag states === */
+    .ai-widget.dragging, .ai-panel.dragging { opacity:0.9; }
+    .ai-widget.dragging * { cursor:grabbing !important; }
+
+    /* === Responsive === */
+    @media (max-width:600px) {
+      .ai-widget { bottom:16px; right:16px; }
+      .ai-fab-main { width:50px; height:50px; font-size:22px; }
+      .ai-fab-mic, .ai-fab-cam { width:40px; height:40px; font-size:17px; }
+      .ai-panel { bottom:80px; right:12px; width:calc(100vw - 24px); max-width:calc(100vw - 24px); }
+      .ai-panel-body { max-height:200px; }
+    }
   `;
   document.head.appendChild(style);
 
-  const btnMic = $('#btn-asistente-voz');
-  if (!btnMic) return;
+  // --- Create widget DOM ---
+  const widget = document.createElement('div');
+  widget.className = 'ai-widget';
+  widget.innerHTML = `
+    <div class="ai-fab-group">
+      <div class="ai-fab-main" title="Asistente IA FVIECOM">🧠</div>
+      <div class="ai-fab-mic" title="Microfono">🎤</div>
+      <div class="ai-fab-cam" title="Camara / Imagen">📷</div>
+    </div>`;
+  document.body.appendChild(widget);
 
+  const panel = document.createElement('div');
+  panel.className = 'ai-panel';
+  panel.innerHTML = `
+    <div class="ai-panel-header">
+      <div class="ai-panel-title">🤖 Agente FVIECOM</div>
+      <div class="ai-panel-btns">
+        <button class="ai-panel-btn ai-btn-min" title="Minimizar">▬</button>
+        <button class="ai-panel-btn ai-btn-close" title="Cerrar">✕</button>
+      </div>
+    </div>
+    <div class="ai-panel-body"></div>
+    <div class="ai-panel-status"><span class="ai-status-text">Toca el mic para activar</span></div>`;
+  document.body.appendChild(panel);
+
+  // --- Elements ---
+  const fabMain = widget.querySelector('.ai-fab-main');
+  const fabGroup = widget.querySelector('.ai-fab-group');
+  const fabMic = widget.querySelector('.ai-fab-mic');
+  const fabCam = widget.querySelector('.ai-fab-cam');
+  const btnMin = panel.querySelector('.ai-btn-min');
+  const btnClose = panel.querySelector('.ai-btn-close');
+
+  // --- FAB expand/collapse ---
+  let fabExpanded = false;
+  fabMain.addEventListener('click', () => {
+    fabExpanded = !fabExpanded;
+    fabGroup.classList.toggle('expanded', fabExpanded);
+  });
+
+  // --- Double click main FAB to show/hide panel ---
+  let dblClickTimer = null;
+  fabMain.addEventListener('dblclick', () => {
+    if (panel.classList.contains('visible')) {
+      panel.classList.remove('visible');
+      asistente.panelVisible = false;
+    } else {
+      panel.classList.add('visible');
+      asistente.panelVisible = true;
+    }
+  });
+
+  // --- Panel minimize ---
+  btnMin.addEventListener('click', () => {
+    panel.classList.toggle('minimized');
+  });
+
+  // --- Panel close ---
+  btnClose.addEventListener('click', () => {
+    panel.classList.remove('visible');
+    asistente.panelVisible = false;
+  });
+
+  // --- Drag widget (FAB group) ---
+  function makeDraggable(el, handleSelector) {
+    let isDragging = false;
+    let startX, startY, origX, origY;
+    let moved = false;
+
+    const handle = handleSelector ? el.querySelector(handleSelector) : el;
+
+    const onStart = (e) => {
+      // Ignore if clicking buttons inside
+      if (e.target.closest('.ai-fab-mic') || e.target.closest('.ai-fab-cam') || e.target.closest('.ai-panel-btn')) return;
+      isDragging = true;
+      moved = false;
+      const touch = e.touches ? e.touches[0] : e;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      const rect = el.getBoundingClientRect();
+      origX = rect.left;
+      origY = rect.top;
+      el.classList.add('dragging');
+      e.preventDefault();
+    };
+
+    const onMove = (e) => {
+      if (!isDragging) return;
+      const touch = e.touches ? e.touches[0] : e;
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+      if (!moved) return;
+      const newX = origX + dx;
+      const newY = origY + dy;
+      el.style.position = 'fixed';
+      el.style.left = newX + 'px';
+      el.style.top = newY + 'px';
+      el.style.right = 'auto';
+      el.style.bottom = 'auto';
+      e.preventDefault();
+    };
+
+    const onEnd = () => {
+      isDragging = false;
+      el.classList.remove('dragging');
+    };
+
+    handle.addEventListener('mousedown', onStart);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onEnd);
+    handle.addEventListener('touchstart', onStart, { passive: false });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', onEnd);
+  }
+
+  makeDraggable(widget, null);
+  makeDraggable(panel, '.ai-panel-header');
+
+  // --- Speech Recognition setup ---
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    btnMic.title = 'Tu navegador no soporta reconocimiento de voz';
-    btnMic.style.opacity = '0.5';
+    fabMic.style.opacity = '0.4';
+    fabMic.title = 'Navegador no soporta reconocimiento de voz';
     return;
   }
 
@@ -3779,7 +3968,7 @@ function initAsistente() {
         interim += event.results[i][0].transcript;
       }
     }
-    if (interim) actualizarEstado('🎤 ' + interim);
+    if (interim) actualizarEstado(interim);
     if (!finalText) return;
     const texto = finalText.trim();
     if (!texto) return;
@@ -3790,7 +3979,8 @@ function initAsistente() {
       try { recognition.stop(); } catch (e) { /* ok */ }
       asistente.escuchando = false;
       asistente.grabando = false;
-      btnMic.classList.remove('grabando', 'agente-activo');
+      fabMic.classList.remove('grabando');
+      fabMain.classList.remove('activo');
       agregarAlHistorial('usuario', texto);
       agregarAlHistorial('agente', 'Entendido, me detengo.');
       actualizarPanel();
@@ -3808,8 +3998,7 @@ function initAsistente() {
 
   recognition.onend = () => {
     asistente.grabando = false;
-    const mic = $('#btn-asistente-voz');
-    if (mic) mic.classList.remove('grabando');
+    fabMic.classList.remove('grabando');
     if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
   };
 
@@ -3818,40 +4007,68 @@ function initAsistente() {
     if (e.error === 'not-allowed') {
       actualizarEstado('Permiso de microfono denegado.');
       asistente.escuchando = false;
-      const mic = $('#btn-asistente-voz');
-      if (mic) mic.classList.remove('grabando', 'agente-activo');
+      fabMic.classList.remove('grabando');
+      fabMain.classList.remove('activo');
     } else if (e.error === 'no-speech' || e.error === 'network' || e.error === 'aborted') {
       if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
     }
   };
 
-  btnMic.addEventListener('click', () => {
-    if (!asistente.panelVisible) {
-      panel.classList.add('activo');
+  // --- Mic button: toggle voice ---
+  fabMic.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!panel.classList.contains('visible')) {
+      panel.classList.add('visible');
       asistente.panelVisible = true;
     }
     if (asistente.escuchando) {
       asistente.escuchando = false;
       asistente.grabando = false;
       asistente.hablando = false;
-      btnMic.classList.remove('grabando', 'agente-activo');
-      try { recognition.stop(); } catch (e) { /* ok */ }
+      fabMic.classList.remove('grabando');
+      fabMain.classList.remove('activo');
+      try { recognition.stop(); } catch (e2) { /* ok */ }
       window.speechSynthesis.cancel();
       actualizarEstado();
     } else {
       asistente.escuchando = true;
       asistente.grabando = true;
-      btnMic.classList.add('grabando', 'agente-activo');
+      fabMic.classList.add('grabando');
+      fabMain.classList.add('activo');
       actualizarEstado();
-      try { recognition.start(); } catch (e) { /* ok */ }
+      try { recognition.start(); } catch (e2) { /* ok */ }
     }
   });
 
-  $('#ap-cerrar').addEventListener('click', () => {
-    panel.classList.remove('activo');
-    asistente.panelVisible = false;
+  // --- Camera button: image capture ---
+  fabCam.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!panel.classList.contains('visible')) {
+      panel.classList.add('visible');
+      asistente.panelVisible = true;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'camera';
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      const file = input.files[0];
+      if (!file) { input.remove(); return; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.replace(/^data:[^;]+;base64,/, '');
+        enviarImagenAGemini(base64);
+        input.remove();
+      };
+      reader.onerror = () => { input.remove(); };
+      reader.readAsDataURL(file);
+    });
+    input.click();
   });
 
+  // --- Speech synthesis init ---
   if (window.speechSynthesis) {
     window.speechSynthesis.getVoices();
     window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };

@@ -1,0 +1,7 @@
+{
+  "task_id": "task-gemini-vision-widget-redesign",
+  "task_description": "Add Gemini Vision (image analysis) capability and completely redesign the voice assistant as a spectacular floating widget with glassmorphism, drag, animations, and camera support",
+  "status": "in_progress",
+  "feature_order": ["FEAT-001"],
+  "blocked_reason": null
+}
