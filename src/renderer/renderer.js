@@ -394,7 +394,250 @@ function opcionesSelect(lista, sel) {
 /* ------------------------------------------------------------------ */
 /* Modal generico                                                      */
 /* ------------------------------------------------------------------ */
+/* ---------------- Multitarea: varias ventanas abiertas a la vez ----------------
+   Solo una ventana se muestra a la vez; las demas quedan "estacionadas" en la
+   barra inferior con todo su contenido (los nodos se sacan del documento, asi
+   no chocan los ids y se conservan valores escritos y eventos). */
+const TAB_ID = Math.random().toString(36).slice(2, 8);
+const CLAVE_VIVAS = 'fviecom_ventanas_vivas';
+const ventanas = { lista: [], activa: null, seq: 0, proxima: null };
+
+// Llamar al inicio de un formulario de trabajo (orden, movimiento, material...)
+// ANTES de tocar estado.itemsOrden / itemsKit / itemsAdicion.
+function iniciarVentanaTrabajo(icono) {
+  liberarPantalla();
+  ventanas.proxima = { icono: icono || '🗂' };
+}
+// Deja la pantalla libre: estaciona la ventana de trabajo activa o cierra la pasajera.
+function liberarPantalla() {
+  const v = ventanas.activa;
+  if (!v) return;
+  if (v.multitarea) estacionarVentana(v);
+  else cerrarModal({ sinRestaurar: true });
+}
+function quitarVentana(v) {
+  ventanas.lista = ventanas.lista.filter((x) => x !== v);
+  if (ventanas.activa === v) ventanas.activa = null;
+  if (v.draftKey) {
+    try {
+      const vivas = JSON.parse(localStorage.getItem(CLAVE_VIVAS) || '{}');
+      delete vivas[v.draftKey];
+      localStorage.setItem(CLAVE_VIVAS, JSON.stringify(vivas));
+    } catch (_e) { /* ignore */ }
+  }
+}
+function ocultarCascaronModal() {
+  const wrap = $('#modal');
+  wrap.hidden = true;
+  const m = $('#modal .modal');
+  if (m) { m.classList.remove('modal-minimizado'); m.style.left = ''; m.style.top = ''; m.style.position = ''; }
+  wrap.classList.remove('modal-draggable');
+}
+function estacionarVentana(v) {
+  if (!v || ventanas.activa !== v) return;
+  const body = $('#modal-body');
+  const m = $('#modal .modal');
+  const nodo = document.createElement('div');
+  while (body.firstChild) nodo.appendChild(body.firstChild);
+  v.nodo = nodo;
+  v.snapshot = { itemsOrden: estado.itemsOrden, itemsKit: estado.itemsKit, itemsAdicion: estado.itemsAdicion };
+  v.pos = m ? { left: m.style.left, top: m.style.top, position: m.style.position, drag: $('#modal').classList.contains('modal-draggable') } : null;
+  ventanas.activa = null;
+  ocultarCascaronModal();
+  renderBarraVentanas();
+}
+function restaurarVentana(v) {
+  if (!v || ventanas.activa === v || !ventanas.lista.includes(v)) return;
+  liberarPantalla();
+  $('#modal-titulo').textContent = v.titulo;
+  const body = $('#modal-body');
+  body.innerHTML = '';
+  if (v.nodo) { while (v.nodo.firstChild) body.appendChild(v.nodo.firstChild); v.nodo = null; }
+  if (v.snapshot) {
+    estado.itemsOrden = v.snapshot.itemsOrden;
+    estado.itemsKit = v.snapshot.itemsKit;
+    estado.itemsAdicion = v.snapshot.itemsAdicion;
+    v.snapshot = null;
+  }
+  const wrap = $('#modal');
+  const m = $('#modal .modal');
+  if (m) {
+    m.style.maxWidth = v.ancho || '';
+    m.classList.remove('modal-minimizado');
+    if (v.pos && v.pos.drag) {
+      wrap.classList.add('modal-draggable');
+      m.style.position = v.pos.position; m.style.left = v.pos.left; m.style.top = v.pos.top;
+    } else {
+      wrap.classList.remove('modal-draggable');
+      m.style.position = ''; m.style.left = ''; m.style.top = '';
+    }
+  }
+  wrap.hidden = false;
+  ventanas.activa = v;
+  setTimeout(() => habilitarDragModal(), 50);
+  renderBarraVentanas();
+}
+// Cierra una ventana concreta (aunque ya no sea la visible).
+function cerrarVentana(v) {
+  if (!v) return;
+  if (ventanas.activa === v) { cerrarModal({ sinRestaurar: true }); return; }
+  if (ventanas.lista.includes(v)) { quitarVentana(v); renderBarraVentanas(); }
+}
+function cerrarTodasVentanas() {
+  ventanas.lista.slice().forEach(quitarVentana);
+  ventanas.activa = null;
+  ventanas.proxima = null;
+  ocultarCascaronModal();
+  $('#modal-body').innerHTML = '';
+  renderBarraVentanas();
+}
+// Marca como "vivas" las ventanas con borrador, para que otra pestana no las recupere.
+function marcarVentanasVivas() {
+  try {
+    const vivas = JSON.parse(localStorage.getItem(CLAVE_VIVAS) || '{}');
+    const ahora = Date.now();
+    for (const k in vivas) if (ahora - vivas[k] > 60000) delete vivas[k];
+    ventanas.lista.forEach((v) => { if (v.draftKey) vivas[v.draftKey] = ahora; });
+    localStorage.setItem(CLAVE_VIVAS, JSON.stringify(vivas));
+  } catch (_e) { /* ignore */ }
+}
+setInterval(marcarVentanasVivas, 4000);
+window.addEventListener('beforeunload', () => {
+  try {
+    const vivas = JSON.parse(localStorage.getItem(CLAVE_VIVAS) || '{}');
+    ventanas.lista.forEach((v) => { if (v.draftKey) delete vivas[v.draftKey]; });
+    localStorage.setItem(CLAVE_VIVAS, JSON.stringify(vivas));
+  } catch (_e) { /* ignore */ }
+});
+
+function renderBarraVentanas() {
+  let barra = document.getElementById('barra-ventanas');
+  if (!barra) {
+    const st = document.createElement('style');
+    st.textContent = `
+      #barra-ventanas { position:fixed; left:50%; transform:translateX(-50%); bottom:12px; z-index:70; display:flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:center; max-width:calc(100vw - 220px); padding:6px 8px; background:rgba(4,18,43,0.94); border:1px solid rgba(0,200,255,0.28); border-radius:14px; box-shadow:0 8px 30px rgba(0,0,0,0.55); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); }
+      #barra-ventanas[hidden] { display:none; }
+      #barra-ventanas .vt-lbl { font-size:11px; color:var(--texto-dim); padding:0 4px; white-space:nowrap; font-weight:600; }
+      #barra-ventanas .vt-chip { display:flex; align-items:center; gap:6px; max-width:240px; padding:6px 6px 6px 10px; border-radius:10px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.1); color:#e8edf5; font-size:12px; cursor:pointer; transition:all .15s ease; }
+      #barra-ventanas .vt-chip:hover { border-color:rgba(0,200,255,0.5); background:rgba(0,200,255,0.08); }
+      #barra-ventanas .vt-chip.activa { border-color:#00c8ff; background:rgba(0,200,255,0.18); box-shadow:0 0 12px rgba(0,200,255,0.2); }
+      #barra-ventanas .vt-tit { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      #barra-ventanas .vt-x { background:none; border:none; color:#7a8ba5; cursor:pointer; font-size:12px; padding:2px 4px; border-radius:6px; }
+      #barra-ventanas .vt-x:hover { color:#ff5470; background:rgba(255,84,112,0.12); }
+      #barra-ventanas .vt-new-wrap { position:relative; }
+      #barra-ventanas .vt-new-btn { background:rgba(0,200,255,0.12); border:1px dashed rgba(0,200,255,0.45); color:#00c8ff; font-size:11.5px; font-weight:700; padding:6px 10px; border-radius:10px; cursor:pointer; white-space:nowrap; transition:all .15s ease; }
+      #barra-ventanas .vt-new-btn:hover { background:rgba(0,200,255,0.22); border-style:solid; }
+      .vt-quick-menu { position:fixed; bottom:62px; left:50%; transform:translateX(-50%); z-index:85; background:#0b1730; border:1px solid rgba(0,200,255,0.35); border-radius:12px; padding:6px; box-shadow:0 12px 35px rgba(0,0,0,0.65); min-width:230px; display:flex; flex-direction:column; gap:2px; }
+      .vt-quick-menu .vt-qm-tit { font-size:11px; color:var(--texto-dim); padding:5px 10px 6px; border-bottom:1px solid rgba(255,255,255,0.08); margin-bottom:2px; font-weight:700; }
+      .vt-quick-menu button { background:none; border:none; color:#e8edf5; text-align:left; padding:8px 10px; border-radius:8px; font-size:12.5px; cursor:pointer; display:flex; align-items:center; gap:8px; }
+      .vt-quick-menu button:hover { background:rgba(0,200,255,0.12); color:#00c8ff; }
+      .topbar-multitask-btn { margin-left:auto; margin-right:12px; background:rgba(0,200,255,0.1); border:1px solid rgba(0,200,255,0.32); color:#00c8ff; border-radius:9px; padding:7px 12px; font-size:12px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; transition:all .15s ease; }
+      .topbar-multitask-btn:hover { background:rgba(0,200,255,0.2); border-color:#00c8ff; }
+      @media (max-width:900px) { #barra-ventanas { left:8px; right:80px; transform:none; max-width:none; flex-wrap:nowrap; overflow-x:auto; justify-content:flex-start; } }
+      @media print { #barra-ventanas, .vt-quick-menu, .topbar-multitask-btn { display:none !important; } }`;
+    document.head.appendChild(st);
+    barra = document.createElement('div');
+    barra.id = 'barra-ventanas';
+    document.body.appendChild(barra);
+    barra.addEventListener('click', (e) => {
+      const x = e.target.closest('[data-cerrar-vid]');
+      if (x) {
+        e.stopPropagation();
+        const v = ventanas.lista.find((w) => w.id === x.dataset.cerrarVid);
+        if (!v) return;
+        if (!confirm('¿Cerrar "' + v.titulo + '"? Lo que no hayas guardado se perdera.')) return;
+        if (v.draftKey) { try { localStorage.removeItem(v.draftKey); } catch (_e) { /* ignore */ } }
+        cerrarVentana(v);
+        return;
+      }
+      const btnNew = e.target.closest('[data-vt-nueva]');
+      if (btnNew) {
+        e.stopPropagation();
+        abrirMenuNuevaVentana(btnNew);
+        return;
+      }
+      const chip = e.target.closest('[data-vid]');
+      if (!chip) return;
+      const v = ventanas.lista.find((w) => w.id === chip.dataset.vid);
+      if (!v) return;
+      if (ventanas.activa === v) estacionarVentana(v); else restaurarVentana(v);
+    });
+  }
+  const trabajo = ventanas.lista.filter((v) => v.multitarea);
+  barra.hidden = trabajo.length === 0;
+  barra.innerHTML = `<span class="vt-lbl">🗂 Multitarea (${trabajo.length})</span>` + trabajo.map((v) => `
+    <div class="vt-chip ${ventanas.activa === v ? 'activa' : ''}" data-vid="${v.id}" title="${ventanas.activa === v ? 'Minimizar' : 'Abrir'}: ${esc(v.titulo)}">
+      <span>${v.icono || '🗂'}</span><span class="vt-tit">${esc(v.titulo)}</span>
+      <button type="button" class="vt-x" data-cerrar-vid="${v.id}" title="Cerrar ventana">✕</button>
+    </div>`).join('') + `<button type="button" class="vt-new-btn" data-vt-nueva="1" title="Abrir otra orden, material o movimiento sin cerrar lo actual">＋ Nueva tarea</button>`;
+}
+
+let menuRapidoEl = null;
+function cerrarMenuNuevaVentana() {
+  if (menuRapidoEl) { menuRapidoEl.remove(); menuRapidoEl = null; document.removeEventListener('click', cerrarMenuNuevaVentana); }
+}
+function abrirMenuNuevaVentana(anchorEl) {
+  if (menuRapidoEl) { cerrarMenuNuevaVentana(); return; }
+  const m = document.createElement('div');
+  m.className = 'vt-quick-menu';
+  m.innerHTML = `
+    <div class="vt-qm-tit">⚡ Abrir nueva ventana paralela</div>
+    <button type="button" data-qm="orden-salida">📤 Nueva orden de salida</button>
+    <button type="button" data-qm="orden-entrada">📥 Nueva orden de entrada / pedido</button>
+    <button type="button" data-qm="orden-devolucion">🔄 Nueva orden de devolución</button>
+    <button type="button" data-qm="movimiento">⇄ Registrar movimiento individual</button>
+    <button type="button" data-qm="material">📦 Nuevo material de inventario</button>
+    <button type="button" data-qm="herramienta">🔧 Nueva herramienta</button>
+    <button type="button" data-qm="kit">🧰 Nuevo kit (plantilla)</button>`;
+  document.body.appendChild(m);
+  menuRapidoEl = m;
+  if (anchorEl) {
+    const r = anchorEl.getBoundingClientRect();
+    const topSpace = r.top;
+    if (topSpace > 290) {
+      m.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+      m.style.top = 'auto';
+    } else {
+      m.style.top = (r.bottom + 8) + 'px';
+      m.style.bottom = 'auto';
+    }
+    const leftPos = Math.max(12, Math.min(r.left, window.innerWidth - m.offsetWidth - 12));
+    m.style.left = leftPos + 'px';
+    m.style.transform = 'none';
+  }
+  m.querySelectorAll('[data-qm]').forEach((b) => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const act = b.dataset.qm;
+    cerrarMenuNuevaVentana();
+    if (act === 'orden-salida') modalOrden('salida');
+    else if (act === 'orden-entrada') modalOrden('entrada');
+    else if (act === 'orden-devolucion') modalOrden('devolucion');
+    else if (act === 'movimiento') modalMovimiento(null);
+    else if (act === 'material') modalMaterial(null);
+    else if (act === 'herramienta') modalMaterial(null, { esHerramienta: true });
+    else if (act === 'kit') modalKit(null);
+  }));
+  setTimeout(() => document.addEventListener('click', cerrarMenuNuevaVentana), 0);
+}
+
 function abrirModal(titulo, htmlBody, ancho) {
+  // Si hay una ventana visible: la de trabajo se estaciona, la pasajera se reemplaza.
+  let desplazada = null;
+  const prev = ventanas.activa;
+  if (prev) {
+    if (prev.multitarea) { estacionarVentana(prev); desplazada = prev.id; }
+    else { desplazada = prev.desplazada; quitarVentana(prev); }
+  }
+  const prox = ventanas.proxima;
+  ventanas.proxima = null;
+  const v = {
+    id: TAB_ID + '-' + (++ventanas.seq), titulo, ancho: ancho || '',
+    multitarea: !!prox, icono: prox ? prox.icono : '',
+    desplazada: prox ? null : desplazada, nodo: null, snapshot: null, draftKey: null
+  };
+  ventanas.lista.push(v);
+  ventanas.activa = v;
+
   $('#modal-titulo').textContent = titulo;
   $('#modal-body').innerHTML = htmlBody;
   const wrap = $('#modal');
@@ -411,9 +654,31 @@ function abrirModal(titulo, htmlBody, ancho) {
   wrap.hidden = false;
   // Habilitar arrastre despues de abrir
   setTimeout(() => habilitarDragModal(), 50);
+  renderBarraVentanas();
 }
-function cerrarModal() { $('#modal').hidden = true; $('#modal-body').innerHTML = ''; const m = $('#modal .modal'); if (m) { m.classList.remove('modal-minimizado'); m.style.left = ''; m.style.top = ''; m.style.position = ''; } $('#modal').classList.remove('modal-draggable'); try { if (asistente && asistente.estadoAgente === 'en_modal') { asistente.estadoAgente = 'libre'; asistente.modalTipo = null; } } catch (_e) { /* asistente aun no inicializado */ } }
+function cerrarModal(opts) {
+  const v = ventanas.activa;
+  ocultarCascaronModal();
+  $('#modal-body').innerHTML = '';
+  try { if (asistente && asistente.estadoAgente === 'en_modal') { asistente.estadoAgente = 'libre'; asistente.modalTipo = null; } } catch (_e) { /* asistente aun no inicializado */ }
+  if (v) {
+    quitarVentana(v);
+    // Al cerrar una ventana pasajera (confirmacion, documento...), vuelve la que tapó.
+    const sinRestaurar = opts && opts.sinRestaurar === true;
+    if (!sinRestaurar && !v.multitarea && v.desplazada) {
+      const d = ventanas.lista.find((x) => x.id === v.desplazada);
+      if (d) restaurarVentana(d);
+    }
+  }
+  renderBarraVentanas();
+}
 function minimizarModal() {
+  const v = ventanas.activa;
+  if (v && v.multitarea) {
+    estacionarVentana(v);
+    toast('Ventana minimizada en la barra inferior. Puedes seguir trabajando.', 'ok');
+    return;
+  }
   const m = $('#modal .modal');
   if (m) m.classList.toggle('modal-minimizado');
 }
@@ -481,7 +746,11 @@ function habilitarDragModal() {
 
 $('#modal-cerrar').addEventListener('click', cerrarModal);
 $('#modal-minimizar').addEventListener('click', minimizarModal);
-$('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') cerrarModal(); });
+$('#modal').addEventListener('click', (e) => {
+  if (e.target.id !== 'modal') return;
+  const v = ventanas.activa;
+  if (v && v.multitarea) estacionarVentana(v); else cerrarModal();
+});
 
 /* ==================================================================
    INYECCION de estilos, menu, vistas y area de impresion
@@ -853,6 +1122,18 @@ function inyectarExtras() {
         }
       });
     });
+    const btnQuickTask = document.createElement('button');
+    btnQuickTask.type = 'button';
+    btnQuickTask.className = 'topbar-multitask-btn';
+    btnQuickTask.innerHTML = '🗂 ＋ Nueva tarea';
+    btnQuickTask.title = 'Abrir orden, material o movimiento en paralelo';
+    const proy = topbar.querySelector('.topbar-proyecto');
+    if (proy) topbar.insertBefore(btnQuickTask, proy);
+    else topbar.appendChild(btnQuickTask);
+    btnQuickTask.addEventListener('click', (e) => {
+      e.stopPropagation();
+      abrirMenuNuevaVentana(btnQuickTask);
+    });
   }
 
   // ---- Viewport meta for responsive (web version) ----
@@ -1030,6 +1311,7 @@ alCambiarSesion((usuario) => {
     iniciarSuscripciones();
     cargarInfoApp();
   } else {
+    cerrarTodasVentanas();
     $('#pantalla-login').hidden = false;
     $('#app').hidden = true;
     estado.desuscribir.forEach((fn) => { try { fn(); } catch (e) {} });
@@ -1387,7 +1669,9 @@ function modalMaterial(id, prefill) {
   const editando = !!m;
   const listaClases = clasesDeCategoria(b.categoria);
   const esHerr = !!b.esHerramienta;
-  abrirModal(editando ? (esHerr ? 'Editar herramienta' : 'Editar material') : (prefill ? (esHerr ? 'Nueva herramienta (duplicar)' : 'Duplicar material') : (esHerr ? 'Nueva herramienta' : 'Nuevo material / herramienta')), `
+  iniciarVentanaTrabajo(esHerr ? '🔧' : '📦');
+  const tituloBase = editando ? (esHerr ? 'Editar herramienta' : 'Editar material') : (prefill ? (esHerr ? 'Nueva herramienta (duplicar)' : 'Duplicar material') : (esHerr ? 'Nueva herramienta' : 'Nuevo material / herramienta'));
+  abrirModal(tituloBase, `
     <div class="form-grid">
       <div class="campo"><label>Codigo</label><input id="f-codigo" value="${esc(b.codigo || '')}" placeholder="Opcional" /></div>
       <div class="campo"><label>Unidad de medida</label><select id="f-unidad">${opcionesSelect(UNIDADES, b.unidad || 'unidad')}</select></div>
@@ -1422,15 +1706,28 @@ function modalMaterial(id, prefill) {
       </div>
     </div>
     <div class="modal-acciones">
+      <button class="btn-ghost" id="m-minimizar" title="Guardar en la barra inferior y seguir haciendo otra cosa">▬ Minimizar</button>
       <button class="btn-ghost" id="m-cancelar">Cancelar</button>
       ${editando ? '' : `<button class="btn-ghost" id="m-guardar-otro">Guardar y agregar ${esHerr ? 'otra' : 'otro'}</button>`}
       <button class="btn-primary" id="m-guardar">${editando ? 'Guardar cambios' : (esHerr ? 'Agregar herramienta' : 'Agregar material')}</button>
     </div>`);
+  const vActual = ventanas.activa;
+  const actualizarTitMat = () => {
+    if (!vActual) return;
+    const nom = (($('#f-nombre') || {}).value || '').trim();
+    const esH = ($('#f-es-herramienta') || {}).checked;
+    vActual.icono = esH ? '🔧' : '📦';
+    vActual.titulo = nom ? `${esH ? 'Herramienta' : 'Material'}: ${nom}` : tituloBase;
+    if (ventanas.activa === vActual) $('#modal-titulo').textContent = vActual.titulo;
+    renderBarraVentanas();
+  };
+  if ($('#f-nombre')) $('#f-nombre').addEventListener('input', actualizarTitMat);
+  if (b.nombre) actualizarTitMat();
 
   // Toggle campos herramienta
   const chkHerr = $('#f-es-herramienta');
   const camposHerr = $('#campos-herr');
-  if (chkHerr) chkHerr.addEventListener('change', () => { camposHerr.style.display = chkHerr.checked ? '' : 'none'; });
+  if (chkHerr) chkHerr.addEventListener('change', () => { camposHerr.style.display = chkHerr.checked ? '' : 'none'; actualizarTitMat(); });
 
   const leerDatos = () => {
     const esH = $('#f-es-herramienta').checked;
@@ -1463,7 +1760,7 @@ function modalMaterial(id, prefill) {
     try {
       if (m) { await actualizarMaterial(m.id, datos); toast('Material actualizado', 'ok'); }
       else { await agregarMaterial(datos); toast('Material agregado', 'ok'); }
-      if (cerrar) { cerrarModal(); return; }
+      if (cerrar) { cerrarVentana(vActual); return; }
       // "Guardar y agregar otro": conserva tipo/clase/unidad/ubicacion; limpia lo demas.
       $('#f-codigo').value = '';
       $('#f-nombre').value = '';
@@ -1471,6 +1768,7 @@ function modalMaterial(id, prefill) {
       $('#f-serial').value = '';
       $('#f-marca').value = '';
       $('#f-modelo').value = '';
+      actualizarTitMat();
       refrescarClases();
       const dlc = $('#lista-categorias');
       if (dlc) dlc.innerHTML = categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
@@ -1478,7 +1776,8 @@ function modalMaterial(id, prefill) {
     } catch (e) { toast('Error: ' + e.message, 'error'); }
   };
 
-  $('#m-cancelar').addEventListener('click', cerrarModal);
+  if ($('#m-minimizar')) $('#m-minimizar').addEventListener('click', minimizarModal);
+  $('#m-cancelar').addEventListener('click', () => cerrarVentana(vActual));
   $('#m-guardar').addEventListener('click', () => guardar(true));
   if ($('#m-guardar-otro')) $('#m-guardar-otro').addEventListener('click', () => guardar(false));
 }
@@ -1688,6 +1987,7 @@ function modalMovimiento(materialId) {
   const opciones = estado.materiales.slice().sort((a, b) => String(a.nombre).localeCompare(String(b.nombre)))
     .map((m) => `<option value="${m.id}" ${m.id === materialId ? 'selected' : ''}>${esc(m.nombre)} (${fmtNum(m.cantidad)} ${esc(m.unidad)})</option>`).join('');
 
+  iniciarVentanaTrabajo('⇄');
   abrirModal('Registrar movimiento', `
     <div class="campo full" style="margin-bottom:14px"><label>Tipo de movimiento</label>${segTipoHtml('salida')}</div>
     <div class="campo full" style="margin-bottom:14px"><label>Material</label><select id="mv-material">${opciones}</select></div>
@@ -1702,9 +2002,20 @@ function modalMovimiento(materialId) {
       <div class="campo full"><label>Nota</label><input id="mv-nota" placeholder="Opcional" /></div>
     </div>
     <div class="modal-acciones">
+      <button class="btn-ghost" id="mv-minimizar" title="Minimizar en la barra inferior">▬ Minimizar</button>
       <button class="btn-ghost" id="mv-cancelar">Cancelar</button>
       <button class="btn-primary" id="mv-guardar">Registrar</button>
     </div>`);
+  const vActual = ventanas.activa;
+  const actualizarTitMov = () => {
+    if (!vActual) return;
+    const matObj = estado.materiales.find((x) => x.id === ($('#mv-material') || {}).value);
+    const fVal = (($('#mv-frente') || {}).value || '').trim();
+    const suf = fVal ? ` · Fr. ${fVal}` : (matObj ? ` · ${matObj.nombre}` : '');
+    vActual.titulo = `Mov. ${(TIPOS[tipoSel] || {}).label || tipoSel}${suf}`;
+    if (ventanas.activa === vActual) $('#modal-titulo').textContent = vActual.titulo;
+    renderBarraVentanas();
+  };
 
   vincularCampoFecha('mv-fecha');
   const renderLugar = () => {
@@ -1715,15 +2026,19 @@ function modalMovimiento(materialId) {
     } else {
       cont.innerHTML = `<label>Frente de obra (opcional)</label>${frenteSelectHtml('mv-frente', '')}`;
     }
+    if ($('#mv-frente')) $('#mv-frente').addEventListener('change', actualizarTitMov);
+    actualizarTitMov();
   };
   renderLugar();
+  if ($('#mv-material')) $('#mv-material').addEventListener('change', actualizarTitMov);
   $('#seg-tipo').querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
     tipoSel = b.dataset.t;
     $('#seg-tipo').querySelectorAll('button').forEach((x) => x.classList.remove('on'));
     b.classList.add('on'); renderLugar();
   }));
 
-  $('#mv-cancelar').addEventListener('click', cerrarModal);
+  if ($('#mv-minimizar')) $('#mv-minimizar').addEventListener('click', minimizarModal);
+  $('#mv-cancelar').addEventListener('click', () => cerrarVentana(vActual));
   $('#mv-guardar').addEventListener('click', async () => {
     const mat = estado.materiales.find((x) => x.id === $('#mv-material').value);
     const cantidad = parseFloat($('#mv-cantidad').value);
@@ -1743,7 +2058,7 @@ function modalMovimiento(materialId) {
         responsable: $('#mv-responsable').value.trim(), nota: $('#mv-nota').value.trim(), usuario: nombreUsuario(),
         fecha: ($('#mv-fecha') && $('#mv-fecha').dataset.tocado === '1') ? new Date($('#mv-fecha').value).toISOString() : null
       });
-      toast('Movimiento registrado', 'ok'); cerrarModal();
+      toast('Movimiento registrado', 'ok'); cerrarVentana(vActual);
     } catch (e) { toast('Error: ' + e.message, 'error'); }
   });
 }
@@ -1888,15 +2203,19 @@ function modalDevolverHerramientas(ordenId) {
     </label>`;
   }).join('');
 
+  iniciarVentanaTrabajo('🔧');
   abrirModal('Devolver herramientas — ' + (orden.numero || ''), `
     <p style="color:var(--texto-dim);margin-bottom:12px;line-height:1.5">Selecciona las herramientas que se devuelven al almacen. Se actualizara su estado a <b>disponible</b> y se registrara el movimiento de devolucion.</p>
     <div id="devherr-lista" style="margin-bottom:14px">${checkboxes}</div>
     <div class="modal-acciones">
+      <button class="btn-ghost" id="devherr-minimizar">▬ Minimizar</button>
       <button class="btn-ghost" id="devherr-cancelar">Cancelar</button>
       <button class="btn-primary" id="devherr-ok">Confirmar devolucion</button>
     </div>`);
+  const vActual = ventanas.activa;
 
-  $('#devherr-cancelar').addEventListener('click', cerrarModal);
+  if ($('#devherr-minimizar')) $('#devherr-minimizar').addEventListener('click', minimizarModal);
+  $('#devherr-cancelar').addEventListener('click', () => cerrarVentana(vActual));
   $('#devherr-ok').addEventListener('click', async () => {
     const btn = $('#devherr-ok'); btn.disabled = true; btn.textContent = 'Procesando...';
     try {
@@ -1931,7 +2250,7 @@ function modalDevolverHerramientas(ordenId) {
       for (let i = 0; i < herrItems.length; i++) {
         if (checks[i] && checks[i].checked) devueltas.push(herrItems[i]);
       }
-      cerrarModal();
+      cerrarVentana(vActual);
       toast(count >= totalHerr ? 'Todas las herramientas devueltas — orden completada' : 'Devolucion parcial — quedan herramientas pendientes', 'ok');
       imprimirOrdenDevolucion(orden, devueltas);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; }
@@ -1993,6 +2312,7 @@ function repetirOrden(orden) {
 }
 
 function modalRecibir(orden) {
+  iniciarVentanaTrabajo('📥');
   const items = orden.items || [];
   estado.itemsAdicion = [];
   abrirModal('Recibir pedido — ' + orden.numero, `
@@ -2012,11 +2332,13 @@ function modalRecibir(orden) {
     <button class="btn-ghost orden-add" id="adic-add">＋ Agregar adicion</button>
 
     <div class="modal-acciones">
+      <button class="btn-ghost" id="rec-minimizar">▬ Minimizar</button>
       <button class="btn-ghost" id="rec-cancelar">Cancelar</button>
       <button class="btn-primary" id="rec-ok">Confirmar recepcion</button>
     </div>
     <datalist id="lista-categorias-rec">${categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
     <datalist id="lista-clases-rec">${clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>`, '660px');
+  const vActual = ventanas.activa;
 
   const opcionesAdic = (sel, filtro) =>
     '<option value="">— Elige del inventario —</option><option value="__nuevo__"' + (sel === '__nuevo__' ? ' selected' : '') + '>➕ Material nuevo...</option>' +
@@ -2065,7 +2387,8 @@ function modalRecibir(orden) {
     estado.itemsAdicion.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '', nuevoNombre: '', nuevoUnidad: 'unidad', nuevoCategoria: '', nuevoClase: '' });
     renderAdic();
   });
-  $('#rec-cancelar').addEventListener('click', cerrarModal);
+  if ($('#rec-minimizar')) $('#rec-minimizar').addEventListener('click', minimizarModal);
+  $('#rec-cancelar').addEventListener('click', () => cerrarVentana(vActual));
   $('#rec-ok').addEventListener('click', async () => {
     const lineas = items.map((it, i) => {
       const inp = $('#recibir-items [data-recib="' + i + '"]');
@@ -2090,7 +2413,7 @@ function modalRecibir(orden) {
     try {
       await recibirOrden(orden, { lineas, adiciones }, nombreUsuario());
       toast('Recepcion registrada y stock actualizado', 'ok');
-      cerrarModal();
+      cerrarVentana(vActual);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar recepcion'; }
   });
 }
@@ -2100,7 +2423,8 @@ function normTxt(s) {
   return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 function claveBorradorOrden(tipo) { return 'fviecom_borrador_orden_' + tipo; }
-function guardarBorradorOrden(tipo) {
+function guardarBorradorEnClave(clave, itemsRef) {
+  if (!clave) return;
   try {
     const respRows = Array.from(document.querySelectorAll('#o-responsables-list .resp-row'));
     const responsables = respRows.map((row) => ({
@@ -2113,21 +2437,26 @@ function guardarBorradorOrden(tipo) {
       responsable: responsables.length > 0 ? responsables[0].nombre : '',
       responsables: responsables,
       nota: (($('#o-nota') || {}).value) || '',
-      items: (estado.itemsOrden || []).map((it) => ({ materialId: it.materialId || '', cantidad: it.cantidad || '' })),
+      items: (itemsRef || estado.itemsOrden || []).map((it) => ({ materialId: it.materialId || '', cantidad: it.cantidad || '' })),
       ts: Date.now()
     };
     const hayAlgo = d.frente || d.proveedor || d.responsable || d.nota ||
       d.items.some((it) => it.materialId || (it.cantidad !== '' && it.cantidad != null));
-    if (hayAlgo) localStorage.setItem(claveBorradorOrden(tipo), JSON.stringify(d));
-    else localStorage.removeItem(claveBorradorOrden(tipo));
+    if (hayAlgo) localStorage.setItem(clave, JSON.stringify(d));
+    else localStorage.removeItem(clave);
   } catch (e) { /* localStorage no disponible: se ignora */ }
 }
+function guardarBorradorOrden(tipo) { guardarBorradorEnClave(claveBorradorOrden(tipo)); }
 function leerBorradorOrden(tipo) {
   try { return JSON.parse(localStorage.getItem(claveBorradorOrden(tipo)) || 'null'); }
   catch (e) { return null; }
 }
 function limpiarBorradorOrden(tipo) {
   try { localStorage.removeItem(claveBorradorOrden(tipo)); } catch (e) { /* ignore */ }
+}
+function limpiarBorradorClave(clave) {
+  if (!clave) return;
+  try { localStorage.removeItem(clave); } catch (e) { /* ignore */ }
 }
 // Opciones del <select> de material, agrupadas por categoria (optgroup) y
 // filtradas por el texto escrito. El material ya seleccionado se conserva
@@ -2161,18 +2490,40 @@ function modalOrden(tipo, precarga) {
   if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
   const t = TIPOS[tipo] || TIPOS.salida;
   const esProveedor = t.campo === 'proveedor';
+  const iconoOrden = tipo === 'entrada' ? '📥' : tipo === 'devolucion' ? '🔄' : '📤';
 
-  // Fuente de datos: 'precarga' (al repetir una orden) tiene prioridad; si no,
-  // se recupera el borrador de lo que se estaba llenando.
-  const borrador = precarga ? null : leerBorradorOrden(tipo);
+  // IMPORTANTE: estacionar cualquier ventana activa ANTES de modificar estado.itemsOrden
+  iniciarVentanaTrabajo(iconoOrden);
+
+  // Determinar clave de borrador: si la clave principal ya está en uso por otra ventana abierta,
+  // asignamos una clave propia para esta nueva ventana paralela y abrimos limpia.
+  const claveBase = claveBorradorOrden(tipo);
+  let claveEnUso = ventanas.lista.some((w) => w.draftKey === claveBase);
+  if (!claveEnUso) {
+    try {
+      const vivas = JSON.parse(localStorage.getItem(CLAVE_VIVAS) || '{}');
+      if (vivas[claveBase] && (Date.now() - vivas[claveBase] < 60000)) claveEnUso = true;
+    } catch (_e) { /* ignore */ }
+  }
+  const clavePropia = (!precarga && !claveEnUso)
+    ? claveBase
+    : `${claveBase}_${TAB_ID}_${ventanas.seq + 1}`;
+
+  // Fuente de datos: 'precarga' tiene prioridad; si no y es la primera ventana de este tipo, recupera borrador.
+  const borrador = (precarga || claveEnUso) ? null : leerBorradorOrden(tipo);
   const base = precarga || borrador;
   if (base && Array.isArray(base.items) && base.items.length) {
     estado.itemsOrden = base.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }));
   } else {
     estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
   }
+  const misItemsOrden = estado.itemsOrden;
 
-  abrirModal('Nueva orden — ' + t.label, `
+  const numAbiertasMismoTipo = ventanas.lista.filter((w) => w.multitarea && w.ordenTipo === tipo).length + 1;
+  const sufijoNum = numAbiertasMismoTipo > 1 ? ` #${numAbiertasMismoTipo}` : '';
+  const tituloBase = `Orden ${t.label}${sufijoNum}`;
+
+  abrirModal(tituloBase, `
     ${borrador ? `<div class="orden-aviso">📝 Recuperamos una orden sin terminar. <button type="button" id="o-nuevo" class="link-btn">Empezar de nuevo</button></div>` : ''}
     ${precarga ? `<div class="orden-aviso">🔁 Orden copiada. Ajusta lo que necesites y genera una nueva.</div>` : ''}
     <div class="form-grid">
@@ -2194,10 +2545,19 @@ function modalOrden(tipo, precarga) {
     <div class="orden-items" id="orden-items"></div>
     <button class="btn-ghost orden-add" id="o-add">＋ Agregar material</button>
     <div class="orden-total" id="o-total"></div>
-    <div class="modal-acciones">
+    <div class="modal-acciones" style="flex-wrap:wrap">
+      <button type="button" class="btn-ghost" id="o-otra-paralela" title="Estacionar esta orden en la barra inferior y abrir otra orden nueva simultáneamente" style="margin-right:auto;color:#00c8ff;border-color:rgba(0,200,255,0.3)">🗂 ＋ Otra orden paralela</button>
+      <button class="btn-ghost" id="o-minimizar" title="Minimizar en la barra inferior">▬ Minimizar</button>
       <button class="btn-ghost" id="o-cancelar">Cancelar</button>
       <button class="btn-primary" id="o-guardar">Generar e imprimir</button>
     </div>`, '640px');
+
+  const vActual = ventanas.activa;
+  if (vActual) {
+    vActual.draftKey = clavePropia;
+    vActual.ordenTipo = tipo;
+  }
+  marcarVentanasVivas();
 
   // --- Multi-responsables: estado local para filas de responsable ---
   let responsablesOrden = [];
@@ -2208,6 +2568,25 @@ function modalOrden(tipo, precarga) {
   } else {
     responsablesOrden = [{ _id: Date.now(), nombre: '', whatsapp: '' }];
   }
+
+  const actualizarTituloOrden = () => {
+    if (!vActual) return;
+    const fVal = (($('#o-frente') || {}).value || '').trim();
+    const pVal = (($('#o-proveedor') || {}).value || '').trim();
+    const rNom = (responsablesOrden[0] && responsablesOrden[0].nombre || '').trim();
+    const partes = [tituloBase];
+    if (fVal) partes.push('Fr. ' + fVal);
+    else if (pVal) partes.push(pVal);
+    if (rNom) partes.push(rNom);
+    vActual.titulo = partes.join(' · ');
+    if (ventanas.activa === vActual) $('#modal-titulo').textContent = vActual.titulo;
+    renderBarraVentanas();
+  };
+
+  const persistir = () => {
+    guardarBorradorEnClave(clavePropia, estado.itemsOrden);
+    actualizarTituloOrden();
+  };
 
   const renderResponsables = () => {
     const cont = $('#o-responsables-list');
@@ -2251,8 +2630,7 @@ function modalOrden(tipo, precarga) {
     if ($('#o-proveedor')) $('#o-proveedor').value = base.proveedor || '';
     if ($('#o-nota')) $('#o-nota').value = base.nota || '';
   }
-
-  const persistir = () => guardarBorradorOrden(tipo);
+  actualizarTituloOrden();
 
   const render = () => {
     const cont = $('#orden-items');
@@ -2300,7 +2678,7 @@ function modalOrden(tipo, precarga) {
   });
 
   // "Empezar de nuevo": descarta el borrador y reabre limpio.
-  if ($('#o-nuevo')) $('#o-nuevo').addEventListener('click', () => { limpiarBorradorOrden(tipo); cerrarModal(); modalOrden(tipo); });
+  if ($('#o-nuevo')) $('#o-nuevo').addEventListener('click', () => { limpiarBorradorClave(clavePropia); cerrarVentana(vActual); modalOrden(tipo); });
 
   // Cargar un kit: agrega sus materiales a la orden (sin borrar lo ya puesto).
   if ($('#o-cargar-kit')) $('#o-cargar-kit').addEventListener('click', () => {
@@ -2318,9 +2696,15 @@ function modalOrden(tipo, precarga) {
   });
 
   $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '' }); render(); persistir(); });
-  $('#o-cancelar').addEventListener('click', cerrarModal);
+  if ($('#o-otra-paralela')) $('#o-otra-paralela').addEventListener('click', () => {
+    modalOrden(tipo);
+    toast('Nueva orden abierta en paralelo. La anterior quedo en la barra inferior.', 'ok');
+  });
+  if ($('#o-minimizar')) $('#o-minimizar').addEventListener('click', minimizarModal);
+  $('#o-cancelar').addEventListener('click', () => { limpiarBorradorClave(clavePropia); cerrarVentana(vActual); });
   $('#o-guardar').addEventListener('click', async () => {
-    const items = estado.itemsOrden
+    const listaItemsActual = (vActual && vActual.snapshot && vActual.snapshot.itemsOrden) ? vActual.snapshot.itemsOrden : (estado.itemsOrden || misItemsOrden);
+    const items = listaItemsActual
       .filter((it) => it.materialId && Number(it.cantidad) > 0)
       .map((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return { materialId: it.materialId, materialNombre: m ? m.nombre : '', cantidad: Number(it.cantidad), unidad: m ? m.unidad : 'unidad' }; });
     if (items.length === 0) { toast('Agrega al menos un material con cantidad', 'error'); return; }
@@ -2331,8 +2715,13 @@ function modalOrden(tipo, precarga) {
         if (m && it.cantidad > (Number(m.cantidad) || 0)) { toast(`Stock insuficiente de "${m.nombre}" (disp: ${fmtNum(m.cantidad)})`, 'error'); return; }
       }
     }
-    const frenteVal = (($('#o-frente') || {}).value || '').trim();
-    const proveedorVal = (($('#o-proveedor') || {}).value || '').trim();
+    const raizDom = (vActual && vActual.nodo) ? vActual.nodo : document;
+    const qDom = (sel) => raizDom.querySelector(sel);
+    const frenteVal = ((qDom('#o-frente') || {}).value || '').trim();
+    const proveedorVal = ((qDom('#o-proveedor') || {}).value || '').trim();
+    const notaVal = ((qDom('#o-nota') || {}).value || '').trim();
+    const fechaEl = qDom('#o-fecha');
+    const fechaVal = (fechaEl && fechaEl.dataset.tocado === '1') ? new Date(fechaEl.value).toISOString() : null;
     if ((tipo === 'salida' || tipo === 'devolucion') && !frenteVal) {
       if (!confirm('Estas generando esta orden SIN frente de obra. Deseas continuar?')) return;
     }
@@ -2340,7 +2729,7 @@ function modalOrden(tipo, precarga) {
     const respFinales = responsablesOrden.filter((r) => r.nombre.trim());
     const responsablePrincipal = respFinales.length > 0 ? respFinales[0].nombre.trim() : '';
     const responsablesArr = respFinales.map((r) => ({ nombre: r.nombre.trim(), whatsapp: r.whatsapp.trim() }));
-    const btn = $('#o-guardar'); btn.disabled = true; btn.textContent = 'Generando...';
+    const btn = qDom('#o-guardar'); if (btn) { btn.disabled = true; btn.textContent = 'Generando...'; }
     try {
       const orden = await registrarOrden({
         tipo,
@@ -2349,26 +2738,25 @@ function modalOrden(tipo, precarga) {
         proveedor: proveedorVal,
         responsable: responsablePrincipal,
         responsables: responsablesArr,
-        nota: $('#o-nota').value.trim(),
+        nota: notaVal,
         usuario: nombreUsuario(), items,
-        fecha: ($('#o-fecha') && $('#o-fecha').dataset.tocado === '1') ? new Date($('#o-fecha').value).toISOString() : null
+        fecha: fechaVal
       });
       // Actualizar estado de herramientas despachadas
       if (tipo === 'salida') {
-        const frente = (($('#o-frente') || {}).value || '').trim();
         for (const it of items) {
           const mat = estado.materiales.find((x) => x.id === it.materialId);
           if (mat && mat.esHerramienta) {
-            await actualizarHerramientaDespacho(it.materialId, responsablePrincipal, frente, 'salida');
+            await actualizarHerramientaDespacho(it.materialId, responsablePrincipal, frenteVal, 'salida');
           }
         }
       }
-      limpiarBorradorOrden(tipo);
+      limpiarBorradorClave(clavePropia);
       guardarDirectorioResp(responsablesOrden);
-      cerrarModal();
+      cerrarVentana(vActual);
       toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
       imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero);
-    } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Generar e imprimir'; }
+    } catch (e) { toast('Error: ' + e.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Generar e imprimir'; } }
   });
 }
 
@@ -2641,22 +3029,35 @@ function usarKitEnSalida(kitId) {
 
 function modalKit(id, prefill) {
   if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
+  iniciarVentanaTrabajo('🧰');
   const kit = id ? estado.kits.find((k) => k.id === id) : null;
   const base = kit || prefill || null;
   estado.itemsKit = (base && base.items && base.items.length)
     ? base.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }))
     : [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
 
-  abrirModal(kit ? 'Editar kit' : (prefill ? 'Duplicar kit' : 'Nuevo kit'), `
+  const tituloBase = kit ? 'Editar kit' : (prefill ? 'Duplicar kit' : 'Nuevo kit');
+  abrirModal(tituloBase, `
     <div class="campo full" style="margin-bottom:12px"><label>Nombre del kit *</label>
       <input id="k-nombre" value="${esc(base ? base.nombre : '')}" placeholder="Ej: Kit herramientas basico" /></div>
     <label style="display:block;font-size:12px;color:var(--texto-dim);margin:6px 0 6px;font-weight:600">Materiales / Herramientas del kit</label>
     <div class="orden-items" id="kit-items"></div>
     <button class="btn-ghost orden-add" id="k-add">＋ Agregar material</button>
     <div class="modal-acciones">
+      <button class="btn-ghost" id="k-minimizar">▬ Minimizar</button>
       <button class="btn-ghost" id="k-cancelar">Cancelar</button>
       <button class="btn-primary" id="k-guardar">${kit ? 'Guardar cambios' : 'Crear kit'}</button>
     </div>`, '640px');
+  const vActual = ventanas.activa;
+  const actualizarTitKit = () => {
+    if (!vActual) return;
+    const nom = (($('#k-nombre') || {}).value || '').trim();
+    vActual.titulo = nom ? `Kit: ${nom}` : tituloBase;
+    if (ventanas.activa === vActual) $('#modal-titulo').textContent = vActual.titulo;
+    renderBarraVentanas();
+  };
+  if ($('#k-nombre')) $('#k-nombre').addEventListener('input', actualizarTitKit);
+  if (base && base.nombre) actualizarTitKit();
 
   const render = () => {
     const contK = $('#kit-items');
@@ -2688,7 +3089,8 @@ function modalKit(id, prefill) {
   render();
 
   $('#k-add').addEventListener('click', () => { estado.itemsKit.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '' }); render(); });
-  $('#k-cancelar').addEventListener('click', cerrarModal);
+  if ($('#k-minimizar')) $('#k-minimizar').addEventListener('click', minimizarModal);
+  $('#k-cancelar').addEventListener('click', () => cerrarVentana(vActual));
   $('#k-guardar').addEventListener('click', async () => {
     const nombre = $('#k-nombre').value.trim();
     if (!nombre) { toast('Ponle un nombre al kit', 'error'); return; }
@@ -2700,7 +3102,7 @@ function modalKit(id, prefill) {
     try {
       if (kit) { await actualizarKit(kit.id, { nombre, items }); toast('Kit actualizado', 'ok'); }
       else { await agregarKit({ nombre, items }); toast('Kit creado', 'ok'); }
-      cerrarModal();
+      cerrarVentana(vActual);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = kit ? 'Guardar cambios' : 'Crear kit'; }
   });
 }
