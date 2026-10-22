@@ -100,6 +100,7 @@ Calibre por defecto: 120V=#12 AWG, 220V=#10 AWG.
 === CONTRATOS Y FRENTES ===
 - Contrato 1: frentes 3, 3A, 3B, 3C
 - Contrato 2: frentes 4, 5, 5B, 11
+- Contrato 3: frente A
 
 === HERRAMIENTAS ===
 Taladro, curvador, escalera, pesca, pulidora, nivel, ponchadora, pelacables, andamio, rotomartillo = esHerramienta:true. Si da serial (FV-1, FV-4) incluirlo.
@@ -133,7 +134,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
   try {
-    const { texto, inventario, vistaActual, historial, imagen, mimeType } = req.body;
+    const { texto, inventario, contratos, vistaActual, historial, imagen, mimeType } = req.body;
     if (!texto) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
 
     // Construir contexto de inventario
@@ -143,6 +144,15 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
         `- ${m.nombre}${m.esHerramienta ? ' [HERR]' : ''} | ${m.cantidad} ${m.unidad}${m.serial ? ' | serial:' + m.serial : ''}`
       ).join('\n');
       contextoInv = '\n\n=== INVENTARIO ACTUAL ===\n' + lista;
+    }
+
+    // Contexto de contratos dinamicos
+    let contextoContratos = '';
+    if (contratos && typeof contratos === 'object') {
+      const lineas = Object.entries(contratos).map(([c, fs]) => `- ${c}: frentes ${Array.isArray(fs) ? fs.join(', ') : ''}`);
+      if (lineas.length > 0) {
+        contextoContratos = '\n\n=== CONTRATOS Y FRENTES ACTUALIZADOS ===\n' + lineas.join('\n');
+      }
     }
 
     // Vista actual
@@ -171,7 +181,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
     }
     messages.push({ role: 'user', parts: userParts });
 
-    const systemText = SYSTEM_PROMPT + contextoInv + contextoExtra;
+    const systemText = SYSTEM_PROMPT + contextoInv + contextoContratos + contextoExtra;
 
     // Obtener token
     const client = await auth.getClient();

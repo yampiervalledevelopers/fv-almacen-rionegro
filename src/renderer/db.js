@@ -11,6 +11,7 @@ import {
   collection,
   doc,
   addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   getDocs,
@@ -535,6 +536,32 @@ export async function actualizarHerramientaDespacho(materialId, responsable, fre
 
 export async function actualizarEstadoOrden(ordenId, nuevoEstado) {
   await updateDoc(doc(db, 'ordenes', ordenId), { estado: nuevoEstado });
+}
+
+/* ---------------- Contratos y Frentes ---------------- */
+
+const COL_CONTRATOS = 'contratos';
+const DOC_CONTRATOS = 'lista';
+
+export function escucharContratos(callback, onError) {
+  return onSnapshot(doc(db, COL_CONTRATOS, DOC_CONTRATOS), (snap) => {
+    if (snap.exists()) {
+      callback(snap.data().datos || null);
+    } else {
+      callback(null);
+    }
+  }, (err) => { if (onError) onError(err); });
+}
+
+export async function guardarContratosEnNube(datos) {
+  try {
+    await setDoc(doc(db, COL_CONTRATOS, DOC_CONTRATOS), {
+      datos: datos || {},
+      actualizado: serverTimestamp()
+    }, { merge: true });
+  } catch (err) {
+    console.warn('Sincronizacion en la nube de contratos no disponible temporalmente:', err.message);
+  }
 }
 
 export { db };

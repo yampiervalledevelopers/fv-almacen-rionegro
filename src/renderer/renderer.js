@@ -18,7 +18,8 @@ import {
   escucharKits, agregarKit, actualizarKit, eliminarKit,
   escucharCategorias, agregarCategoria, eliminarCategoria,
   actualizarHerramientaDespacho,
-  actualizarEstadoOrden
+  actualizarEstadoOrden,
+  escucharContratos, guardarContratosEnNube
 } from './db.js';
 
 /* ------------------------------------------------------------------ */
@@ -31,6 +32,7 @@ const estado = {
   ordenes: [],
   kits: [],
   categorias: [],
+  contratos: {},
   itemsImportados: [],
   itemsOrden: [],
   itemsKit: [],
@@ -59,29 +61,258 @@ const TIPOS = {
   devolucion: { label: 'Devolucion', titulo: 'ORDEN DE DEVOLUCION DE MATERIALES', campo: 'frente', campoLabel: 'Frente de obra (origen)' }
 };
 
-// Contratos y sus frentes de obra. Al elegir el frente se deduce el contrato.
-const CONTRATOS = {
+// Contratos y sus frentes de obra base (predeterminados).
+const CONTRATOS_DEFAULT = {
   'Contrato 1': ['3', '3A', '3B', '3C'],
-  'Contrato 2': ['4', '5', '5B', '11']
+  'Contrato 2': ['4', '5', '5B', '11'],
+  'Contrato 3': ['A']
 };
+
+const CLAVE_CONTRATOS = 'fviecom_contratos_personalizados';
+
+// Obtiene todos los contratos y frentes combinando base, local y sincronizado
+function obtenerContratos() {
+  let guardados = {};
+  try {
+    guardados = JSON.parse(localStorage.getItem(CLAVE_CONTRATOS) || '{}');
+  } catch (e) { guardados = {}; }
+
+  if (estado && estado.contratos && typeof estado.contratos === 'object') {
+    for (const c in estado.contratos) {
+      if (!guardados[c]) guardados[c] = [];
+      const lista = Array.isArray(estado.contratos[c]) ? estado.contratos[c] : [];
+      for (const f of lista) {
+        if (!guardados[c].includes(f)) guardados[c].push(f);
+      }
+    }
+  }
+
+  const resultado = {};
+  // 1. Cargar base predeterminado
+  for (const c in CONTRATOS_DEFAULT) {
+    resultado[c] = [...CONTRATOS_DEFAULT[c]];
+  }
+  // 2. Fusionar guardados
+  for (const c in guardados) {
+    if (!resultado[c]) {
+      resultado[c] = Array.isArray(guardados[c]) ? [...guardados[c]] : [];
+    } else if (Array.isArray(guardados[c])) {
+      for (const f of guardados[c]) {
+        if (!resultado[c].includes(f)) resultado[c].push(f);
+      }
+    }
+  }
+  return resultado;
+}
+
+// Agrega un nuevo frente a un contrato
+function agregarFrenteAContrato(nombreContrato, nombreFrente) {
+  const c = String(nombreContrato || '').trim();
+  const f = String(nombreFrente || '').toUpperCase().trim();
+  if (!c) throw new Error('Ingresa o selecciona un contrato.');
+  if (!f) throw new Error('Ingresa el nombre o número del frente.');
+
+  const contratos = obtenerContratos();
+  if (!contratos[c]) contratos[c] = [];
+  if (!contratos[c].includes(f)) {
+    contratos[c].push(f);
+  }
+
+  try {
+    localStorage.setItem(CLAVE_CONTRATOS, JSON.stringify(contratos));
+  } catch (e) { /* ignore */ }
+
+  if (estado) estado.contratos = contratos;
+
+  try { guardarContratosEnNube(contratos); } catch (_e) { /* ignore */ }
+
+  refrescarFiltrosContratos();
+  return { contrato: c, frente: f };
+}
+
+// Elimina un frente de un contrato
+function eliminarFrenteDeContrato(nombreContrato, nombreFrente) {
+  const c = String(nombreContrato || '').trim();
+  const f = String(nombreFrente || '').toUpperCase().trim();
+  const contratos = obtenerContratos();
+  if (!contratos[c]) return;
+  contratos[c] = (contratos[c] || []).filter((item) => String(item).toUpperCase().trim() !== f);
+  if (contratos[c].length === 0 && !CONTRATOS_DEFAULT[c]) {
+    delete contratos[c];
+  }
+  try {
+    localStorage.setItem(CLAVE_CONTRATOS, JSON.stringify(contratos));
+  } catch (e) { /* ignore */ }
+  if (estado) estado.contratos = contratos;
+  try { guardarContratosEnNube(contratos); } catch (_e) { /* ignore */ }
+  refrescarFiltrosContratos();
+}
+
+// Deduce el contrato a partir del frente de obra (insensible a mayúsculas)
 function contratoDeFrente(frente) {
   const f = String(frente || '').toUpperCase().trim();
-  for (const c in CONTRATOS) { if (CONTRATOS[c].includes(f)) return c; }
+  if (!f) return '';
+  const contratos = obtenerContratos();
+  for (const c in contratos) {
+    const fs = (contratos[c] || []).map((x) => String(x).toUpperCase().trim());
+    if (fs.includes(f)) return c;
+  }
   return '';
 }
+
 // El contrato REAL se deriva siempre del frente (fuente de verdad). Solo si no
 // hay frente se usa el contrato que quedo guardado. Evita inconsistencias.
 function contratoReal(obj) {
   return (obj && obj.frente) ? contratoDeFrente(obj.frente) : ((obj && obj.contrato) || '');
 }
-function frenteSelectHtml(id, sel) {
-  let h = `<select id="${id}"><option value="">— Sin frente —</option>`;
-  for (const c in CONTRATOS) {
-    h += `<optgroup label="${c}">`;
-    for (const f of CONTRATOS[c]) h += `<option value="${f}" ${f === sel ? 'selected' : ''}>Frente ${f}</option>`;
-    h += `</optgroup>`;
+
+// Genera el selector de frentes agrupados por contrato con opción de agregar rápido
+function frenteSelectHtml(id, sel, conBotonAgregar = true) {
+  const contratos = obtenerContratos();
+  let optHtml = `<option value="">— Sin frente —</option>`;
+  for (const c in contratos) {
+    optHtml += `<optgroup label="${esc(c)}">`;
+    for (const f of contratos[c]) {
+      optHtml += `<option value="${esc(f)}" ${String(f).toUpperCase() === String(sel || '').toUpperCase() ? 'selected' : ''}>Frente ${esc(f)}</option>`;
+    }
+    optHtml += `</optgroup>`;
   }
-  return h + `</select>`;
+
+  if (!conBotonAgregar) {
+    return `<select id="${id}">${optHtml}</select>`;
+  }
+
+  return `
+    <div class="frente-picker-wrap" id="${id}-wrap" style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;gap:6px;align-items:center">
+        <select id="${id}" style="flex:1">${optHtml}</select>
+        <button type="button" class="btn-ghost btn-toggle-frente" data-frente-id="${id}" title="Agregar nuevo frente o contrato" style="padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap;border:1px solid rgba(0,200,255,0.3);color:#00c8ff;border-radius:8px;background:rgba(0,200,255,0.06);cursor:pointer">+ Frente</button>
+      </div>
+      <div id="${id}-creador" class="creador-frente-inline" style="display:none;margin-top:6px;padding:10px 12px;background:rgba(4,18,43,0.85);border:1px solid rgba(0,200,255,0.25);border-radius:10px;backdrop-filter:blur(8px)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <span style="font-size:12px;font-weight:700;color:#00c8ff">➕ Agregar Nuevo Frente / Contrato</span>
+          <button type="button" class="btn-cerrar-frente-box" data-frente-id="${id}" style="border:none;background:none;color:#7a8ba5;cursor:pointer;font-size:14px;padding:2px" title="Cerrar">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+          <div>
+            <label style="display:block;font-size:11px;color:var(--texto-dim);margin-bottom:3px">Contrato</label>
+            <select id="${id}-contrato-sel" class="select" style="font-size:12px;padding:6px 8px;width:100%"></select>
+          </div>
+          <div id="${id}-nuevo-contrato-box" style="display:none">
+            <label style="display:block;font-size:11px;color:var(--texto-dim);margin-bottom:3px">Nombre nuevo contrato</label>
+            <input type="text" id="${id}-nuevo-contrato-inp" placeholder="Ej: Contrato 4" style="font-size:12px;padding:6px 8px;width:100%" />
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:var(--texto-dim);margin-bottom:3px">Nombre del frente</label>
+            <input type="text" id="${id}-nuevo-frente-inp" placeholder="Ej: B, 6, Pista..." style="font-size:12px;padding:6px 8px;width:100%" />
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          <button type="button" class="btn-ghost btn-mini btn-cancelar-frente" data-frente-id="${id}" style="font-size:11.5px;padding:5px 10px">Cancelar</button>
+          <button type="button" class="btn-primary btn-mini btn-guardar-frente" data-frente-id="${id}" style="font-size:11.5px;padding:5px 12px">Guardar frente</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function poblarSelectorContratosInline(fid) {
+  const sel = document.getElementById(`${fid}-contrato-sel`);
+  if (!sel) return;
+  const contratos = obtenerContratos();
+  let h = '';
+  for (const c in contratos) {
+    h += `<option value="${esc(c)}">${esc(c)}</option>`;
+  }
+  h += `<option value="__NUEVO__">+ Crear nuevo contrato...</option>`;
+  sel.innerHTML = h;
+
+  const boxNuevo = document.getElementById(`${fid}-nuevo-contrato-box`);
+  const inpNuevo = document.getElementById(`${fid}-nuevo-contrato-inp`);
+  if (boxNuevo) boxNuevo.style.display = 'none';
+
+  sel.onchange = () => {
+    if (sel.value === '__NUEVO__') {
+      if (boxNuevo) {
+        boxNuevo.style.display = 'block';
+        if (inpNuevo) inpNuevo.focus();
+      }
+    } else {
+      if (boxNuevo) boxNuevo.style.display = 'none';
+    }
+  };
+  const inpFrente = document.getElementById(`${fid}-nuevo-frente-inp`);
+  if (inpFrente) inpFrente.focus();
+}
+
+function ejecutarGuardarFrenteInline(fid) {
+  const selContrato = document.getElementById(`${fid}-contrato-sel`);
+  const inpNuevoContrato = document.getElementById(`${fid}-nuevo-contrato-inp`);
+  const inpNuevoFrente = document.getElementById(`${fid}-nuevo-frente-inp`);
+  if (!selContrato || !inpNuevoFrente) return;
+
+  let contrato = selContrato.value;
+  if (contrato === '__NUEVO__') {
+    contrato = (inpNuevoContrato ? inpNuevoContrato.value : '').trim();
+    if (!contrato) {
+      toast('Escribe el nombre del nuevo contrato', 'error');
+      if (inpNuevoContrato) inpNuevoContrato.focus();
+      return;
+    }
+  }
+
+  const frente = inpNuevoFrente.value.trim();
+  if (!frente) {
+    toast('Escribe el nombre del nuevo frente', 'error');
+    inpNuevoFrente.focus();
+    return;
+  }
+
+  try {
+    agregarFrenteAContrato(contrato, frente);
+    toast(`Frente "${frente}" agregado a ${contrato}`, 'ok');
+
+    const box = document.getElementById(`${fid}-creador`);
+    if (box) box.style.display = 'none';
+    inpNuevoFrente.value = '';
+    if (inpNuevoContrato) inpNuevoContrato.value = '';
+
+    const targetSelect = document.getElementById(fid);
+    if (targetSelect) {
+      targetSelect.value = frente.toUpperCase();
+    }
+  } catch (err) {
+    toast(err.message, 'error');
+  }
+}
+
+function refrescarFiltrosContratos() {
+  const selMov = document.getElementById('filtro-frente-mov');
+  if (selMov) {
+    const valPrevio = selMov.value;
+    selMov.innerHTML = '<option value="">Todos los frentes</option>' + frentesOptions(valPrevio);
+    selMov.value = valPrevio;
+  }
+  const consC = document.getElementById('cons-contrato');
+  if (consC) {
+    llenarConsumo();
+  }
+  ['o-frente', 'mv-frente'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      const val = el.value;
+      const contratos = obtenerContratos();
+      let optHtml = `<option value="">— Sin frente —</option>`;
+      for (const c in contratos) {
+        optHtml += `<optgroup label="${esc(c)}">`;
+        for (const f of contratos[c]) {
+          optHtml += `<option value="${esc(f)}" ${String(f).toUpperCase() === String(val).toUpperCase() ? 'selected' : ''}>Frente ${esc(f)}</option>`;
+        }
+        optHtml += `</optgroup>`;
+      }
+      el.innerHTML = optHtml;
+      if (val) el.value = val;
+    }
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -529,6 +760,7 @@ function inyectarExtras() {
       </select>
       <label class="chk"><input type="checkbox" id="cons-grafico" /> Grafico</label>
       <button class="btn-primary" id="btn-imprimir-consumo">🖨 Imprimir consumo</button>
+      <button type="button" class="btn-ghost" id="btn-gestionar-contratos" title="Gestionar contratos y frentes">⚙ Contratos y frentes</button>
     </div>
     <div class="cards" id="cons-cards"></div>
     <div id="cons-grafico-cont"></div>
@@ -717,10 +949,11 @@ function inyectarExtras() {
 
 // Opciones de frentes agrupadas por contrato (para <select>).
 function frentesOptions(sel) {
+  const contratos = obtenerContratos();
   let h = '';
-  for (const c in CONTRATOS) {
-    h += `<optgroup label="${c}">`;
-    for (const f of CONTRATOS[c]) h += `<option value="${f}" ${f === sel ? 'selected' : ''}>Frente ${f}</option>`;
+  for (const c in contratos) {
+    h += `<optgroup label="${esc(c)}">`;
+    for (const f of contratos[c]) h += `<option value="${esc(f)}" ${String(f).toUpperCase() === String(sel || '').toUpperCase() ? 'selected' : ''}>Frente ${esc(f)}</option>`;
     h += `</optgroup>`;
   }
   return h;
@@ -833,6 +1066,13 @@ function iniciarSuscripciones() {
     estado.categorias = items;
     renderInventario(); llenarFiltroCategorias(); renderListaCategorias();
   }, (err) => console.error(err)));
+
+  estado.desuscribir.push(escucharContratos((datos) => {
+    if (datos && typeof datos === 'object') {
+      estado.contratos = datos;
+      refrescarFiltrosContratos();
+    }
+  }, (err) => console.warn('Firestore contratos:', err.message)));
 }
 
 window.addEventListener('online', () => { $('#estado-conexion').classList.remove('offline'); $('#estado-conexion').innerHTML = '<span class="dot"></span> Conectado'; });
@@ -2759,8 +2999,9 @@ function llenarConsumo() {
   const selF = $('#cons-frente');
   if (!selC || !selF) return;
   const cActual = selC.value;
-  selC.innerHTML = '<option value="">Todos los contratos</option>' + Object.keys(CONTRATOS).map((c) => `<option value="${c}">${c}</option>`).join('');
-  if (Object.keys(CONTRATOS).includes(cActual)) selC.value = cActual;
+  const contratos = obtenerContratos();
+  selC.innerHTML = '<option value="">Todos los contratos</option>' + Object.keys(contratos).map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+  if (Object.keys(contratos).includes(cActual)) selC.value = cActual;
   llenarFrentesConsumo();
   aplicarPeriodoConsumo();
   renderConsumo();
@@ -2771,10 +3012,12 @@ function llenarFrentesConsumo() {
   if (!selC || !selF) return;
   const c = selC.value;
   const fActual = selF.value;
+  const contratos = obtenerContratos();
   let frentes = [];
-  if (c) frentes = CONTRATOS[c] || [];
-  else Object.keys(CONTRATOS).forEach((k) => { frentes = frentes.concat(CONTRATOS[k]); });
-  selF.innerHTML = '<option value="">Todos los frentes</option>' + frentes.map((f) => `<option value="${f}">Frente ${f}</option>`).join('');
+  if (c) frentes = contratos[c] || [];
+  else Object.keys(contratos).forEach((k) => { frentes = frentes.concat(contratos[k] || []); });
+  frentes = Array.from(new Set(frentes));
+  selF.innerHTML = '<option value="">Todos los frentes</option>' + frentes.map((f) => `<option value="${esc(f)}">Frente ${esc(f)}</option>`).join('');
   if (frentes.includes(fActual)) selF.value = fActual;
 }
 // Una "herramienta" es un material cuya categoria contiene "herramient".
@@ -3354,6 +3597,156 @@ async function cargarInfoApp() {
 }
 
 /* ==================================================================
+   CONTRATOS Y FRENTES - MODAL DE ADMINISTRACION
+   ================================================================== */
+function modalGestionarContratos() {
+  const renderContenido = () => {
+    const contratos = obtenerContratos();
+    let listaHtml = '';
+    for (const c in contratos) {
+      const frentes = contratos[c] || [];
+      const chips = frentes.map((f) => `
+        <span class="tipo-badge" style="display:inline-flex;align-items:center;gap:5px;padding:5px 9px;background:rgba(0,200,255,0.12);color:#00c8ff;border-radius:6px;font-size:12px;margin:2px">
+          Frente ${esc(f)}
+          <button type="button" class="btn-quitar-frente" data-contrato="${esc(c)}" data-frente="${esc(f)}" title="Eliminar frente" style="background:none;border:none;color:#ff5470;cursor:pointer;font-size:13px;padding:0 2px;line-height:1">✕</button>
+        </span>
+      `).join('');
+
+      listaHtml += `
+        <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:12px;margin-bottom:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-weight:700;color:#e8edf5;font-size:13.5px">📁 ${esc(c)}</span>
+            <span style="font-size:11.5px;color:var(--texto-dim)">${frentes.length} frente(s)</span>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">
+            ${chips || '<span style="color:var(--texto-dim);font-style:italic;font-size:12px">Sin frentes</span>'}
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <p style="color:var(--texto-dim);line-height:1.5;margin-bottom:14px;font-size:12.5px">
+        Administra los contratos y frentes de obra. Estarán disponibles automáticamente en órdenes, movimientos y reportes de consumo.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;background:rgba(0,200,255,0.04);border:1px solid rgba(0,200,255,0.18);border-radius:10px;padding:12px;margin-bottom:16px">
+        <div>
+          <label style="display:block;font-size:11.5px;color:var(--texto-dim);margin-bottom:4px">Contrato</label>
+          <select id="m-contrato-sel" class="select" style="width:100%;font-size:12px;padding:7px 8px"></select>
+          <input type="text" id="m-nuevo-contrato-inp" placeholder="Nombre nuevo contrato..." style="width:100%;font-size:12px;margin-top:6px;display:none;padding:7px 8px" />
+        </div>
+        <div>
+          <label style="display:block;font-size:11.5px;color:var(--texto-dim);margin-bottom:4px">Nuevo frente</label>
+          <div style="display:flex;gap:6px">
+            <input type="text" id="m-nuevo-frente-inp" placeholder="Ej: B, 6, Pista..." style="flex:1;font-size:12px;padding:7px 8px" />
+            <button class="btn-primary" id="m-btn-add-frente" style="white-space:nowrap;padding:7px 12px">+ Agregar</button>
+          </div>
+        </div>
+      </div>
+      <label style="display:block;font-size:12px;color:var(--texto-dim);margin-bottom:8px;font-weight:700">Contratos y frentes configurados</label>
+      <div id="m-lista-contratos" style="max-height:260px;overflow-y:auto">${listaHtml}</div>
+      <div class="modal-acciones" style="margin-top:14px">
+        <button class="btn-ghost" id="m-cerrar-contratos">Cerrar</button>
+      </div>
+    `;
+  };
+
+  abrirModal('Gestión de Contratos y Frentes', renderContenido(), '580px');
+
+  const setupContratosModal = () => {
+    const sel = $('#m-contrato-sel');
+    const inpNuevoC = $('#m-nuevo-contrato-inp');
+    const inpNuevoF = $('#m-nuevo-frente-inp');
+    const btnAdd = $('#m-btn-add-frente');
+    const btnCerrar = $('#m-cerrar-contratos');
+    const contLista = $('#m-lista-contratos');
+
+    if (!sel || !btnAdd) return;
+
+    const contratos = obtenerContratos();
+    let optC = '';
+    for (const c in contratos) optC += `<option value="${esc(c)}">${esc(c)}</option>`;
+    optC += `<option value="__NUEVO__">+ Crear nuevo contrato...</option>`;
+    sel.innerHTML = optC;
+
+    sel.onchange = () => {
+      if (sel.value === '__NUEVO__') {
+        inpNuevoC.style.display = 'block';
+        inpNuevoC.focus();
+      } else {
+        inpNuevoC.style.display = 'none';
+      }
+    };
+
+    btnAdd.onclick = () => {
+      let c = sel.value;
+      if (c === '__NUEVO__') {
+        c = (inpNuevoC.value || '').trim();
+        if (!c) { toast('Escribe el nombre del nuevo contrato', 'error'); inpNuevoC.focus(); return; }
+      }
+      const f = (inpNuevoF.value || '').trim();
+      if (!f) { toast('Escribe el nombre del nuevo frente', 'error'); inpNuevoF.focus(); return; }
+      try {
+        agregarFrenteAContrato(c, f);
+        toast(`Frente "${f}" agregado a ${c}`, 'ok');
+        inpNuevoF.value = '';
+        if (inpNuevoC) { inpNuevoC.value = ''; inpNuevoC.style.display = 'none'; }
+        $('#modal-body').innerHTML = renderContenido();
+        setupContratosModal();
+      } catch (err) { toast(err.message, 'error'); }
+    };
+
+    if (contLista) {
+      contLista.onclick = (e) => {
+        const btnQ = e.target.closest('.btn-quitar-frente');
+        if (btnQ) {
+          const c = btnQ.dataset.contrato;
+          const f = btnQ.dataset.frente;
+          if (confirm(`¿Deseas quitar el Frente ${f} de ${c}? (Los movimientos históricos se conservarán intactos)`)) {
+            eliminarFrenteDeContrato(c, f);
+            toast(`Frente "${f}" eliminado de ${c}`, 'ok');
+            $('#modal-body').innerHTML = renderContenido();
+            setupContratosModal();
+          }
+        }
+      };
+    }
+
+    if (btnCerrar) btnCerrar.onclick = cerrarModal;
+  };
+
+  setupContratosModal();
+}
+
+// Delegacion global para abrir/cerrar/guardar frentes inline
+document.addEventListener('click', (e) => {
+  const btnToggle = e.target.closest('.btn-toggle-frente');
+  if (btnToggle) {
+    const fid = btnToggle.dataset.frenteId;
+    const box = document.getElementById(`${fid}-creador`);
+    if (box) {
+      const oculto = box.style.display === 'none' || !box.style.display;
+      box.style.display = oculto ? 'block' : 'none';
+      if (oculto) poblarSelectorContratosInline(fid);
+    }
+    return;
+  }
+  const btnCerrar = e.target.closest('.btn-cerrar-frente-box, .btn-cancelar-frente');
+  if (btnCerrar) {
+    const fid = btnCerrar.dataset.frenteId;
+    const box = document.getElementById(`${fid}-creador`);
+    if (box) box.style.display = 'none';
+    return;
+  }
+  const btnGuardar = e.target.closest('.btn-guardar-frente');
+  if (btnGuardar) {
+    const fid = btnGuardar.dataset.frenteId;
+    ejecutarGuardarFrenteInline(fid);
+    return;
+  }
+});
+
+/* ==================================================================
    ARRANQUE
    ================================================================== */
 inyectarExtras();
@@ -3386,6 +3779,7 @@ if ($('#cons-hasta')) $('#cons-hasta').addEventListener('change', renderConsumo)
 if ($('#cons-tipo-item')) $('#cons-tipo-item').addEventListener('change', renderConsumo);
 if ($('#cons-grafico')) $('#cons-grafico').addEventListener('change', renderConsumo);
 $('#btn-imprimir-consumo').addEventListener('click', imprimirConsumo);
+if ($('#btn-gestionar-contratos')) $('#btn-gestionar-contratos').addEventListener('click', modalGestionarContratos);
 llenarConsumo();
 
 
@@ -3535,7 +3929,7 @@ async function enviarAGemini(texto) {
     const resp = await fetch(CLOUD_FUNCTION_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, inventario: inv, vistaActual, historial: histCtx })
+      body: JSON.stringify({ texto, inventario: inv, contratos: obtenerContratos(), vistaActual, historial: histCtx })
     });
 
     if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
@@ -3741,7 +4135,7 @@ async function enviarImagenAGemini(base64Data, mimeType) {
     const resp = await fetch(CLOUD_FUNCTION_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, imagen: base64Data, mimeType: mimeType || 'image/jpeg', inventario: inv, vistaActual, historial: histCtx })
+      body: JSON.stringify({ texto, imagen: base64Data, mimeType: mimeType || 'image/jpeg', inventario: inv, contratos: obtenerContratos(), vistaActual, historial: histCtx })
     });
 
     if (!resp.ok) {
