@@ -1070,7 +1070,11 @@ function iniciarSuscripciones() {
   estado.desuscribir.push(escucharContratos((datos) => {
     if (datos && typeof datos === 'object') {
       estado.contratos = datos;
+      try { localStorage.setItem(CLAVE_CONTRATOS, JSON.stringify(datos)); } catch (_e) { /* ignore */ }
       refrescarFiltrosContratos();
+    } else if (datos === null) {
+      // Si el documento aun no existe en la nube, subir la configuracion actual
+      try { guardarContratosEnNube(obtenerContratos()); } catch (_e) { /* ignore */ }
     }
   }, (err) => console.warn('Firestore contratos:', err.message)));
 }

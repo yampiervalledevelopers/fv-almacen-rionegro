@@ -558,7 +558,7 @@ export async function guardarContratosEnNube(datos) {
     await setDoc(doc(db, COL_CONTRATOS, DOC_CONTRATOS), {
       datos: datos || {},
       actualizado: serverTimestamp()
-    }, { merge: true });
+    });
   } catch (err) {
     console.warn('Sincronizacion en la nube de contratos no disponible temporalmente:', err.message);
   }
