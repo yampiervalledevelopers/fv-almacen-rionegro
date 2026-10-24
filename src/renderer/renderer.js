@@ -911,7 +911,10 @@ function inyectarExtras() {
   .ctx-menu button { display:block; width:100%; text-align:left; background:none; border:none; color:var(--texto); padding:9px 10px; border-radius:7px; cursor:pointer; font-size:13px; }
   .ctx-menu button:hover { background:rgba(255,255,255,0.06); }
   .ctx-menu button.peligro { color:#ff9db0; }
-  /* --- Franja separadora de dia en Ordenes (azul claro sutil + grabado FV INGENIERIA) --- */
+  /* --- Franja separadora de dia en Ordenes (azul claro sutil + grabado FV INGENIERIA + desplegable) --- */
+  tr.ord-dia-sep {
+    cursor: pointer;
+  }
   tr.ord-dia-sep > td {
     padding: 5px 14px !important;
     background: linear-gradient(90deg, rgba(56, 189, 248, 0.16) 0%, rgba(14, 165, 233, 0.08) 50%, rgba(56, 189, 248, 0.14) 100%) !important;
@@ -919,6 +922,11 @@ function inyectarExtras() {
     border-bottom: 1px solid rgba(56, 189, 248, 0.22) !important;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
     user-select: none;
+    transition: background 0.18s ease, border-color 0.18s ease;
+  }
+  tr.ord-dia-sep:hover > td {
+    background: linear-gradient(90deg, rgba(56, 189, 248, 0.24) 0%, rgba(14, 165, 233, 0.13) 50%, rgba(56, 189, 248, 0.20) 100%) !important;
+    border-top-color: rgba(125, 211, 252, 0.5) !important;
   }
   .ord-dia-bar {
     display: flex;
@@ -937,12 +945,28 @@ function inyectarExtras() {
     letter-spacing: 0.4px;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
   }
+  .ord-dia-caret {
+    display: inline-block;
+    font-size: 11px;
+    color: #38bdf8;
+    transition: transform 0.18s ease;
+    line-height: 1;
+  }
+  tr.ord-dia-sep.cerrado .ord-dia-caret {
+    transform: rotate(-90deg);
+    color: #7dd3fc;
+  }
+  tr.ord-dia-sep.cerrado .ord-dia-dot {
+    opacity: 0.45;
+    box-shadow: none;
+  }
   .ord-dia-izq .ord-dia-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
     background: #38bdf8;
     box-shadow: 0 0 8px #38bdf8;
+    transition: opacity 0.18s ease, box-shadow 0.18s ease;
   }
   .ord-dia-izq .ord-dia-cnt {
     font-size: 10.5px;
@@ -2204,6 +2228,9 @@ function etiquetaDiaElegante(ymd) {
   }
 }
 
+// Conjunto de dias plegados manualmente por el usuario (vacio por defecto = todas las franjas abiertas).
+const diasColapsadosOrdenes = new Set();
+
 function renderOrdenes() {
   if (!$('#cuerpo-ordenes')) return;
   $('#ord-vacio').hidden = estado.ordenes.length !== 0;
@@ -2219,14 +2246,16 @@ function renderOrdenes() {
   let html = '';
   for (const o of estado.ordenes) {
     const diaActual = diaLocalOrden(o.fecha);
+    const diaCerrado = diasColapsadosOrdenes.has(diaActual);
     if (diaActual !== diaAnterior) {
       diaAnterior = diaActual;
       const cantDia = conteoPorDia[diaActual] || 1;
       html += `
-      <tr class="ord-dia-sep">
+      <tr class="ord-dia-sep${diaCerrado ? ' cerrado' : ''}" data-dia="${esc(diaActual)}" title="Clic para plegar o desplegar las órdenes de este día">
         <td colspan="8">
           <div class="ord-dia-bar">
             <div class="ord-dia-izq">
+              <span class="ord-dia-caret">▾</span>
               <span class="ord-dia-dot"></span>
               <span>📅 ${esc(etiquetaDiaElegante(diaActual))}</span>
               <span class="ord-dia-cnt">${cantDia} ${cantDia === 1 ? 'orden' : 'órdenes'}</span>
@@ -2244,7 +2273,7 @@ function renderOrdenes() {
     const tieneHerr = o.items && o.items.some((it) => estado.materiales.find((m) => m.id === it.materialId && m.esHerramienta));
     const badgeDevol = (tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
     html += `
-    <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
+    <tr class="grupo-row" data-key="${o.id}" data-dia-ord="${esc(diaActual)}" title="Doble clic para ver el detalle"${diaCerrado ? ' hidden' : ''}>
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
@@ -2260,11 +2289,31 @@ function renderOrdenes() {
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
       </div></td>
     </tr>
-    <tr class="grupo-detalle" data-key="${o.id}" hidden>
+    <tr class="grupo-detalle" data-key="${o.id}" data-dia-ord="${esc(diaActual)}" hidden>
       <td colspan="8">${detalleOrdenHtml(o)}</td>
     </tr>`;
   }
   $('#cuerpo-ordenes').innerHTML = html;
+  // Plegar / desplegar las ordenes de un dia al hacer clic en su franja azul claro.
+  $('#cuerpo-ordenes').querySelectorAll('tr.ord-dia-sep').forEach((sep) => {
+    sep.addEventListener('click', () => {
+      const diaKey = sep.dataset.dia;
+      if (!diaKey) return;
+      const ahoraCerrado = !diasColapsadosOrdenes.has(diaKey);
+      if (ahoraCerrado) diasColapsadosOrdenes.add(diaKey);
+      else diasColapsadosOrdenes.delete(diaKey);
+      sep.classList.toggle('cerrado', ahoraCerrado);
+      $('#cuerpo-ordenes').querySelectorAll('tr.grupo-row').forEach((r) => {
+        if (r.dataset.diaOrd === diaKey) r.hidden = ahoraCerrado;
+      });
+      $('#cuerpo-ordenes').querySelectorAll('tr.grupo-detalle').forEach((det) => {
+        if (det.dataset.diaOrd === diaKey) {
+          const filaPadre = det.previousElementSibling;
+          det.hidden = ahoraCerrado ? true : !(filaPadre && filaPadre.classList.contains('abierto'));
+        }
+      });
+    });
+  });
   // Expandir / colapsar el detalle con doble clic en la fila (o clic en la ▸).
   const toggleOrd = (row) => {
     const det = row.nextElementSibling;
