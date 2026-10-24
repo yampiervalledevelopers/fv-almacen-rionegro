@@ -911,6 +911,63 @@ function inyectarExtras() {
   .ctx-menu button { display:block; width:100%; text-align:left; background:none; border:none; color:var(--texto); padding:9px 10px; border-radius:7px; cursor:pointer; font-size:13px; }
   .ctx-menu button:hover { background:rgba(255,255,255,0.06); }
   .ctx-menu button.peligro { color:#ff9db0; }
+  /* --- Franja separadora de dia en Ordenes (azul claro sutil + grabado FV INGENIERIA) --- */
+  tr.ord-dia-sep > td {
+    padding: 5px 14px !important;
+    background: linear-gradient(90deg, rgba(56, 189, 248, 0.16) 0%, rgba(14, 165, 233, 0.08) 50%, rgba(56, 189, 248, 0.14) 100%) !important;
+    border-top: 1px solid rgba(125, 211, 252, 0.32) !important;
+    border-bottom: 1px solid rgba(56, 189, 248, 0.22) !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+    user-select: none;
+  }
+  .ord-dia-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 18px;
+  }
+  .ord-dia-izq {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #bae6fd;
+    letter-spacing: 0.4px;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  }
+  .ord-dia-izq .ord-dia-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #38bdf8;
+    box-shadow: 0 0 8px #38bdf8;
+  }
+  .ord-dia-izq .ord-dia-cnt {
+    font-size: 10.5px;
+    font-weight: 600;
+    color: #7dd3fc;
+    background: rgba(14, 165, 233, 0.16);
+    border: 1px solid rgba(125, 211, 252, 0.25);
+    padding: 1px 7px;
+    border-radius: 999px;
+  }
+  .ord-dia-linea {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(125, 211, 252, 0.28), rgba(125, 211, 252, 0.08) 60%, rgba(125, 211, 252, 0.25));
+  }
+  .ord-dia-grabado {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 3.2px;
+    text-transform: uppercase;
+    color: rgba(186, 230, 253, 0.38);
+    text-shadow: -1px -1px 0 rgba(2, 8, 23, 0.85), 1px 1px 0 rgba(255, 255, 255, 0.14);
+    white-space: nowrap;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
   `;
   const style = document.createElement('style');
   style.id = 'fviecom-extra';
@@ -2117,17 +2174,76 @@ function detalleOrdenHtml(o) {
     </table>
     ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}`;
 }
+function diaLocalOrden(f) {
+  if (!f) return 'Sin fecha';
+  try {
+    const d = new Date(f);
+    if (isNaN(d.getTime())) return String(f).slice(0, 10) || 'Sin fecha';
+    const esMedianocheUTC = d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0;
+    const tz = esMedianocheUTC ? 'UTC' : 'America/Bogota';
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+    const y = (parts.find((p) => p.type === 'year') || {}).value;
+    const m = (parts.find((p) => p.type === 'month') || {}).value;
+    const day = (parts.find((p) => p.type === 'day') || {}).value;
+    return (y && m && day) ? `${y}-${m}-${day}` : (String(f).slice(0, 10) || 'Sin fecha');
+  } catch (e) {
+    return String(f).slice(0, 10) || 'Sin fecha';
+  }
+}
+
+function etiquetaDiaElegante(ymd) {
+  if (!ymd || ymd === 'Sin fecha') return 'Sin fecha';
+  try {
+    const [y, m, d] = ymd.split('-').map(Number);
+    if (!y || !m || !d) return fmtFechaCorta(ymd);
+    const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const txt = dt.toLocaleDateString('es-CO', { timeZone: 'UTC', weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+    return txt.charAt(0).toUpperCase() + txt.slice(1);
+  } catch (e) {
+    return fmtFechaCorta(ymd);
+  }
+}
+
 function renderOrdenes() {
   if (!$('#cuerpo-ordenes')) return;
   $('#ord-vacio').hidden = estado.ordenes.length !== 0;
-  $('#cuerpo-ordenes').innerHTML = estado.ordenes.map((o) => {
+
+  // Contar cuantas ordenes hay por dia para mostrar el conteo en la franja
+  const conteoPorDia = {};
+  for (const o of estado.ordenes) {
+    const dKey = diaLocalOrden(o.fecha);
+    conteoPorDia[dKey] = (conteoPorDia[dKey] || 0) + 1;
+  }
+
+  let diaAnterior = null;
+  let html = '';
+  for (const o of estado.ordenes) {
+    const diaActual = diaLocalOrden(o.fecha);
+    if (diaActual !== diaAnterior) {
+      diaAnterior = diaActual;
+      const cantDia = conteoPorDia[diaActual] || 1;
+      html += `
+      <tr class="ord-dia-sep">
+        <td colspan="8">
+          <div class="ord-dia-bar">
+            <div class="ord-dia-izq">
+              <span class="ord-dia-dot"></span>
+              <span>📅 ${esc(etiquetaDiaElegante(diaActual))}</span>
+              <span class="ord-dia-cnt">${cantDia} ${cantDia === 1 ? 'orden' : 'órdenes'}</span>
+            </div>
+            <div class="ord-dia-linea"></div>
+            <span class="ord-dia-grabado">FV INGENIERIA</span>
+          </div>
+        </td>
+      </tr>`;
+    }
     const est = estadoOrden(o);
     const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
     const contrato = contratoReal(o);
     const info = estadoOrdenInfo(o);
     const tieneHerr = o.items && o.items.some((it) => estado.materiales.find((m) => m.id === it.materialId && m.esHerramienta));
     const badgeDevol = (tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
-    return `
+    html += `
     <tr class="grupo-row" data-key="${o.id}" title="Doble clic para ver el detalle">
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
@@ -2147,7 +2263,8 @@ function renderOrdenes() {
     <tr class="grupo-detalle" data-key="${o.id}" hidden>
       <td colspan="8">${detalleOrdenHtml(o)}</td>
     </tr>`;
-  }).join('');
+  }
+  $('#cuerpo-ordenes').innerHTML = html;
   // Expandir / colapsar el detalle con doble clic en la fila (o clic en la ▸).
   const toggleOrd = (row) => {
     const det = row.nextElementSibling;
