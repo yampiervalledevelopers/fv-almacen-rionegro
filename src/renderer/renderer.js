@@ -4033,7 +4033,7 @@ async function generarFacturaCanvas(datos) {
       return { celdasLineas, rowH };
     });
 
-    const totalTablaH = 38 + 34 + filasMedidas.reduce((s, r) => s + r.rowH, 0) + 30 + 18;
+    const totalTablaH = 38 + 34 + filasMedidas.reduce((s, r) => s + r.rowH, 0) + 18;
     return { ...tb, colWidths, filasMedidas, totalTablaH };
   });
 
@@ -4324,17 +4324,7 @@ async function generarFacturaCanvas(datos) {
       y += rowH;
     });
 
-    // Barra resumen inferior de tabla
-    ctx.fillStyle = '#f1f5f9';
-    ctx.fillRect(CONTENT_X, y, CONTENT_W, 28);
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.strokeRect(CONTENT_X, y, CONTENT_W, 28);
-    ctx.textAlign = 'right';
-    ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
-    ctx.fillStyle = '#334155';
-    ctx.fillText(`Total renglones en esta sección: ${tb.filas.length}`, CONTENT_X + CONTENT_W - 12, y + 18);
-
-    y += 28 + 18;
+    y += 18;
   }
 
   // 7. Aviso Rojo (Herramientas requieren devolucion)
