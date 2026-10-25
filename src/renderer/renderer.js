@@ -2285,7 +2285,8 @@ function renderOrdenes() {
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
         ${(tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? `<button class="btn-icon" title="Devolver herramientas" data-devolver-herr="${o.id}">🔁</button>` : ''}
         <button class="btn-icon" title="Repetir esta orden" data-repetir="${o.id}">🔁</button>
-        <button class="btn-icon" title="Imprimir" data-print-orden="${o.id}">🖨</button>
+        <button class="btn-icon" title="Enviar factura en foto por WhatsApp" data-wa-orden="${o.id}" style="color:#25d366;border-color:rgba(37,211,102,0.35)">📱</button>
+        <button class="btn-icon" title="Imprimir / PDF / Opciones" data-print-orden="${o.id}">🖨</button>
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
       </div></td>
     </tr>
@@ -2327,6 +2328,16 @@ function renderOrdenes() {
     const caret = row.querySelector('.caret');
     if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggleOrd(row); });
   });
+  $('#cuerpo-ordenes').querySelectorAll('[data-wa-orden]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const o = estado.ordenes.find((x) => x.id === b.dataset.waOrden);
+      if (o) {
+        const area = $('#print-area');
+        if (area) area.innerHTML = docOrden(o, o.usuario || nombreUsuario());
+        docNombreActual = ((o.tipo === 'entrada' ? 'Pedido_' : 'Orden_') + o.numero).replace(/[^\w\-]+/g, '_');
+        compartirPorWhatsApp(o);
+      }
+    }));
   $('#cuerpo-ordenes').querySelectorAll('[data-print-orden]').forEach((b) =>
     b.addEventListener('click', () => {
       const o = estado.ordenes.find((x) => x.id === b.dataset.printOrden);
@@ -3754,31 +3765,31 @@ function imprimirConsumo() {
    ================================================================== */
 let docNombreActual = 'Documento_FVIECOM';
 
-// Muestra el documento y ofrece: Imprimir, Guardar como PDF, Compartir por Gmail, WhatsApp.
+// Muestra el documento y ofrece: Imprimir, Guardar como PDF, Compartir por Gmail, WhatsApp (en foto tipo factura).
 function imprimir(html, nombre) {
   const area = $('#print-area');
   if (!area) return;
   area.innerHTML = html;
   docNombreActual = String(nombre || 'Documento_FVIECOM').replace(/[^\w\-]+/g, '_');
   abrirModal('Documento generado', `
-    <p style="color:var(--texto-dim);margin-bottom:16px;line-height:1.5">El documento esta listo. Elige que deseas hacer:</p>
+    <p style="color:var(--texto-dim);margin-bottom:16px;line-height:1.5">El documento está listo. Elige qué deseas hacer:</p>
     <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn-primary" id="doc-whatsapp" style="background:linear-gradient(135deg,#25d366,#128c7e);border-color:#25d366;color:#fff;font-size:14.5px">📱 Enviar Factura en Foto por WhatsApp</button>
       <button class="btn-primary" id="doc-imprimir">🖨️ Imprimir</button>
       <button class="btn-primary" id="doc-guardar">💾 Guardar como PDF</button>
       <button class="btn-primary" id="doc-compartir">📧 Compartir por Gmail</button>
-      <button class="btn-primary" id="doc-whatsapp" style="background:#25d366;border-color:#25d366">📱 WhatsApp</button>
     </div>
     <p style="color:var(--texto-mute);font-size:11.5px;margin-top:14px;line-height:1.6">
-      💡 <b>Guardar como PDF</b>: se abre la ventana de impresion; en <b>Destino</b> elige <b>"Guardar como PDF"</b>.<br>
-      💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envias tu.<br>
-      💡 <b>WhatsApp</b>: se abre WhatsApp con el texto del documento listo para enviar al responsable.
+      💡 <b>WhatsApp (Factura en foto)</b>: genera una sola imagen nítida estilo factura comercial con todos los materiales para enviarla en una foto.<br>
+      💡 <b>Guardar como PDF</b>: se abre la ventana de impresión; en <b>Destino</b> elige <b>"Guardar como PDF"</b>.<br>
+      💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envías tú.
     </p>
     <div class="modal-acciones"><button class="btn-ghost" id="doc-cerrar">Cerrar</button></div>
   `);
   $('#doc-imprimir').addEventListener('click', () => window.print());
   $('#doc-guardar').addEventListener('click', () => { toast('En "Destino" elige "Guardar como PDF"', 'ok'); setTimeout(() => window.print(), 500); });
   $('#doc-compartir').addEventListener('click', compartirPorGmail);
-  $('#doc-whatsapp').addEventListener('click', compartirPorWhatsApp);
+  $('#doc-whatsapp').addEventListener('click', () => compartirPorWhatsApp());
   $('#doc-cerrar').addEventListener('click', cerrarModal);
 }
 
@@ -3795,133 +3806,843 @@ function compartirPorGmail() {
   toast('Abriendo Gmail... adjunta el PDF y envialo tu', 'ok');
 }
 
-// Abre WhatsApp con el texto del documento formateado para enviar como mensaje.
-function compartirPorWhatsApp() {
-  // Si hay texto especial de devolucion, usarlo directamente.
-  if (window._devolucionWhatsAppTexto) {
-    const texto = window._devolucionWhatsAppTexto;
-    window._devolucionWhatsAppTexto = null;
-    const url = 'https://wa.me/?text=' + encodeURIComponent(texto);
-    window.open(url, '_blank');
-    toast('Abriendo WhatsApp...', 'ok');
-    return;
+// Cache del logo para dibujar el canvas rapido
+let _logoImgCache = null;
+function cargarLogoFactura() {
+  if (_logoImgCache && _logoImgCache.complete && _logoImgCache.naturalWidth > 0) {
+    return Promise.resolve(_logoImgCache);
   }
-  const area = $('#print-area');
-  if (!area) { toast('No hay documento para compartir', 'error'); return; }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { _logoImgCache = img; resolve(img); };
+    img.onerror = () => resolve(null);
+    img.src = 'assets/logo-fviecom.png';
+  });
+}
 
-  // Extraer informacion del documento generado
-  const nl = String.fromCharCode(10);
-  let texto = '';
-
-  // Header
-  texto += '📋 *FVIECOM S.A.S*' + nl;
-  texto += 'FV Ingenieria Electrica y Telecomunicaciones' + nl;
-  texto += 'Proyecto: Aeropuerto Intl. Jose Maria Cordova - Rionegro' + nl;
-  texto += '━━━━━━━━━━━━━━━━━━━━' + nl + nl;
-
-  // Titulo del documento
-  const titulo = area.querySelector('.doc-titulo');
-  if (titulo) {
-    texto += '📄 *' + titulo.textContent.trim() + '*' + nl + nl;
-  }
-
-  // Metadata
-  const meta = area.querySelector('.doc-meta');
-  if (meta) {
-    const divs = meta.querySelectorAll('div');
-    for (const d of divs) {
-      const t = d.textContent.trim();
-      if (t) texto += '▪️ ' + t + nl;
-    }
-    texto += nl;
-  }
-
-  // Secciones de materiales y herramientas
-  const subs = area.querySelectorAll('.doc-sub');
-  const tablas = area.querySelectorAll('.doc-tabla');
-  if (subs.length > 0) {
-    for (let s = 0; s < subs.length; s++) {
-      const subTitulo = subs[s].textContent.trim();
-      const esHerrSeccion = /herramienta/i.test(subTitulo);
-      texto += (esHerrSeccion ? '🔧' : '📦') + ' *' + subTitulo + '*' + nl;
-      texto += '─────────────────────' + nl;
-      // Buscar la tabla correspondiente
-      if (tablas[s]) {
-        const filas = tablas[s].querySelectorAll('tbody tr');
-        for (const fila of filas) {
-          const celdas = fila.querySelectorAll('td');
-          if (celdas.length >= 3) {
-            const num = celdas[0] ? celdas[0].textContent.trim() : '';
-            const nombre = celdas[1] ? celdas[1].textContent.trim() : '';
-            const cant = celdas[2] ? celdas[2].textContent.trim() : '';
-            const extra = celdas[3] ? celdas[3].textContent.trim() : '';
-            texto += num + '. ' + nombre + ' - ' + cant + (extra ? ' ' + extra : '') + nl;
+// Parte un texto en lineas que quepan en maxWidth dentro del contexto 2D
+function partirLineasCanvas(ctx, texto, maxWidth) {
+  const str = String(texto == null ? '' : texto).trim() || '-';
+  const palabras = str.split(/\s+/);
+  const lineas = [];
+  let actual = '';
+  for (const p of palabras) {
+    const prueba = actual ? (actual + ' ' + p) : p;
+    if (ctx.measureText(prueba).width <= maxWidth) {
+      actual = prueba;
+    } else {
+      if (actual) lineas.push(actual);
+      // Si una sola palabra es mas larga que maxWidth, cortarla por caracteres
+      if (ctx.measureText(p).width > maxWidth) {
+        let sub = '';
+        for (const ch of p) {
+          if (ctx.measureText(sub + ch).width > maxWidth && sub) {
+            lineas.push(sub);
+            sub = ch;
+          } else {
+            sub += ch;
           }
         }
-      }
-      texto += nl;
-    }
-  } else if (tablas.length > 0) {
-    // Sin subsecciones pero con tablas
-    texto += '📦 *ITEMS*' + nl;
-    texto += '─────────────────────' + nl;
-    const filas = tablas[0].querySelectorAll('tbody tr');
-    for (const fila of filas) {
-      const celdas = fila.querySelectorAll('td');
-      if (celdas.length >= 3) {
-        const num = celdas[0] ? celdas[0].textContent.trim() : '';
-        const nombre = celdas[1] ? celdas[1].textContent.trim() : '';
-        const cant = celdas[2] ? celdas[2].textContent.trim() : '';
-        texto += num + '. ' + nombre + ' - ' + cant + nl;
+        actual = sub;
+      } else {
+        actual = p;
       }
     }
-    texto += nl;
   }
+  if (actual) lineas.push(actual);
+  return lineas.length ? lineas : ['-'];
+}
 
-  // Buscar herramientas en posesion del responsable para incluir estado
-  const metaTexto = meta ? meta.textContent : '';
-  const respMatch = metaTexto.match(/Responsable:\s*([^\n]+)/);
-  const respNombre = respMatch ? respMatch[1].trim() : '';
-  if (respNombre) {
-    const herrResp = estado.materiales.filter((m) => m.esHerramienta && (m.responsableActual || '').trim() === respNombre && m.estadoHerr === 'en_uso');
-    if (herrResp.length > 0) {
-      texto += '⚠️ *HERRAMIENTAS PENDIENTES DE DEVOLUCION*' + nl;
-      texto += '─────────────────────' + nl;
-      const estadoEmoji = { disponible: '✅', en_uso: '🔧', mantenimiento: '⚠️', baja: '❌' };
-      for (let i = 0; i < herrResp.length; i++) {
-        const h = herrResp[i];
-        const emoji = estadoEmoji[h.estadoHerr] || '🔧';
-        texto += (i + 1) + '. ' + emoji + ' ' + h.nombre + nl;
-        texto += '   Serial: ' + (h.serial || '-') + nl;
-        if (h.marca || h.modelo) texto += '   ' + (h.marca || '') + (h.modelo ? ' / ' + h.modelo : '') + nl;
-        texto += '   Estado: ' + (h.estadoHerr || 'disponible').replace('_', ' ') + nl;
-        if (h.frenteActual) texto += '   Frente: ' + h.frenteActual + nl;
+function rectRedondeadoCanvas(ctx, x, y, w, h, r) {
+  const rad = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rad, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rad);
+  ctx.arcTo(x + w, y + h, x, y + h, rad);
+  ctx.arcTo(x, y + h, x, y, rad);
+  ctx.arcTo(x, y, x + w, y, rad);
+  ctx.closePath();
+}
+
+// Extrae todos los datos estructurados desde #print-area para dibujar la factura en imagen
+function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
+  const titulo = (area.querySelector('.doc-titulo') || {}).textContent?.trim() || 'COMPROBANTE DE ALMACÉN';
+  const metaItems = [];
+  let numeroDoc = '';
+  const responsNombres = [];
+
+  const metaEl = area.querySelector('.doc-meta');
+  if (metaEl) {
+    metaEl.querySelectorAll('div').forEach((d) => {
+      const txt = d.textContent.trim();
+      if (!txt) return;
+      const idx = txt.indexOf(':');
+      if (idx > -1) {
+        const k = txt.slice(0, idx).trim();
+        const v = txt.slice(idx + 1).trim();
+        metaItems.push({ label: k, value: v || '-' });
+        if (/orden|pedido/i.test(k) && v && v !== '-') numeroDoc = v;
+        if (/responsable/i.test(k) && v && v !== '-') {
+          v.split(',').map((s) => s.trim()).filter(Boolean).forEach((n) => {
+            if (!responsNombres.includes(n)) responsNombres.push(n);
+          });
+        }
+      } else {
+        metaItems.push({ label: 'Detalle', value: txt });
       }
-      texto += nl;
+    });
+  }
+  if (!numeroDoc && ordenDirecta && ordenDirecta.numero) numeroDoc = ordenDirecta.numero;
+  if (!numeroDoc) numeroDoc = docNombreActual.replace(/_/g, ' ');
+
+  // Buscar orden en estado.ordenes si no se paso directamente
+  const ordenObj = ordenDirecta || estado.ordenes.find((o) => o.numero === numeroDoc);
+
+  // Recopilar destinatarios de WhatsApp conocidos
+  const destinatarios = [];
+  const agregarDest = (nombre, wa) => {
+    const nom = (nombre || '').trim();
+    const num = (wa || buscarWhatsappResp(nom) || '').replace(/[^\d+]/g, '');
+    if (!nom && !num) return;
+    const ya = destinatarios.find((d) => d.nombre.toLowerCase() === nom.toLowerCase());
+    if (ya) {
+      if (!ya.whatsapp && num) ya.whatsapp = num;
+    } else {
+      destinatarios.push({ nombre: nom || 'Responsable', whatsapp: num });
     }
+  };
+  if (ordenObj && Array.isArray(ordenObj.responsables)) {
+    ordenObj.responsables.forEach((r) => {
+      if (typeof r === 'object') agregarDest(r.nombre, r.whatsapp);
+      else agregarDest(r, '');
+    });
+  }
+  if (ordenObj && ordenObj.responsable) agregarDest(ordenObj.responsable, '');
+  responsNombres.forEach((n) => agregarDest(n, ''));
+
+  // Extraer tablas y sus subtitulos
+  const tablas = [];
+  const tablasDom = Array.from(area.querySelectorAll('table.doc-tabla'));
+  tablasDom.forEach((tb, idx) => {
+    let subtitulo = '';
+    let prev = tb.previousElementSibling;
+    while (prev) {
+      if (prev.classList.contains('doc-sub') || prev.tagName === 'H3') {
+        subtitulo = prev.textContent.trim();
+        break;
+      }
+      if (prev.tagName === 'TABLE' || prev.classList.contains('doc-meta')) break;
+      prev = prev.previousElementSibling;
+    }
+    if (!subtitulo) subtitulo = tablasDom.length > 1 ? `SECCIÓN ${idx + 1}` : 'DETALLE DE MATERIALES / HERRAMIENTAS';
+
+    const headers = Array.from(tb.querySelectorAll('thead th')).map((th) => ({
+      texto: th.textContent.trim(),
+      align: (th.style.textAlign === 'right' || th.classList.contains('der')) ? 'right' : 'left'
+    }));
+    const filas = Array.from(tb.querySelectorAll('tbody tr')).map((tr) =>
+      Array.from(tr.querySelectorAll('td')).map((td, cIdx) => ({
+        texto: td.textContent.trim(),
+        align: (td.style.textAlign === 'right' || td.classList.contains('der') || (headers[cIdx] && headers[cIdx].align === 'right')) ? 'right' : 'left'
+      }))
+    );
+    tablas.push({ subtitulo, headers, filas });
+  });
+
+  // Avisos especiales (devolucion requerida o devolucion completada)
+  const avisoRojoEl = area.querySelector('[style*="c0392b"]');
+  const avisoVerdeEl = area.querySelector('[style*="2ecc71"]');
+  const avisoRojo = avisoRojoEl ? avisoRojoEl.textContent.trim().replace(/\s+/g, ' ') : '';
+  const avisoVerde = avisoVerdeEl ? avisoVerdeEl.textContent.trim().replace(/\s+/g, ' ') : '';
+
+  // Herramientas pendientes adicionales del responsable (si no es ya una orden de devolucion)
+  let herrPendientes = [];
+  if (!avisoVerde && responsNombres.length > 0) {
+    herrPendientes = estado.materiales.filter((m) =>
+      m.esHerramienta &&
+      m.estadoHerr === 'en_uso' &&
+      responsNombres.some((rn) => rn.toLowerCase() === (m.responsableActual || '').trim().toLowerCase())
+    );
   }
 
-  // Aviso de devolucion si tiene herramientas
-  const avisoDevol = area.querySelector('[style*="c0392b"]');
-  if (avisoDevol) {
-    texto += '🚨 *' + avisoDevol.textContent.trim().replace(/\s+/g, ' ') + '*' + nl + nl;
+  // Nota
+  const notaEl = area.querySelector('.doc-nota');
+  const nota = notaEl ? notaEl.textContent.replace(/^Nota:\s*/i, '').trim() : '';
+
+  // Firmas
+  const firmas = Array.from(area.querySelectorAll('.doc-firmas .doc-firma')).map((f) => ({
+    rol: (f.querySelector('.rol') || {}).textContent?.trim() || 'Firma',
+    nombre: (f.querySelector('.nombre') || {}).textContent?.trim() || '-'
+  }));
+
+  return {
+    titulo,
+    numeroDoc,
+    metaItems,
+    tablas,
+    avisoRojo,
+    avisoVerde,
+    herrPendientes,
+    nota,
+    firmas,
+    destinatarios
+  };
+}
+
+// Genera el <canvas> en alta resolucion (2x) con estilo de factura corporativa FVIECOM S.A.S
+async function generarFacturaCanvas(datos) {
+  const logoImg = await cargarLogoFactura();
+  const W = 860;
+  const SCALE = 2;
+  const PAD = 24;
+  const INNER_W = W - PAD * 2;
+  const CONTENT_X = PAD + 26;
+  const CONTENT_W = INNER_W - 52;
+
+  // Canvas temporal para medir textos
+  const measureCanvas = document.createElement('canvas');
+  const mctx = measureCanvas.getContext('2d');
+
+  // Calculamos las geometrias de cada tabla (anchos de columna y lineas envueltas)
+  const tablasLayout = datos.tablas.map((tb) => {
+    const numCols = Math.max(1, tb.headers.length);
+    let colWidths = [];
+    if (numCols === 4 && tb.headers[0].texto === '#') {
+      colWidths = [46, CONTENT_W - 46 - 115 - 110, 115, 110];
+    } else if (numCols === 5 && tb.headers[0].texto === '#') {
+      colWidths = [44, CONTENT_W - 44 - 140 - 105 - 95, 140, 105, 95];
+    } else if (numCols === 6 && tb.headers[0].texto === '#') {
+      colWidths = [40, CONTENT_W - 40 - 85 - 85 - 85 - 110, 85, 85, 85, 110];
+    } else {
+      const w = Math.floor(CONTENT_W / numCols);
+      colWidths = Array(numCols).fill(w);
+      colWidths[numCols - 1] += CONTENT_W - w * numCols;
+    }
+
+    const filasMedidas = tb.filas.map((fila) => {
+      let maxLineas = 1;
+      const celdasLineas = fila.map((celda, cIdx) => {
+        const cw = (colWidths[cIdx] || 100) - 18;
+        mctx.font = (celda.align === 'right' || cIdx === 0) ? 'bold 13px "Segoe UI", Arial, sans-serif' : '13px "Segoe UI", Arial, sans-serif';
+        const lns = partirLineasCanvas(mctx, celda.texto, Math.max(40, cw));
+        if (lns.length > maxLineas) maxLineas = lns.length;
+        return { lineas: lns, align: celda.align, bold: celda.align === 'right' || cIdx === 0 };
+      });
+      const rowH = Math.max(32, maxLineas * 18 + 14);
+      return { celdasLineas, rowH };
+    });
+
+    const totalTablaH = 38 + 34 + filasMedidas.reduce((s, r) => s + r.rowH, 0) + 30 + 18;
+    return { ...tb, colWidths, filasMedidas, totalTablaH };
+  });
+
+  // Medir alto de metadatos (2 columnas)
+  const metaRowsCount = Math.ceil(datos.metaItems.length / 2);
+  const metaBoxH = Math.max(64, metaRowsCount * 28 + 24);
+
+  // Medir avisos y notas
+  mctx.font = 'bold 13.5px "Segoe UI", Arial, sans-serif';
+  const lineasAvisoRojo = datos.avisoRojo ? partirLineasCanvas(mctx, datos.avisoRojo, CONTENT_W - 40) : [];
+  const avisoRojoH = lineasAvisoRojo.length ? (lineasAvisoRojo.length * 20 + 28) : 0;
+
+  const lineasAvisoVerde = datos.avisoVerde ? partirLineasCanvas(mctx, datos.avisoVerde, CONTENT_W - 40) : [];
+  const avisoVerdeH = lineasAvisoVerde.length ? (lineasAvisoVerde.length * 20 + 28) : 0;
+
+  const herrPendH = datos.herrPendientes.length > 0 ? (40 + datos.herrPendientes.length * 24 + 16) : 0;
+
+  mctx.font = '13px "Segoe UI", Arial, sans-serif';
+  const lineasNota = datos.nota ? partirLineasCanvas(mctx, 'Nota: ' + datos.nota, CONTENT_W - 36) : [];
+  const notaH = lineasNota.length ? (lineasNota.length * 19 + 24) : 0;
+
+  const firmasH = datos.firmas.length > 0 ? 105 : 0;
+  const headerH = 128;
+  const titleBarH = 54;
+  const footerH = 48;
+
+  const totalTablasH = tablasLayout.reduce((s, t) => s + t.totalTablaH, 0);
+  const totalH = PAD * 2 + headerH + titleBarH + metaBoxH + 18 + totalTablasH +
+    (avisoRojoH ? avisoRojoH + 14 : 0) +
+    (avisoVerdeH ? avisoVerdeH + 14 : 0) +
+    (herrPendH ? herrPendH + 14 : 0) +
+    (notaH ? notaH + 14 : 0) +
+    firmasH + footerH + 20;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W * SCALE;
+  canvas.height = totalH * SCALE;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(SCALE, SCALE);
+
+  // 1. Fondo exterior gris azulado muy sutil
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillRect(0, 0, W, totalH);
+
+  // 2. Hoja de factura blanca con bordes redondeados y sombra
+  ctx.save();
+  ctx.shadowColor = 'rgba(15, 23, 42, 0.18)';
+  ctx.shadowBlur = 24;
+  ctx.shadowOffsetY = 6;
+  rectRedondeadoCanvas(ctx, PAD, PAD, INNER_W, totalH - PAD * 2, 16);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  ctx.restore();
+
+  // Recortar todo al interior de la tarjeta de factura
+  ctx.save();
+  rectRedondeadoCanvas(ctx, PAD, PAD, INNER_W, totalH - PAD * 2, 16);
+  ctx.clip();
+
+  // Marca de agua diagonal sutil en el fondo de la factura
+  ctx.save();
+  ctx.translate(W / 2, totalH / 2);
+  ctx.rotate(-Math.PI / 7);
+  ctx.font = '900 68px "Segoe UI", Arial, sans-serif';
+  ctx.fillStyle = 'rgba(14, 165, 233, 0.035)';
+  ctx.textAlign = 'center';
+  ctx.fillText('FVIECOM S.A.S', 0, 0);
+  ctx.font = '800 28px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('FV INGENIERIA · ALMACÉN RIONEGRO', 0, 42);
+  ctx.restore();
+
+  // 3. Encabezado Corporativo Azul Marino + Cian
+  let y = PAD;
+  const gradHead = ctx.createLinearGradient(PAD, y, PAD + INNER_W, y + headerH);
+  gradHead.addColorStop(0, '#061229');
+  gradHead.addColorStop(0.55, '#0b254e');
+  gradHead.addColorStop(1, '#081b3a');
+  ctx.fillStyle = gradHead;
+  ctx.fillRect(PAD, y, INNER_W, headerH);
+
+  // Franja inferior luminosa azul claro en el header
+  const gradLine = ctx.createLinearGradient(PAD, 0, PAD + INNER_W, 0);
+  gradLine.addColorStop(0, '#0d6efd');
+  gradLine.addColorStop(0.5, '#38bdf8');
+  gradLine.addColorStop(1, '#0d6efd');
+  ctx.fillStyle = gradLine;
+  ctx.fillRect(PAD, y + headerH - 4, INNER_W, 4);
+
+  // Logo en recuadro blanco
+  const logoX = CONTENT_X;
+  const logoY = y + 20;
+  const logoSize = 84;
+  rectRedondeadoCanvas(ctx, logoX, logoY, logoSize, logoSize, 14);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+  if (logoImg) {
+    ctx.drawImage(logoImg, logoX + 6, logoY + 6, logoSize - 12, logoSize - 12);
+  } else {
+    ctx.fillStyle = '#0a1a3a';
+    ctx.font = '900 20px "Segoe UI", Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('FV', logoX + logoSize / 2, logoY + 50);
   }
 
-  // Nota si existe
-  const nota = area.querySelector('.doc-nota');
-  if (nota) {
-    texto += '📝 ' + nota.textContent.trim() + nl + nl;
+  // Textos de empresa
+  const empX = logoX + logoSize + 18;
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 24px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('FVIECOM S.A.S', empX, y + 44);
+
+  ctx.fillStyle = '#7dd3fc';
+  ctx.font = '600 13px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('FV Ingeniería Eléctrica y Telecomunicaciones', empX, y + 66);
+
+  ctx.fillStyle = '#cbd5e1';
+  ctx.font = '12px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('Proyecto: Aeropuerto Intl. José María Córdova — Rionegro', empX, y + 86);
+
+  ctx.fillStyle = 'rgba(186, 230, 253, 0.45)';
+  ctx.font = '800 10px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('F V   I N G E N I E R I A   ·   A L M A C É N   T É C N I C O', empX, y + 105);
+
+  // Recuadro derecho estilo Factura (N° Comprobante)
+  const boxW = 235;
+  const boxH = 84;
+  const boxX = PAD + INNER_W - boxW - 24;
+  const boxY = y + 20;
+  rectRedondeadoCanvas(ctx, boxX, boxY, boxW, boxH, 12);
+  ctx.fillStyle = 'rgba(14, 165, 233, 0.14)';
+  ctx.fill();
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#7dd3fc';
+  ctx.font = '800 10.5px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('COMPROBANTE DE ALMACÉN', boxX + boxW / 2, boxY + 24);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '900 15.5px Consolas, "Courier New", monospace';
+  const numCorto = datos.numeroDoc.length > 21 ? datos.numeroDoc.slice(0, 21) : datos.numeroDoc;
+  ctx.fillText(numCorto, boxX + boxW / 2, boxY + 50);
+
+  ctx.fillStyle = '#bae6fd';
+  ctx.font = '600 11px "Segoe UI", Arial, sans-serif';
+  ctx.fillText('DOCUMENTO OFICIAL', boxX + boxW / 2, boxY + 70);
+
+  y += headerH;
+
+  // 4. Barra de Titulo del Documento
+  ctx.fillStyle = '#f0f7ff';
+  ctx.fillRect(PAD, y, INNER_W, titleBarH);
+  ctx.strokeStyle = '#bae6fd';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PAD, y + titleBarH);
+  ctx.lineTo(PAD + INNER_W, y + titleBarH);
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#0a1a3a';
+  ctx.font = '800 17px "Segoe UI", Arial, sans-serif';
+  ctx.fillText(datos.titulo.toUpperCase(), W / 2, y + 33);
+
+  y += titleBarH + 16;
+
+  // 5. Tarjeta de Metadatos (2 columnas)
+  rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, metaBoxH, 10);
+  ctx.fillStyle = '#f8fafc';
+  ctx.fill();
+  ctx.strokeStyle = '#cbd5e1';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Borde izquierdo azul en la tarjeta de metadatos
+  ctx.fillStyle = '#0d6efd';
+  ctx.fillRect(CONTENT_X, y + 6, 4, metaBoxH - 12);
+
+  const colMetaW = (CONTENT_W - 36) / 2;
+  datos.metaItems.forEach((m, idx) => {
+    const col = idx % 2;
+    const row = Math.floor(idx / 2);
+    const mx = CONTENT_X + 18 + col * colMetaW;
+    const my = y + 26 + row * 28;
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 12.5px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#0f172a';
+    const lbl = m.label + ': ';
+    ctx.fillText(lbl, mx, my);
+    const lblW = ctx.measureText(lbl).width;
+    ctx.font = '12.5px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#334155';
+    const maxValW = colMetaW - lblW - 12;
+    let valTxt = m.value;
+    while (valTxt.length > 3 && ctx.measureText(valTxt).width > maxValW) {
+      valTxt = valTxt.slice(0, -2) + '…';
+    }
+    ctx.fillText(valTxt, mx + lblW, my);
+  });
+
+  y += metaBoxH + 18;
+
+  // 6. Tablas de Materiales / Herramientas
+  for (const tb of tablasLayout) {
+    const esHerr = /herramienta/i.test(tb.subtitulo);
+    // Franja de subtitulo de seccion
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, 32, 8);
+    ctx.fillStyle = esHerr ? '#fff7ed' : '#eff6ff';
+    ctx.fill();
+    ctx.strokeStyle = esHerr ? '#fed7aa' : '#bfdbfe';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.font = '800 13px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = esHerr ? '#9a3412' : '#1e3a8a';
+    ctx.fillText((esHerr ? '🔧 ' : '📦 ') + tb.subtitulo.toUpperCase(), CONTENT_X + 12, y + 21);
+
+    ctx.textAlign = 'right';
+    ctx.font = '700 11.5px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = esHerr ? '#c2410c' : '#0284c7';
+    ctx.fillText(`${tb.filas.length} ${tb.filas.length === 1 ? 'ítem' : 'ítems'}`, CONTENT_X + CONTENT_W - 12, y + 21);
+
+    y += 38;
+
+    // Cabecera de la tabla
+    const thH = 34;
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, thH, 6);
+    ctx.fillStyle = esHerr ? '#0f172a' : '#0a2558';
+    ctx.fill();
+
+    let cx = CONTENT_X;
+    tb.headers.forEach((h, cIdx) => {
+      const cw = tb.colWidths[cIdx];
+      ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      if (h.align === 'right') {
+        ctx.textAlign = 'right';
+        ctx.fillText(h.texto.toUpperCase(), cx + cw - 10, y + 21);
+      } else {
+        ctx.textAlign = 'left';
+        ctx.fillText(h.texto.toUpperCase(), cx + 10, y + 21);
+      }
+      cx += cw;
+    });
+    y += thH;
+
+    // Filas de la tabla
+    tb.filasMedidas.forEach((fm, rIdx) => {
+      const rowH = fm.rowH;
+      ctx.fillStyle = rIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
+      ctx.fillRect(CONTENT_X, y, CONTENT_W, rowH);
+
+      // Borde inferior e izquierdo/derecho de fila
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(CONTENT_X, y, CONTENT_W, rowH);
+
+      let cellX = CONTENT_X;
+      fm.celdasLineas.forEach((cl, cIdx) => {
+        const cw = tb.colWidths[cIdx];
+        ctx.font = cl.bold ? 'bold 13px "Segoe UI", Arial, sans-serif' : '13px "Segoe UI", Arial, sans-serif';
+        ctx.fillStyle = cl.bold ? '#0f172a' : '#1e293b';
+        const blockH = cl.lineas.length * 18;
+        let textY = y + (rowH - blockH) / 2 + 14;
+        cl.lineas.forEach((ln) => {
+          if (cl.align === 'right') {
+            ctx.textAlign = 'right';
+            ctx.fillText(ln, cellX + cw - 10, textY);
+          } else {
+            ctx.textAlign = 'left';
+            ctx.fillText(ln, cellX + 10, textY);
+          }
+          textY += 18;
+        });
+        // Linea divisoria vertical entre columnas
+        if (cIdx > 0) {
+          ctx.beginPath();
+          ctx.moveTo(cellX, y);
+          ctx.lineTo(cellX, y + rowH);
+          ctx.strokeStyle = '#e2e8f0';
+          ctx.stroke();
+        }
+        cellX += cw;
+      });
+      y += rowH;
+    });
+
+    // Barra resumen inferior de tabla
+    ctx.fillStyle = '#f1f5f9';
+    ctx.fillRect(CONTENT_X, y, CONTENT_W, 28);
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.strokeRect(CONTENT_X, y, CONTENT_W, 28);
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 12px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#334155';
+    ctx.fillText(`Total renglones en esta sección: ${tb.filas.length}`, CONTENT_X + CONTENT_W - 12, y + 18);
+
+    y += 28 + 18;
   }
 
-  // Footer
-  texto += '━━━━━━━━━━━━━━━━━━━━' + nl;
-  texto += '📅 Fecha: ' + new Date().toLocaleDateString('es-CO') + nl;
-  texto += '👤 Generado por: ' + nombreUsuario() + nl;
-  texto += '🏢 FVIECOM S.A.S - Almacen Rionegro' + nl;
+  // 7. Aviso Rojo (Herramientas requieren devolucion)
+  if (avisoRojoH > 0) {
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, avisoRojoH, 10);
+    ctx.fillStyle = '#fef2f2';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#dc2626';
+    ctx.stroke();
 
-  const url = 'https://wa.me/?text=' + encodeURIComponent(texto);
-  window.open(url, '_blank');
-  toast('Abriendo WhatsApp... elige el contacto y envia', 'ok');
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 13.5px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#b91c1c';
+    let ay = y + 24;
+    lineasAvisoRojo.forEach((ln) => {
+      ctx.fillText(ln, W / 2, ay);
+      ay += 20;
+    });
+    y += avisoRojoH + 14;
+  }
+
+  // 8. Aviso Verde (Devolucion recibida)
+  if (avisoVerdeH > 0) {
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, avisoVerdeH, 10);
+    ctx.fillStyle = '#f0fdf4';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#16a34a';
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 14px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#15803d';
+    let ay = y + 24;
+    lineasAvisoVerde.forEach((ln) => {
+      ctx.fillText(ln, W / 2, ay);
+      ay += 20;
+    });
+    y += avisoVerdeH + 14;
+  }
+
+  // 9. Herramientas pendientes en posesion del responsable
+  if (herrPendH > 0) {
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, herrPendH, 10);
+    ctx.fillStyle = '#fffbeb';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#f59e0b';
+    ctx.stroke();
+
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 12.5px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#b45309';
+    ctx.fillText(`⚠️ HERRAMIENTAS EN POSESIÓN ACTUAL DEL RESPONSABLE (${datos.herrPendientes.length}):`, CONTENT_X + 14, y + 24);
+
+    ctx.font = '12px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#78350f';
+    let hy = y + 46;
+    datos.herrPendientes.forEach((h, i) => {
+      const infoH = `${i + 1}. 🔧 ${h.nombre} — Serial: ${h.serial || '-'}${h.frenteActual ? ' (Frente ' + h.frenteActual + ')' : ''}`;
+      ctx.fillText(infoH, CONTENT_X + 18, hy);
+      hy += 24;
+    });
+    y += herrPendH + 14;
+  }
+
+  // 10. Nota / Observaciones
+  if (notaH > 0) {
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, notaH, 8);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fill();
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = '#0d6efd';
+    ctx.fillRect(CONTENT_X, y + 4, 4, notaH - 8);
+
+    ctx.textAlign = 'left';
+    ctx.font = '13px "Segoe UI", Arial, sans-serif';
+    ctx.fillStyle = '#1e293b';
+    let ny = y + 22;
+    lineasNota.forEach((ln) => {
+      ctx.fillText(ln, CONTENT_X + 16, ny);
+      ny += 19;
+    });
+    y += notaH + 14;
+  }
+
+  // 11. Bloques de Firma
+  if (firmasH > 0) {
+    const numF = datos.firmas.length;
+    const fWidth = Math.min(260, (CONTENT_W - (numF - 1) * 40) / numF);
+    const totalFWidth = numF * fWidth + (numF - 1) * 40;
+    let fx = CONTENT_X + (CONTENT_W - totalFWidth) / 2;
+    const fy = y + 58;
+
+    datos.firmas.forEach((f) => {
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy);
+      ctx.lineTo(fx + fWidth, fy);
+      ctx.stroke();
+
+      ctx.textAlign = 'center';
+      ctx.font = '11px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(f.rol.toUpperCase(), fx + fWidth / 2, fy + 18);
+
+      ctx.font = 'bold 13px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#0f172a';
+      ctx.fillText(f.nombre, fx + fWidth / 2, fy + 36);
+
+      fx += fWidth + 40;
+    });
+    y += firmasH;
+  }
+
+  // 12. Pie de pagina corporativo (al fondo de la tarjeta)
+  const footY = totalH - PAD - footerH;
+  const gradFoot = ctx.createLinearGradient(PAD, footY, PAD + INNER_W, footY);
+  gradFoot.addColorStop(0, '#eff6ff');
+  gradFoot.addColorStop(0.5, '#e0f2fe');
+  gradFoot.addColorStop(1, '#eff6ff');
+  ctx.fillStyle = gradFoot;
+  ctx.fillRect(PAD, footY, INNER_W, footerH);
+
+  ctx.strokeStyle = '#bae6fd';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(PAD, footY);
+  ctx.lineTo(PAD + INNER_W, footY);
+  ctx.stroke();
+
+  ctx.textAlign = 'left';
+  ctx.font = '600 11.5px "Segoe UI", Arial, sans-serif';
+  ctx.fillStyle = '#0369a1';
+  ctx.fillText(`📅 Emitido: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' })}   ·   👤 Almacenista: ${nombreUsuario()}`, CONTENT_X, footY + 29);
+
+  ctx.textAlign = 'right';
+  ctx.font = '800 11px "Segoe UI", Arial, sans-serif';
+  ctx.fillStyle = '#0284c7';
+  ctx.fillText('FV INGENIERIA   ·   FVIECOM S.A.S', CONTENT_X + CONTENT_W, footY + 29);
+
+  ctx.restore();
+  return canvas;
+}
+
+// Abre un modal con la Factura / Comprobante en una sola foto lista para copiar y enviar por WhatsApp
+async function compartirPorWhatsApp(ordenDirecta) {
+  const area = $('#print-area');
+  if (!area || !area.innerHTML.trim()) {
+    toast('No hay documento para compartir', 'error');
+    return;
+  }
+
+  const textoEspecialDev = window._devolucionWhatsAppTexto || '';
+  window._devolucionWhatsAppTexto = null;
+
+  toast('Generando factura en imagen HD...', 'ok');
+  const datos = extraerDatosFacturaDesdeArea(area, ordenDirecta);
+  const canvas = await generarFacturaCanvas(datos);
+  const dataUrl = canvas.toDataURL('image/png');
+  const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+  const nombreArchivo = `${docNombreActual || ('Factura_' + datos.numeroDoc)}.png`.replace(/[^\w\-.]+/g, '_');
+
+  // Opciones de telefono del responsable
+  const listaDir = Object.entries(leerDirectorioResp()).filter(([, w]) => w);
+  const destPrincipal = datos.destinatarios.find((d) => d.whatsapp) || datos.destinatarios[0] || { nombre: '', whatsapp: '' };
+
+  const chipsDest = datos.destinatarios.length > 0
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        ${datos.destinatarios.map((d, idx) => `
+          <button type="button" class="btn-ghost wa-chip-dest" data-wa-num="${esc(d.whatsapp)}" data-wa-nom="${esc(d.nombre)}" style="font-size:12px;padding:4px 10px;border-color:${idx === 0 ? 'var(--cian)' : 'var(--linea)'}">
+            👤 ${esc(d.nombre)}${d.whatsapp ? ` (${esc(d.whatsapp)})` : ' (sin número)'}
+          </button>`).join('')}
+      </div>`
+    : '';
+
+  abrirModal('📱 Factura en Foto para WhatsApp — ' + datos.numeroDoc, `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div id="wa-copy-banner" style="background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.4);border-radius:10px;padding:10px 14px;font-size:12.5px;color:#bbf7d0;line-height:1.5">
+        ✨ <b>Todo en una sola foto:</b> Al pulsar <b>"Copiar foto y abrir WhatsApp"</b>, la factura se copia automáticamente. Cuando se abra el chat de WhatsApp, solo presiona <b>Ctrl + V (Pegar)</b> y envíala.
+      </div>
+
+      <div class="campo" style="margin:0">
+        <label style="font-size:12px;color:var(--texto-dim);margin-bottom:4px;display:block">Destinatario / Número de WhatsApp (opcional, ej: 573001234567)</label>
+        ${chipsDest}
+        <input id="wa-input-telefono" list="wa-dl-numeros" value="${esc(destPrincipal.whatsapp || '')}" placeholder="Ej: 573001234567 (o déjalo vacío para elegir el contacto en WhatsApp)" style="width:100%" />
+        <datalist id="wa-dl-numeros">
+          ${listaDir.map(([n, w]) => `<option value="${esc(w)}" label="${esc(n)}"></option>`).join('')}
+        </datalist>
+      </div>
+
+      <div style="background:#071124;border:1px solid var(--linea);border-radius:12px;padding:10px;max-height:52vh;overflow-y:auto;text-align:center">
+        <img id="wa-factura-preview" src="${dataUrl}" alt="Factura FVIECOM" style="max-width:100%;height:auto;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.45)" />
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:space-between;align-items:center">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn-ghost" id="wa-btn-descargar">⬇️ Descargar PNG</button>
+          <button type="button" class="btn-ghost" id="wa-btn-solo-copiar">📋 Solo copiar foto</button>
+          <button type="button" class="btn-ghost" id="wa-btn-share-nativo" hidden>📲 Compartir directo</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn-ghost" id="wa-btn-volver">🖨️ Opciones de impresión</button>
+          <button type="button" class="btn-primary" id="wa-btn-enviar" style="background:linear-gradient(135deg,#25d366,#128c7e);color:#fff;font-size:14px;padding:10px 18px">📋📱 Copiar foto y abrir WhatsApp</button>
+        </div>
+      </div>
+    </div>
+  `, '740px');
+
+  // Seleccionar chip de responsable
+  document.querySelectorAll('.wa-chip-dest').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.wa-chip-dest').forEach((b) => { b.style.borderColor = 'var(--linea)'; });
+      btn.style.borderColor = 'var(--cian)';
+      const inp = $('#wa-input-telefono');
+      if (inp) inp.value = btn.dataset.waNum || '';
+    });
+  });
+
+  // Funcion auxiliar para copiar el PNG al portapapeles
+  const copiarFotoAlPortapapeles = async () => {
+    if (!blob || !navigator.clipboard || !window.ClipboardItem) return false;
+    try {
+      await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
+      const banner = $('#wa-copy-banner');
+      if (banner) {
+        banner.style.background = 'rgba(46, 204, 113, 0.22)';
+        banner.style.borderColor = '#2ecc71';
+        banner.innerHTML = '✅ <b>¡FOTO DE LA FACTURA COPIADA AL PORTAPAPELES!</b><br>Ahora en la ventana de WhatsApp solo presiona <b>Ctrl + V</b> (Pegar) y <b>Enter</b> para enviarla.';
+      }
+      return true;
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  // Mostrar boton de compartir nativo si el navegador soporta compartir archivos (celulares/tablets)
+  const archivoPng = blob ? new File([blob], nombreArchivo, { type: 'image/png' }) : null;
+  const btnShareNativo = $('#wa-btn-share-nativo');
+  if (btnShareNativo && archivoPng && navigator.canShare && navigator.canShare({ files: [archivoPng] })) {
+    btnShareNativo.hidden = false;
+    btnShareNativo.addEventListener('click', async () => {
+      try {
+        await navigator.share({
+          files: [archivoPng],
+          title: `Comprobante FVIECOM — ${datos.numeroDoc}`,
+          text: `📋 FVIECOM S.A.S — ${datos.titulo} (${datos.numeroDoc})`
+        });
+      } catch (_e) { /* usuario cancelo share */ }
+    });
+  }
+
+  // Descargar PNG
+  $('#wa-btn-descargar').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = nombreArchivo;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('Factura descargada como imagen PNG', 'ok');
+  });
+
+  // Solo copiar foto al portapapeles
+  $('#wa-btn-solo-copiar').addEventListener('click', async () => {
+    const ok = await copiarFotoAlPortapapeles();
+    if (ok) toast('✅ Foto copiada al portapapeles. Pégala con Ctrl + V en WhatsApp.', 'ok');
+    else toast('Tu navegador no permitió copiar directo; usa "Descargar PNG".', 'error');
+  });
+
+  // Volver al modal de impresion
+  $('#wa-btn-volver').addEventListener('click', () => {
+    imprimir(area.innerHTML, docNombreActual);
+  });
+
+  // Copiar foto + abrir WhatsApp
+  $('#wa-btn-enviar').addEventListener('click', async () => {
+    const copiado = await copiarFotoAlPortapapeles();
+    if (!copiado) {
+      // Si el navegador bloquea el portapapeles, descargamos la foto automaticamente para que la tenga a mano
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = nombreArchivo;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    let numRaw = (($('#wa-input-telefono') || {}).value || '').replace(/[^\d]/g, '');
+    if (numRaw.length === 10 && numRaw.startsWith('3')) {
+      numRaw = '57' + numRaw; // Prefijo Colombia automatico para celulares de 10 digitos
+    }
+
+    const caption = textoEspecialDev
+      ? `📋 *FVIECOM S.A.S* — ✅ *Devolución de orden (${datos.numeroDoc})*`
+      : `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})`;
+
+    const url = `https://wa.me/${numRaw}?text=${encodeURIComponent(caption)}`;
+    window.open(url, '_blank');
+    toast(copiado ? '✅ Foto copiada. En WhatsApp presiona Ctrl + V para pegar la factura.' : 'Abriendo WhatsApp... adjunta la imagen descargada.', 'ok');
+  });
+
+  // Copiar automaticamente al abrir el modal para ahorrarle incluso un clic si ya tiene WhatsApp abierto
+  copiarFotoAlPortapapeles();
 }
 
 function cabeceraDoc() {
