@@ -20,7 +20,7 @@ import {
   actualizarHerramientaDespacho,
   actualizarEstadoOrden,
   escucharContratos, guardarContratosEnNube
-} from './db.js';
+} from './db.js?v=61';
 
 /* ------------------------------------------------------------------ */
 /* Estado global                                                       */
@@ -991,6 +991,48 @@ function inyectarExtras() {
     text-shadow: -1px -1px 0 rgba(2, 8, 23, 0.85), 1px 1px 0 rgba(255, 255, 255, 0.14);
     white-space: nowrap;
     font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  .chk-req-dev {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 8px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--texto-dim);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex: none;
+    user-select: none;
+    transition: all 0.16s ease;
+  }
+  .chk-req-dev:hover {
+    border-color: rgba(245, 158, 11, 0.55);
+    color: #fde68a;
+  }
+  .chk-req-dev.activo {
+    border-color: rgba(245, 158, 11, 0.85);
+    background: rgba(245, 158, 11, 0.18);
+    color: #fcd34d;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+  }
+  .chk-req-dev input[type="checkbox"] {
+    width: 14px !important;
+    height: 14px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    accent-color: #f59e0b;
+    cursor: pointer;
+    flex: none;
+  }
+  .doc-tabla tr[data-req-dev="1"] td:nth-child(2)::after {
+    content: "  ⚠️ [REQ. DEVOLUCIÓN]";
+    color: #c0392b;
+    font-weight: 700;
+    font-size: 11px;
   }
   `;
   const style = document.createElement('style');
@@ -2147,6 +2189,49 @@ function modalMovimiento(materialId) {
 /* ==================================================================
    ORDENES (varios materiales)
    ================================================================== */
+function esItemReqDevolucion(it) {
+  if (!it) return false;
+  if (it.reqDevolucion !== undefined) return !!it.reqDevolucion;
+  const m = it.materialId ? estado.materiales.find((x) => x.id === it.materialId) : null;
+  return !!(m && m.esHerramienta);
+}
+
+function esItemPendienteDevolucion(it, orden) {
+  if (!esItemReqDevolucion(it)) return false;
+  if (orden && estadoOrden(orden) === 'devolucion_completada') return false;
+  if (it.devuelto) return false;
+  const m = it.materialId ? estado.materiales.find((x) => x.id === it.materialId) : null;
+  if (it.reqDevolucion === undefined && m && m.esHerramienta && m.estadoHerr && m.estadoHerr !== 'en_uso') {
+    return false;
+  }
+  return true;
+}
+
+function ordenRequiereDevolucion(o) {
+  if (!o || o.tipo !== 'salida') return false;
+  return Array.isArray(o.items) && o.items.some((it) => esItemReqDevolucion(it));
+}
+
+function ordenTieneDevolucionPendiente(o) {
+  if (!ordenRequiereDevolucion(o)) return false;
+  if (estadoOrden(o) === 'devolucion_completada') return false;
+  return (o.items || []).some((it) => esItemPendienteDevolucion(it, o));
+}
+
+function recalcularEstadoDevolucionOrden(o) {
+  if (!o || o.tipo !== 'salida') return estadoOrden(o);
+  const reqItems = (o.items || []).filter((it) => esItemReqDevolucion(it));
+  if (reqItems.length === 0) return 'completado';
+  const devueltos = reqItems.filter((it) => {
+    if (it.devuelto) return true;
+    const m = it.materialId ? estado.materiales.find((x) => x.id === it.materialId) : null;
+    return (it.reqDevolucion === undefined && m && m.esHerramienta && m.estadoHerr && m.estadoHerr !== 'en_uso');
+  }).length;
+  if (devueltos >= reqItems.length) return 'devolucion_completada';
+  if (devueltos > 0) return 'devolucion_parcial';
+  return 'completado';
+}
+
 function estadoOrden(o) {
   return o.estado || (o.tipo === 'entrada' ? 'recibido' : 'completado');
 }
@@ -2190,11 +2275,24 @@ function detalleOrdenHtml(o) {
       <table class="tabla-detalle"><thead><tr><th>Material</th><th class="der">Cantidad</th></tr></thead><tbody>${adic}</tbody></table>` : ''}
       ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}`;
   }
-  const detalle = (o.items || []).map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td class="der"><b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad || '')}</td></tr>`).join('');
+  const esSalida = o.tipo === 'salida';
+  const estOrd = estadoOrden(o);
+  const detalle = (o.items || []).map((it, i) => {
+    const reqDev = esItemReqDevolucion(it);
+    const yaDevuelto = reqDev && (!esItemPendienteDevolucion(it, o) || estOrd === 'devolucion_completada');
+    const colDev = esSalida ? `<td class="der" style="width:170px">
+      <label class="chk-req-dev ${reqDev ? 'activo' : ''}" title="Marcar si este material o herramienta requiere devolución al almacén" style="padding:3px 7px;font-size:10.5px">
+        <input type="checkbox" data-toggle-reqdev-ord="${o.id}" data-item-idx="${i}" ${reqDev ? 'checked' : ''} />
+        <span>Req. devolución</span>
+      </label>
+      ${yaDevuelto ? '<span class="estado-badge disponible" style="margin-left:4px;font-size:10px">✓ Devuelto</span>' : ''}
+    </td>` : '';
+    return `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td class="der"><b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad || '')}</td>${colDev}</tr>`;
+  }).join('');
   return `
     <table class="tabla-detalle">
-      <thead><tr><th>#</th><th>Material</th><th class="der">Cantidad</th></tr></thead>
-      <tbody>${detalle || '<tr><td colspan="3" style="color:var(--texto-mute)">Sin materiales.</td></tr>'}</tbody>
+      <thead><tr><th>#</th><th>Material</th><th class="der">Cantidad</th>${esSalida ? '<th class="der">Devolución</th>' : ''}</tr></thead>
+      <tbody>${detalle || `<tr><td colspan="${esSalida ? 4 : 3}" style="color:var(--texto-mute)">Sin materiales.</td></tr>`}</tbody>
     </table>
     ${o.nota ? `<div style="padding:6px 12px 4px;font-size:12px;color:var(--texto-dim)"><b>Nota:</b> ${esc(o.nota)}</div>` : ''}`;
 }
@@ -2270,8 +2368,8 @@ function renderOrdenes() {
     const pendiente = (o.tipo === 'entrada' && est === 'pendiente');
     const contrato = contratoReal(o);
     const info = estadoOrdenInfo(o);
-    const tieneHerr = o.items && o.items.some((it) => estado.materiales.find((m) => m.id === it.materialId && m.esHerramienta));
-    const badgeDevol = (tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
+    const pendDevol = ordenTieneDevolucionPendiente(o);
+    const badgeDevol = pendDevol ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
     html += `
     <tr class="grupo-row" data-key="${o.id}" data-dia-ord="${esc(diaActual)}" title="Doble clic para ver el detalle"${diaCerrado ? ' hidden' : ''}>
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
@@ -2283,7 +2381,7 @@ function renderOrdenes() {
       <td class="der">${(o.items || []).length}</td>
       <td class="cen"><div class="acciones-cel">
         ${pendiente ? `<button class="btn-icon" title="Recibir / verificar llegada" data-recibir="${o.id}">📥✓</button>` : ''}
-        ${(tieneHerr && o.tipo === 'salida' && est !== 'devolucion_completada') ? `<button class="btn-icon" title="Devolver herramientas" data-devolver-herr="${o.id}">🔁</button>` : ''}
+        ${pendDevol ? `<button class="btn-icon" title="Devolver materiales / herramientas al almacén" data-devolver-herr="${o.id}" style="color:#f59e0b;border-color:rgba(245,158,11,0.4)">🔁</button>` : ''}
         <button class="btn-icon" title="Repetir esta orden" data-repetir="${o.id}">🔁</button>
         <button class="btn-icon" title="Enviar factura en foto por WhatsApp" data-wa-orden="${o.id}" style="color:#25d366;border-color:rgba(37,211,102,0.35)">📱</button>
         <button class="btn-icon" title="Imprimir / PDF / Opciones" data-print-orden="${o.id}">🖨</button>
@@ -2328,6 +2426,27 @@ function renderOrdenes() {
     const caret = row.querySelector('.caret');
     if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggleOrd(row); });
   });
+  $('#cuerpo-ordenes').querySelectorAll('[data-toggle-reqdev-ord]').forEach((chk) => {
+    chk.addEventListener('change', async (e) => {
+      e.stopPropagation();
+      const ordId = chk.dataset.toggleReqdevOrd;
+      const idx = Number(chk.dataset.itemIdx);
+      const o = estado.ordenes.find((x) => x.id === ordId);
+      if (!o || !o.items || !o.items[idx]) return;
+      o.items[idx].reqDevolucion = chk.checked;
+      if (chk.checked) o.items[idx].devuelto = false;
+      const nuevoEst = recalcularEstadoDevolucionOrden(o);
+      o.estado = nuevoEst;
+      try {
+        await actualizarEstadoOrden(o.id, nuevoEst, o.items);
+        renderOrdenes();
+        renderResponsable();
+        toast(chk.checked ? 'Marcado como: Requiere devolución' : 'Desmarcado de devolución', 'ok');
+      } catch (err) {
+        toast('Error al actualizar: ' + err.message, 'error');
+      }
+    });
+  });
   $('#cuerpo-ordenes').querySelectorAll('[data-wa-orden]').forEach((b) =>
     b.addEventListener('click', () => {
       const o = estado.ordenes.find((x) => x.id === b.dataset.waOrden);
@@ -2362,27 +2481,27 @@ function renderOrdenes() {
     b.addEventListener('click', (e) => { e.stopPropagation(); modalDevolverHerramientas(b.dataset.devolverHerr); }));
 }
 
-// Abre un modal para devolver herramientas de una orden de salida.
+// Abre un modal para devolver materiales o herramientas de una orden de salida.
 function modalDevolverHerramientas(ordenId) {
   const orden = estado.ordenes.find((o) => o.id === ordenId);
   if (!orden) { toast('No se encontro la orden', 'error'); return; }
-  const herrItems = (orden.items || []).filter((it) => {
-    const m = estado.materiales.find((x) => x.id === it.materialId);
-    return m && m.esHerramienta && m.estadoHerr === 'en_uso';
-  });
-  if (herrItems.length === 0) { toast('Esta orden no tiene herramientas pendientes por devolver', 'error'); return; }
+  const pendEntries = (orden.items || [])
+    .map((it, origIdx) => ({ it, origIdx }))
+    .filter(({ it }) => esItemPendienteDevolucion(it, orden));
+  if (pendEntries.length === 0) { toast('Esta orden no tiene materiales ni herramientas pendientes por devolver', 'error'); return; }
 
-  const checkboxes = herrItems.map((it, i) => {
+  const checkboxes = pendEntries.map(({ it }, i) => {
     const m = estado.materiales.find((x) => x.id === it.materialId);
+    const icono = (m && m.esHerramienta) ? '🔧' : '📦';
     return `<label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;color:var(--texto-dim);font-size:13px">
       <input type="checkbox" checked data-devherr-idx="${i}" style="width:auto;flex:none" />
-      <span>${esc(it.materialNombre)}${m && m.serial ? ' <b>[' + esc(m.serial) + ']</b>' : ''} — ${fmtNum(it.cantidad)} ${esc(it.unidad)}</span>
+      <span>${icono} ${esc(it.materialNombre)}${m && m.serial ? ' <b>[' + esc(m.serial) + ']</b>' : ''} — <b>${fmtNum(it.cantidad)}</b> ${esc(it.unidad)}</span>
     </label>`;
   }).join('');
 
   iniciarVentanaTrabajo('🔧');
-  abrirModal('Devolver herramientas — ' + (orden.numero || ''), `
-    <p style="color:var(--texto-dim);margin-bottom:12px;line-height:1.5">Selecciona las herramientas que se devuelven al almacen. Se actualizara su estado a <b>disponible</b> y se registrara el movimiento de devolucion.</p>
+  abrirModal('Devolver al almacén — ' + (orden.numero || ''), `
+    <p style="color:var(--texto-dim);margin-bottom:12px;line-height:1.5">Selecciona los materiales y/o herramientas que se devuelven al almacén. Se reintegrarán al stock / estado <b>disponible</b> y se registrará el movimiento de devolución.</p>
     <div id="devherr-lista" style="margin-bottom:14px">${checkboxes}</div>
     <div class="modal-acciones">
       <button class="btn-ghost" id="devherr-minimizar">▬ Minimizar</button>
@@ -2398,43 +2517,50 @@ function modalDevolverHerramientas(ordenId) {
     try {
       const checks = Array.from($('#devherr-lista').querySelectorAll('input[type="checkbox"]'));
       let count = 0;
-      for (let i = 0; i < herrItems.length; i++) {
+      const devueltas = [];
+      for (let i = 0; i < pendEntries.length; i++) {
         if (!checks[i] || !checks[i].checked) continue;
-        const it = herrItems[i];
-        await actualizarHerramientaDespacho(it.materialId, orden.responsable || '', orden.frente || '', 'devolucion');
-        await registrarMovimiento({
-          tipo: 'devolucion',
-          materialId: it.materialId,
-          materialNombre: it.materialNombre,
-          cantidad: Number(it.cantidad) || 1,
-          unidad: it.unidad || 'unidad',
-          frente: orden.frente || '',
-          contrato: contratoDeFrente(orden.frente || ''),
-          proveedor: '',
-          responsable: orden.responsable || '',
-          nota: 'Devolucion de herramienta (orden ' + (orden.numero || '') + ')',
-          usuario: nombreUsuario()
-        });
+        const { it, origIdx } = pendEntries[i];
+        const mat = estado.materiales.find((x) => x.id === it.materialId) ||
+          estado.materiales.find((x) => normTxt(x.nombre) === normTxt(it.materialNombre));
+        if (mat && mat.esHerramienta) {
+          await actualizarHerramientaDespacho(mat.id, orden.responsable || '', orden.frente || '', 'devolucion');
+        }
+        if (mat && mat.id) {
+          await registrarMovimiento({
+            tipo: 'devolucion',
+            materialId: mat.id,
+            materialNombre: it.materialNombre || mat.nombre,
+            cantidad: Number(it.cantidad) || 1,
+            unidad: it.unidad || mat.unidad || 'unidad',
+            frente: orden.frente || '',
+            contrato: contratoDeFrente(orden.frente || ''),
+            proveedor: '',
+            responsable: orden.responsable || '',
+            nota: 'Devolución de ' + (mat.esHerramienta ? 'herramienta' : 'material') + ' (orden ' + (orden.numero || '') + ')',
+            usuario: nombreUsuario()
+          });
+        }
+        if (orden.items && orden.items[origIdx]) {
+          orden.items[origIdx].devuelto = true;
+          orden.items[origIdx].fechaDevolucion = new Date().toISOString();
+        }
+        devueltas.push(it);
         count++;
       }
-      if (count === 0) { toast('No seleccionaste ninguna herramienta', 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; return; }
-      // Actualizar el estado de la orden segun si se devolvieron todas o quedan pendientes.
-      const totalHerr = herrItems.length;
-      const nuevoEstado = (count >= totalHerr) ? 'devolucion_completada' : 'devolucion_parcial';
-      await actualizarEstadoOrden(orden.id, nuevoEstado);
-      // Generar e imprimir la orden de devolucion con solo lo devuelto.
-      const devueltas = [];
-      for (let i = 0; i < herrItems.length; i++) {
-        if (checks[i] && checks[i].checked) devueltas.push(herrItems[i]);
-      }
+      if (count === 0) { toast('No seleccionaste ningún ítem para devolver', 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; return; }
+      // Actualizar el estado y los items de la orden segun si se devolvieron todos o quedan pendientes.
+      const nuevoEstado = recalcularEstadoDevolucionOrden(orden);
+      orden.estado = nuevoEstado;
+      await actualizarEstadoOrden(orden.id, nuevoEstado, orden.items);
       cerrarVentana(vActual);
-      toast(count >= totalHerr ? 'Todas las herramientas devueltas — orden completada' : 'Devolucion parcial — quedan herramientas pendientes', 'ok');
+      toast(nuevoEstado === 'devolucion_completada' ? 'Todos los ítems devueltos — orden completada' : 'Devolución parcial — quedan ítems pendientes', 'ok');
       imprimirOrdenDevolucion(orden, devueltas);
     } catch (e) { toast('Error: ' + e.message, 'error'); btn.disabled = false; btn.textContent = 'Confirmar devolucion'; }
   });
 }
 
-// Genera e imprime el documento de devolucion de herramientas.
+// Genera e imprime el documento de devolucion de materiales / herramientas.
 function imprimirOrdenDevolucion(orden, itemsDevueltos) {
   const contrato = contratoReal(orden);
   const filas = itemsDevueltos.map((it, i) => {
@@ -2443,7 +2569,7 @@ function imprimirOrdenDevolucion(orden, itemsDevueltos) {
   }).join('');
   const html = `<div class="doc">
     ${cabeceraDoc()}
-    <h2 class="doc-titulo">ORDEN DE DEVOLUCION DE HERRAMIENTAS</h2>
+    <h2 class="doc-titulo">ORDEN DE DEVOLUCION AL ALMACEN</h2>
     <div class="doc-meta">
       <div><b>Orden original:</b> ${esc(orden.numero || '-')}</div>
       <div><b>Fecha de devolucion:</b> ${fmtFecha(new Date().toISOString())}</div>
@@ -2453,12 +2579,12 @@ function imprimirOrdenDevolucion(orden, itemsDevueltos) {
       <div><b>Items devueltos:</b> ${itemsDevueltos.length}</div>
     </div>
     <table class="doc-tabla">
-      <thead><tr><th>#</th><th>Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
+      <thead><tr><th>#</th><th>Material / Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th><th>Unidad</th></tr></thead>
       <tbody>${filas}</tbody>
     </table>
     <div style="border:2px solid #2ecc71;border-radius:10px;padding:14px 18px;margin:18px 0;text-align:center;color:#27ae60;font-size:14px;font-weight:bold;line-height:1.5">
-      ✅ HERRAMIENTAS RECIBIDAS EN ALMACEN<br>
-      <span style="font-size:12px;font-weight:normal;color:#333">Estado actualizado a DISPONIBLE en el sistema</span>
+      ✅ MATERIALES / HERRAMIENTAS RECIBIDOS EN ALMACEN<br>
+      <span style="font-size:12px;font-weight:normal;color:#333">Stock y estado actualizados a DISPONIBLE en el sistema</span>
     </div>
     ${firmasDoc(nombreUsuario(), orden.responsable)}
   </div>`;
@@ -2466,7 +2592,7 @@ function imprimirOrdenDevolucion(orden, itemsDevueltos) {
     + itemsDevueltos.map((it) => '• ' + it.materialNombre).join('\n')
     + '\n\n✅ Devuelto exitosamente';
   window._devolucionWhatsAppTexto = waTexto;
-  imprimir(html, 'Devolucion_' + (orden.numero || 'herramientas'));
+  imprimir(html, 'Devolucion_' + (orden.numero || 'almacen'));
 }
 
 // Abre "Nueva orden" precargada con los materiales de una orden existente,
@@ -2475,14 +2601,14 @@ function repetirOrden(orden) {
   if (!orden) return;
   const items = (orden.items || [])
     .filter((it) => estado.materiales.some((m) => m.id === it.materialId))
-    .map((it) => ({ materialId: it.materialId, cantidad: it.cantidad }));
+    .map((it) => ({ materialId: it.materialId, cantidad: it.cantidad, reqDevolucion: esItemReqDevolucion(it) }));
   const faltan = (orden.items || []).length - items.length;
   const precarga = {
     frente: orden.frente || '',
     proveedor: orden.proveedor || '',
     responsable: orden.responsable || '',
     nota: orden.nota || '',
-    items: items.length ? items : [{ materialId: '', cantidad: '' }]
+    items: items.length ? items : [{ materialId: '', cantidad: '', reqDevolucion: false }]
   };
   modalOrden(orden.tipo, precarga);
   if (faltan > 0) toast(faltan + ' material(es) de la orden original ya no existen y no se cargaron', 'error');
@@ -2614,7 +2740,7 @@ function guardarBorradorEnClave(clave, itemsRef) {
       responsable: responsables.length > 0 ? responsables[0].nombre : '',
       responsables: responsables,
       nota: (($('#o-nota') || {}).value) || '',
-      items: (itemsRef || estado.itemsOrden || []).map((it) => ({ materialId: it.materialId || '', cantidad: it.cantidad || '' })),
+      items: (itemsRef || estado.itemsOrden || []).map((it) => ({ materialId: it.materialId || '', cantidad: it.cantidad || '', reqDevolucion: !!it.reqDevolucion })),
       ts: Date.now()
     };
     const hayAlgo = d.frente || d.proveedor || d.responsable || d.nota ||
@@ -2690,9 +2816,13 @@ function modalOrden(tipo, precarga) {
   const borrador = (precarga || claveEnUso) ? null : leerBorradorOrden(tipo);
   const base = precarga || borrador;
   if (base && Array.isArray(base.items) && base.items.length) {
-    estado.itemsOrden = base.items.map((it, i) => ({ _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', _filtro: '' }));
+    estado.itemsOrden = base.items.map((it, i) => {
+      const m = it.materialId ? estado.materiales.find((x) => x.id === it.materialId) : null;
+      const reqDev = it.reqDevolucion !== undefined ? !!it.reqDevolucion : !!(m && m.esHerramienta);
+      return { _id: Date.now() + i, materialId: it.materialId || '', cantidad: it.cantidad || '', reqDevolucion: reqDev, _filtro: '' };
+    });
   } else {
-    estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' }];
+    estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' }];
   }
   const misItemsOrden = estado.itemsOrden;
 
@@ -2811,6 +2941,7 @@ function modalOrden(tipo, precarga) {
 
   const render = () => {
     const cont = $('#orden-items');
+    const mostrarChkDev = (tipo === 'salida');
     cont.innerHTML = estado.itemsOrden.map((it) => `
       <div class="orden-item-row" data-row="${it._id}">
         <div class="mat-picker">
@@ -2818,6 +2949,11 @@ function modalOrden(tipo, precarga) {
           <select data-campo="materialId">${opcionesMaterialAgrupadas(it.materialId, it._filtro)}</select>
         </div>
         <input type="number" step="any" min="0" placeholder="Cantidad" data-campo="cantidad" value="${it.cantidad}" />
+        ${mostrarChkDev ? `
+        <label class="chk-req-dev ${it.reqDevolucion ? 'activo' : ''}" title="Marcar si este material o herramienta requiere devolución al almacén">
+          <input type="checkbox" data-campo="reqDevolucion" ${it.reqDevolucion ? 'checked' : ''} />
+          <span>Req. dev.</span>
+        </label>` : ''}
         <button class="btn-icon peligro" data-quitar="${it._id}" title="Quitar">✕</button>
       </div>`).join('');
     cont.querySelectorAll('.orden-item-row').forEach((row) => {
@@ -2826,25 +2962,48 @@ function modalOrden(tipo, precarga) {
       const selEl = row.querySelector('select[data-campo="materialId"]');
       const filtroEl = row.querySelector('.mat-filtro');
       const cantEl = row.querySelector('input[data-campo="cantidad"]');
+      const chkDevEl = row.querySelector('input[data-campo="reqDevolucion"]');
+      const lblDevEl = row.querySelector('.chk-req-dev');
       // Filtrar en vivo: solo se reconstruyen las opciones del select, sin
       // volver a dibujar toda la fila, para no perder el foco del teclado.
       filtroEl.addEventListener('input', () => {
         item._filtro = filtroEl.value;
         selEl.innerHTML = opcionesMaterialAgrupadas(item.materialId, item._filtro);
       });
-      selEl.addEventListener('change', () => { item.materialId = selEl.value; actualizarTotal(); persistir(); });
+      selEl.addEventListener('change', () => {
+        item.materialId = selEl.value;
+        const matSel = estado.materiales.find((x) => x.id === item.materialId);
+        if (matSel && matSel.esHerramienta) {
+          item.reqDevolucion = true;
+          if (chkDevEl) chkDevEl.checked = true;
+          if (lblDevEl) lblDevEl.classList.add('activo');
+        }
+        actualizarTotal();
+        persistir();
+      });
       cantEl.addEventListener('input', () => { item.cantidad = cantEl.value; actualizarTotal(); persistir(); });
+      if (chkDevEl) {
+        chkDevEl.addEventListener('change', () => {
+          item.reqDevolucion = chkDevEl.checked;
+          if (lblDevEl) lblDevEl.classList.toggle('activo', chkDevEl.checked);
+          actualizarTotal();
+          persistir();
+        });
+      }
       row.querySelector('[data-quitar]').addEventListener('click', () => {
         estado.itemsOrden = estado.itemsOrden.filter((x) => x._id !== id);
-        if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' });
+        if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' });
         render(); persistir();
       });
     });
     actualizarTotal();
   };
   const actualizarTotal = () => {
-    const n = estado.itemsOrden.filter((it) => it.materialId && Number(it.cantidad) > 0).length;
-    $('#o-total').textContent = n > 0 ? `${n} material(es) en la orden.` : 'Agrega al menos un material con cantidad.';
+    const validos = estado.itemsOrden.filter((it) => it.materialId && Number(it.cantidad) > 0);
+    const n = validos.length;
+    const nDev = validos.filter((it) => it.reqDevolucion).length;
+    const txtDev = (tipo === 'salida' && nDev > 0) ? ` · 🔧 ${nDev} requiere(n) devolución` : '';
+    $('#o-total').textContent = n > 0 ? `${n} material(es) en la orden${txtDev}.` : 'Agrega al menos un material con cantidad.';
   };
   render();
 
@@ -2863,16 +3022,19 @@ function modalOrden(tipo, precarga) {
     if (!kit) { toast('Elige un kit de la lista', 'error'); return; }
     const nuevos = (kit.items || [])
       .filter((it) => estado.materiales.some((m) => m.id === it.materialId))
-      .map((it) => ({ _id: Date.now() + Math.random(), materialId: it.materialId, cantidad: it.cantidad, _filtro: '' }));
+      .map((it) => {
+        const m = estado.materiales.find((x) => x.id === it.materialId);
+        return { _id: Date.now() + Math.random(), materialId: it.materialId, cantidad: it.cantidad, reqDevolucion: !!(it.reqDevolucion || (m && m.esHerramienta)), _filtro: '' };
+      });
     if (nuevos.length === 0) { toast('Los materiales de este kit ya no existen en el inventario', 'error'); return; }
     estado.itemsOrden = estado.itemsOrden.filter((it) => it.materialId || (it.cantidad !== '' && it.cantidad != null));
     estado.itemsOrden = estado.itemsOrden.concat(nuevos);
-    if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '', _filtro: '' });
+    if (estado.itemsOrden.length === 0) estado.itemsOrden.push({ _id: Date.now(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' });
     render(); persistir();
     toast('Kit "' + kit.nombre + '" cargado', 'ok');
   });
 
-  $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '' }); render(); persistir(); });
+  $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' }); render(); persistir(); });
   if ($('#o-otra-paralela')) $('#o-otra-paralela').addEventListener('click', () => {
     modalOrden(tipo);
     toast('Nueva orden abierta en paralelo. La anterior quedo en la barra inferior.', 'ok');
@@ -2883,7 +3045,17 @@ function modalOrden(tipo, precarga) {
     const listaItemsActual = (vActual && vActual.snapshot && vActual.snapshot.itemsOrden) ? vActual.snapshot.itemsOrden : (estado.itemsOrden || misItemsOrden);
     const items = listaItemsActual
       .filter((it) => it.materialId && Number(it.cantidad) > 0)
-      .map((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return { materialId: it.materialId, materialNombre: m ? m.nombre : '', cantidad: Number(it.cantidad), unidad: m ? m.unidad : 'unidad' }; });
+      .map((it) => {
+        const m = estado.materiales.find((x) => x.id === it.materialId);
+        return {
+          materialId: it.materialId,
+          materialNombre: m ? m.nombre : '',
+          cantidad: Number(it.cantidad),
+          unidad: m ? m.unidad : 'unidad',
+          reqDevolucion: !!(it.reqDevolucion || (m && m.esHerramienta)),
+          devuelto: false
+        };
+      });
     if (items.length === 0) { toast('Agrega al menos un material con cantidad', 'error'); return; }
     // Validar stock en salidas
     if (tipo === 'salida') {
@@ -3436,14 +3608,32 @@ function renderResponsable() {
   // Herramientas actualmente en posesion (en_uso asignadas a este responsable)
   const herrEnPosesion = filtroTipo === 'materiales' ? [] : estado.materiales.filter((m) => m.esHerramienta && (m.responsableActual || '').trim() === nombre && m.estadoHerr === 'en_uso');
 
+  // Materiales (no herramientas) marcados con reqDevolucion pendientes de devolver en ordenes de este responsable
+  const matPendDevolucion = [];
+  if (filtroTipo !== 'herramientas') {
+    for (const o of estado.ordenes) {
+      if (o.tipo !== 'salida' || estadoOrden(o) === 'devolucion_completada') continue;
+      const esDeResp = (o.responsable || '').trim() === nombre ||
+        (Array.isArray(o.responsables) && o.responsables.some((r) => ((typeof r === 'object' ? r.nombre : r) || '').trim() === nombre));
+      if (!esDeResp) continue;
+      (o.items || []).forEach((it, idx) => {
+        if (!esItemPendienteDevolucion(it, o)) return;
+        const m = it.materialId ? estado.materiales.find((x) => x.id === it.materialId) : null;
+        if (m && m.esHerramienta && herrEnPosesion.some((h) => h.id === m.id)) return;
+        matPendDevolucion.push({ orden: o, item: it, itemIdx: idx, mat: m });
+      });
+    }
+  }
+
   // Construir HTML
   let html = '';
 
-  // --- Seccion: Herramientas en posesion actualmente ---
-  if (herrEnPosesion.length > 0) {
+  // --- Seccion: Herramientas y Materiales con devolucion pendiente en posesion actualmente ---
+  const totalPendPosesion = herrEnPosesion.length + matPendDevolucion.length;
+  if (totalPendPosesion > 0) {
     html += `<tr><td colspan="6" style="padding:14px 12px 8px;background:rgba(255,84,112,0.08);border-left:4px solid #ff5470">
-      <b style="font-size:14px;color:#ff9db0">🔧 HERRAMIENTAS EN POSESION ACTUAL (${herrEnPosesion.length})</b>
-      <span style="font-size:11px;color:var(--texto-mute);margin-left:8px">Pendientes de devolucion</span>
+      <b style="font-size:14px;color:#ff9db0">🔧 PENDIENTES DE DEVOLUCIÓN EN POSESIÓN ACTUAL (${totalPendPosesion})</b>
+      <span style="font-size:11px;color:var(--texto-mute);margin-left:8px">Requieren devolución al almacén</span>
     </td></tr>`;
     html += herrEnPosesion.map((h) => `<tr style="background:rgba(255,84,112,0.04)">
       <td style="padding-left:18px"><span class="estado-badge ${esc(h.estadoHerr || 'disponible')}">${estadoHerramientaLabel(h.estadoHerr)}</span></td>
@@ -3452,6 +3642,14 @@ function renderResponsable() {
       <td>${h.frenteActual ? 'Frente ' + esc(h.frenteActual) : '-'}</td>
       <td style="font-size:11px;color:var(--texto-mute)">${esc(h.ubicacion || '')}</td>
       <td><button class="btn-ghost btn-devolver-directa" data-devolver-id="${h.id}" data-devolver-nombre="${esc(nombre)}" data-devolver-frente="${esc(h.frenteActual || '')}" style="font-size:11px;padding:3px 8px;white-space:nowrap">↩ Devolver</button></td>
+    </tr>`).join('');
+    html += matPendDevolucion.map(({ orden, item, itemIdx }) => `<tr style="background:rgba(245,158,11,0.06)">
+      <td style="padding-left:18px"><span class="estado-badge mantenimiento">📦 Req. devolución</span></td>
+      <td><b>${esc(item.materialNombre)}</b></td>
+      <td><b>${fmtNum(item.cantidad)}</b> ${esc(item.unidad || '')}</td>
+      <td>${esc(orden.numero || '-')}${orden.frente ? ' · Frente ' + esc(orden.frente) : ''}</td>
+      <td style="font-size:11px;color:var(--texto-mute)">${fmtFechaCorta(orden.fecha)}</td>
+      <td><button class="btn-ghost btn-devolver-item-orden" data-ord-id="${orden.id}" data-item-idx="${itemIdx}" style="font-size:11px;padding:3px 8px;white-space:nowrap">↩ Devolver</button></td>
     </tr>`).join('');
     html += `<tr><td colspan="6" style="padding:4px"></td></tr>`;
   }
@@ -3502,9 +3700,9 @@ function renderResponsable() {
 
   cuerpo.innerHTML = html;
 
-  // Evento para devolucion directa desde la vista de responsable
+  // Evento para devolucion directa de herramienta desde la vista de responsable
   cuerpo.querySelectorAll('.btn-devolver-directa').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', async () => {
       const materialId = btn.dataset.devolverId;
       const responsable = btn.dataset.devolverNombre;
       const frente = btn.dataset.devolverFrente;
@@ -3527,14 +3725,27 @@ function renderResponsable() {
           nota: 'Devolucion directa desde vista de responsable',
           usuario: nombreUsuario()
         });
+        const ordenAsociada = estado.ordenes.find((o) => o.tipo === 'salida' && estadoOrden(o) !== 'devolucion_completada' && (o.items || []).some((it) => it.materialId === materialId && !it.devuelto));
+        if (ordenAsociada) {
+          ordenAsociada.items.forEach((it) => { if (it.materialId === materialId) it.devuelto = true; });
+          const nuevoEst = recalcularEstadoDevolucionOrden(ordenAsociada);
+          ordenAsociada.estado = nuevoEst;
+          await actualizarEstadoOrden(ordenAsociada.id, nuevoEst, ordenAsociada.items);
+        }
         toast('Herramienta "' + (mat.nombre || '') + '" devuelta al almacen', 'ok');
         renderResponsable();
-        // Generar la orden de devolucion e imprimir/compartir
-        const ordenAsociada = estado.ordenes.find((o) => (o.items || []).some((it) => it.materialId === materialId));
         const pseudoOrden = { numero: ordenAsociada ? ordenAsociada.numero : 'DEV-' + Date.now().toString(36), frente: frente, responsable: responsable };
         const itemsDevueltos = [{ materialId, materialNombre: mat.nombre, cantidad: 1, unidad: mat.unidad || 'unidad' }];
         imprimirOrdenDevolucionWhatsApp(pseudoOrden, itemsDevueltos);
       } catch (err) { toast('Error: ' + err.message, 'error'); btn.disabled = false; btn.textContent = '↩ Devolver'; }
+    });
+  });
+
+  // Evento para devolucion directa de material marcado con reqDevolucion desde la vista de responsable
+  cuerpo.querySelectorAll('.btn-devolver-item-orden').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const ordId = btn.dataset.ordId;
+      if (ordId) modalDevolverHerramientas(ordId);
     });
   });
 }
@@ -3937,16 +4148,26 @@ function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
     }
     if (!subtitulo) subtitulo = tablasDom.length > 1 ? `SECCIÓN ${idx + 1}` : 'DETALLE DE MATERIALES / HERRAMIENTAS';
 
+    const esTablaHerr = /herramienta/i.test(subtitulo);
     const headers = Array.from(tb.querySelectorAll('thead th')).map((th) => ({
       texto: th.textContent.trim(),
       align: (th.style.textAlign === 'right' || th.classList.contains('der')) ? 'right' : 'left'
     }));
-    const filas = Array.from(tb.querySelectorAll('tbody tr')).map((tr) =>
-      Array.from(tr.querySelectorAll('td')).map((td, cIdx) => ({
+    const filas = Array.from(tb.querySelectorAll('tbody tr')).map((tr, rIdx) => {
+      const celdas = Array.from(tr.querySelectorAll('td')).map((td, cIdx) => ({
         texto: td.textContent.trim(),
         align: (td.style.textAlign === 'right' || td.classList.contains('der') || (headers[cIdx] && headers[cIdx].align === 'right')) ? 'right' : 'left'
-      }))
-    );
+      }));
+      const attrIdx = tr.getAttribute('data-item-idx');
+      const origIdx = (attrIdx !== null && attrIdx !== '') ? Number(attrIdx) : (ordenObj && ordenObj.items && ordenObj.items[rIdx] ? rIdx : null);
+      let reqDev = tr.getAttribute('data-req-dev') === '1' || esTablaHerr;
+      if (origIdx !== null && ordenObj && ordenObj.items && ordenObj.items[origIdx]) {
+        reqDev = esItemReqDevolucion(ordenObj.items[origIdx]);
+      }
+      celdas.reqDevolucion = !!reqDev;
+      celdas.itemOrigIdx = origIdx;
+      return celdas;
+    });
     tablas.push({ subtitulo, headers, filas });
   });
 
@@ -3956,21 +4177,37 @@ function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
   const avisoRojo = avisoRojoEl ? avisoRojoEl.textContent.trim().replace(/\s+/g, ' ') : '';
   const avisoVerde = avisoVerdeEl ? avisoVerdeEl.textContent.trim().replace(/\s+/g, ' ') : '';
 
-  // Herramientas pendientes adicionales del responsable (si no es ya una orden de devolucion)
+  // Herramientas y materiales pendientes de devolución del responsable (si no es ya una orden de devolucion)
   let herrPendientes = [];
+  const lineasHerrPend = [];
   if (!avisoVerde && responsNombres.length > 0) {
     herrPendientes = estado.materiales.filter((m) =>
       m.esHerramienta &&
       m.estadoHerr === 'en_uso' &&
       responsNombres.some((rn) => rn.toLowerCase() === (m.responsableActual || '').trim().toLowerCase())
     );
+    herrPendientes.forEach((h) => {
+      lineasHerrPend.push(`${lineasHerrPend.length + 1}. 🔧 ${h.nombre} — Serial: ${h.serial || '-'}${h.frenteActual ? ' (Frente ' + h.frenteActual + ')' : ''}`);
+    });
+    // Incluir tambien materiales con reqDevolucion pendiente en ordenes de este responsable
+    for (const o of estado.ordenes) {
+      if (o.tipo !== 'salida' || estadoOrden(o) === 'devolucion_completada') continue;
+      const coincideResp = responsNombres.some((rn) =>
+        rn.toLowerCase() === (o.responsable || '').trim().toLowerCase() ||
+        (Array.isArray(o.responsables) && o.responsables.some((r) => rn.toLowerCase() === ((typeof r === 'object' ? r.nombre : r) || '').trim().toLowerCase()))
+      );
+      if (!coincideResp) continue;
+      (o.items || []).forEach((it) => {
+        if (!esItemPendienteDevolucion(it, o)) return;
+        const m = it.materialId ? estado.materiales.find((x) => x.id === it.materialId) : null;
+        if (m && m.esHerramienta && herrPendientes.some((h) => h.id === m.id)) return;
+        lineasHerrPend.push(`${lineasHerrPend.length + 1}. 📦 ${it.materialNombre} (${fmtNum(it.cantidad)} ${it.unidad || ''}) — Orden ${o.numero || '-'}`);
+      });
+    }
   }
-  const tituloHerrPend = herrPendientes.length > 0
-    ? `⚠️ RECORDATORIO — HERRAMIENTAS EN POSESIÓN ACTUAL DEL RESPONSABLE (${herrPendientes.length}):`
+  const tituloHerrPend = lineasHerrPend.length > 0
+    ? `⚠️ RECORDATORIO — ÍTEMS PENDIENTES DE DEVOLUCIÓN DEL RESPONSABLE (${lineasHerrPend.length}):`
     : '⚠️ RECORDATORIO / HERRAMIENTAS PENDIENTES:';
-  const lineasHerrPend = herrPendientes.map((h, i) =>
-    `${i + 1}. 🔧 ${h.nombre} — Serial: ${h.serial || '-'}${h.frenteActual ? ' (Frente ' + h.frenteActual + ')' : ''}`
-  );
 
   // Nota
   const notaEl = area.querySelector('.doc-nota');
@@ -3985,6 +4222,7 @@ function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
   const fechaEmision = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
 
   return {
+    ordenObj,
     empresaNombre: 'FVIECOM S.A.S',
     empresaSub: 'FV Ingeniería Eléctrica y Telecomunicaciones',
     empresaProy: 'Proyecto: Aeropuerto Intl. José María Córdova — Rionegro',
@@ -4038,16 +4276,20 @@ async function generarFacturaCanvas(datos) {
     }
 
     const filasMedidas = (tb.filas || []).map((fila) => {
+      const reqDev = !!fila.reqDevolucion;
       let maxLineas = 1;
       const celdasLineas = fila.map((celda, cIdx) => {
         const cw = (colWidths[cIdx] || 100) - 18;
-        mctx.font = (celda.align === 'right' || cIdx === 0) ? 'bold 13px "Segoe UI", Arial, sans-serif' : '13px "Segoe UI", Arial, sans-serif';
-        const lns = partirLineasCanvas(mctx, celda.texto, Math.max(40, cw));
+        const textoCelda = (cIdx === 1 && reqDev && !/req\.\s*devol/i.test(String(celda.texto || '')))
+          ? `${celda.texto}  ⚠️ [REQ. DEVOLUCIÓN]`
+          : celda.texto;
+        mctx.font = (celda.align === 'right' || cIdx === 0 || (cIdx === 1 && reqDev)) ? 'bold 13px "Segoe UI", Arial, sans-serif' : '13px "Segoe UI", Arial, sans-serif';
+        const lns = partirLineasCanvas(mctx, textoCelda, Math.max(40, cw));
         if (lns.length > maxLineas) maxLineas = lns.length;
-        return { lineas: lns, align: celda.align, bold: celda.align === 'right' || cIdx === 0 };
+        return { lineas: lns, align: celda.align, bold: celda.align === 'right' || cIdx === 0, reqDev: cIdx === 1 && reqDev };
       });
       const rowH = Math.max(32, maxLineas * 18 + 14);
-      return { celdasLineas, rowH };
+      return { celdasLineas, rowH, reqDev };
     });
 
     const totalTablaH = 38 + 34 + filasMedidas.reduce((s, r) => s + r.rowH, 0) + 18;
@@ -4319,19 +4561,24 @@ async function generarFacturaCanvas(datos) {
     // Filas de la tabla
     tb.filasMedidas.forEach((fm, rIdx) => {
       const rowH = fm.rowH;
-      ctx.fillStyle = rIdx % 2 === 0 ? '#ffffff' : '#f8fafc';
+      ctx.fillStyle = fm.reqDev ? '#fffbeb' : (rIdx % 2 === 0 ? '#ffffff' : '#f8fafc');
       ctx.fillRect(CONTENT_X, y, CONTENT_W, rowH);
 
+      if (fm.reqDev) {
+        ctx.fillStyle = '#f59e0b';
+        ctx.fillRect(CONTENT_X, y, 4, rowH);
+      }
+
       // Borde inferior e izquierdo/derecho de fila
-      ctx.strokeStyle = '#e2e8f0';
+      ctx.strokeStyle = fm.reqDev ? '#fde68a' : '#e2e8f0';
       ctx.lineWidth = 1;
       ctx.strokeRect(CONTENT_X, y, CONTENT_W, rowH);
 
       let cellX = CONTENT_X;
       fm.celdasLineas.forEach((cl, cIdx) => {
         const cw = tb.colWidths[cIdx];
-        ctx.font = cl.bold ? 'bold 13px "Segoe UI", Arial, sans-serif' : '13px "Segoe UI", Arial, sans-serif';
-        ctx.fillStyle = cl.bold ? '#0f172a' : '#1e293b';
+        ctx.font = (cl.bold || cl.reqDev) ? 'bold 13px "Segoe UI", Arial, sans-serif' : '13px "Segoe UI", Arial, sans-serif';
+        ctx.fillStyle = cl.reqDev ? '#9a3412' : (cl.bold ? '#0f172a' : '#1e293b');
         const blockH = cl.lineas.length * 18;
         let textY = y + (rowH - blockH) / 2 + 14;
         cl.lineas.forEach((ln) => {
@@ -4540,7 +4787,7 @@ async function compartirPorWhatsApp(ordenDirecta) {
   const msgWaInicial = textoEspecialDev
     ? `📋 *FVIECOM S.A.S* — ✅ *Devolución de orden (${datos.numeroDoc})*\nAdjunto comprobante oficial de devolución en imagen.`
     : (datos.avisoRojo || datos.lineasHerrPend.length > 0)
-      ? `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n⚠️ *Recordatorio:* Por favor verificar los materiales/herramientas en la factura adjunta y recordar devolver las herramientas al almacén al finalizar la labor.`
+      ? `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n⚠️ *Recordatorio:* Por favor verificar los materiales/herramientas en la factura adjunta y recordar devolver los ítems marcados al almacén al finalizar la labor.`
       : `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\nAdjunto comprobante oficial de almacén en imagen.`;
 
   abrirModal('📱 Editar y Enviar Factura por WhatsApp — ' + datos.numeroDoc, `
@@ -4722,7 +4969,7 @@ async function compartirPorWhatsApp(ordenDirecta) {
       const inpMsg = $('#wa-input-mensaje');
       if (!inpMsg) return;
       if (tipoP === 'devolucion') {
-        inpMsg.value = `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n🔔 *Recordatorio importante:* Por favor recuerda devolver al almacén las herramientas asignadas tan pronto finalices la labor. Adjunto comprobante en foto.`;
+        inpMsg.value = `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n🔔 *Recordatorio importante:* Por favor recuerda devolver al almacén los materiales y herramientas marcados con devolución tan pronto finalices la labor. Adjunto comprobante en foto.`;
       } else if (tipoP === 'confirmar') {
         inpMsg.value = `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n✅ Adjunto comprobante de despacho en foto. Por favor confirmar de recibido por este medio.`;
       } else {
@@ -4749,7 +4996,7 @@ async function compartirPorWhatsApp(ordenDirecta) {
   if (inpVerde) inpVerde.addEventListener('input', () => { datos.avisoVerde = inpVerde.value; regenerarFacturaEnVivo(); });
 
   $('#wa-preset-rojo-herr')?.addEventListener('click', () => {
-    datos.avisoRojo = '⚠️ LAS HERRAMIENTAS LISTADAS ARRIBA REQUIEREN DEVOLUCIÓN — POR FAVOR ENTREGAR EN ALMACÉN AL FINALIZAR LA LABOR';
+    datos.avisoRojo = '⚠️ LOS MATERIALES / HERRAMIENTAS MARCADOS REQUIEREN DEVOLUCIÓN — POR FAVOR ENTREGAR EN ALMACÉN AL FINALIZAR LA LABOR';
     if (inpRojo) inpRojo.value = datos.avisoRojo;
     regenerarFacturaEnVivo();
   });
@@ -4821,23 +5068,88 @@ async function compartirPorWhatsApp(ordenDirecta) {
     regenerarFacturaEnVivo();
   });
 
+  // Sincroniza las casillas de "Requiere devolucion" y renglones con la orden en Firestore y la vista de Ordenes
+  const AVISO_ROJO_AUTO = '⚠️ LOS MATERIALES / HERRAMIENTAS MARCADOS REQUIEREN DEVOLUCIÓN — POR FAVOR ENTREGAR EN ALMACÉN AL FINALIZAR LA LABOR';
+  const sincronizarReqDevConOrden = async () => {
+    const hayAlgunReqDev = datos.tablas.some((t) => (t.filas || []).some((f) => f.reqDevolucion));
+    if (hayAlgunReqDev && !(datos.avisoRojo || '').trim()) {
+      datos.avisoRojo = AVISO_ROJO_AUTO;
+      if (inpRojo) inpRojo.value = datos.avisoRojo;
+    } else if (!hayAlgunReqDev && datos.avisoRojo === AVISO_ROJO_AUTO) {
+      datos.avisoRojo = '';
+      if (inpRojo) inpRojo.value = '';
+    }
+
+    const ord = datos.ordenObj;
+    if (!ord || !ord.id) return;
+    ord.items = Array.isArray(ord.items) ? ord.items : [];
+
+    // Recorrer todas las filas de las tablas para actualizar o agregar items en la orden
+    datos.tablas.forEach((tb) => {
+      (tb.filas || []).forEach((fila) => {
+        const nomTxt = (fila[1] && fila[1].texto || '').trim();
+        const cantIndex = tb.headers.findIndex((h) => /cantidad/i.test(h.texto));
+        const unidIndex = tb.headers.findIndex((h) => /unidad/i.test(h.texto));
+        const cantVal = Number((fila[cantIndex > -1 ? cantIndex : 2] || {}).texto) || 1;
+        const unidVal = ((fila[unidIndex > -1 ? unidIndex : 3] || {}).texto || 'unidad').trim();
+
+        if (fila.itemOrigIdx != null && ord.items[fila.itemOrigIdx]) {
+          const it = ord.items[fila.itemOrigIdx];
+          it.reqDevolucion = !!fila.reqDevolucion;
+          if (fila.reqDevolucion && ord.estado === 'devolucion_completada') it.devuelto = false;
+          if (nomTxt) it.materialNombre = nomTxt;
+          if (cantVal > 0) it.cantidad = cantVal;
+          if (unidIndex > -1 && unidVal) it.unidad = unidVal;
+        } else if (nomTxt && fila.reqDevolucion) {
+          // Si es un renglon nuevo agregado en esta pantalla y marcado con reqDevolucion, vincularlo a la orden
+          const matMatch = estado.materiales.find((m) => normTxt(m.nombre) === normTxt(nomTxt));
+          const nuevoItem = {
+            materialId: matMatch ? matMatch.id : '',
+            materialNombre: nomTxt,
+            cantidad: cantVal,
+            unidad: unidVal || (matMatch ? matMatch.unidad : 'unidad'),
+            reqDevolucion: true,
+            devuelto: false
+          };
+          ord.items.push(nuevoItem);
+          fila.itemOrigIdx = ord.items.length - 1;
+        }
+      });
+    });
+
+    const nuevoEst = recalcularEstadoDevolucionOrden(ord);
+    ord.estado = nuevoEst;
+    try {
+      await actualizarEstadoOrden(ord.id, nuevoEst, ord.items);
+      renderOrdenes();
+      renderResponsable();
+    } catch (e) {
+      console.warn('Error sincronizando reqDevolucion en orden:', e);
+    }
+  };
+
   // Eventos TAB 3: Editor de Tablas (Materiales / Herramientas)
   const renderTablasEditor = () => {
     const cont = $('#wa-tablas-editor');
     if (!cont) return;
     cont.innerHTML = datos.tablas.map((tb, tIdx) => `
       <div style="background:rgba(255,255,255,0.03);border:1px solid var(--linea);border-radius:8px;padding:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
-          <input data-tb-sub="${tIdx}" value="${esc(tb.subtitulo)}" placeholder="Título de sección" style="font-size:12px;font-weight:700;padding:4px 8px;flex:1" />
-          <button type="button" class="btn-ghost" data-tb-addrow="${tIdx}" style="font-size:11px;padding:3px 8px">＋ Agregar renglón</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+          <input data-tb-sub="${tIdx}" value="${esc(tb.subtitulo)}" placeholder="Título de sección" style="font-size:12px;font-weight:700;padding:4px 8px;flex:1;min-width:140px" />
+          <span style="font-size:10.5px;color:#fcd34d">☑️ Marca la casilla al final del renglón si requiere devolución</span>
+          <button type="button" class="btn-ghost" data-tb-addrow="${tIdx}" style="font-size:11px;padding:3px 8px;flex:none">＋ Agregar renglón</button>
         </div>
-        <div style="display:flex;flex-direction:column;gap:4px">
+        <div style="display:flex;flex-direction:column;gap:5px">
           ${tb.filas.map((fila, rIdx) => `
-            <div style="display:flex;gap:4px;align-items:center">
+            <div style="display:flex;gap:5px;align-items:center;width:100%">
               ${fila.map((cel, cIdx) => `
-                <input data-tb-cell="${tIdx}-${rIdx}-${cIdx}" value="${esc(cel.texto)}" placeholder="${esc((tb.headers[cIdx] || {}).texto || '')}" style="flex:${cIdx === 1 ? 2.5 : (cIdx === 0 ? 0.45 : 1)};font-size:11.5px;padding:4px 6px;text-align:${cel.align}" />
+                <input data-tb-cell="${tIdx}-${rIdx}-${cIdx}" value="${esc(cel.texto)}" placeholder="${esc((tb.headers[cIdx] || {}).texto || '')}" style="flex:${cIdx === 1 ? '2.4 1 0%' : (cIdx === 0 ? '0.45 1 0%' : '0.9 1 0%')};min-width:0;width:0;font-size:11.5px;padding:4px 6px;text-align:${cel.align}" />
               `).join('')}
-              <button type="button" class="btn-icon peligro" data-tb-delrow="${tIdx}-${rIdx}" title="Quitar renglón" style="padding:2px 6px">✕</button>
+              <label class="chk-req-dev ${fila.reqDevolucion ? 'activo' : ''}" title="Marcar si este material o herramienta requiere devolución al almacén" style="padding:4px 7px;font-size:11px">
+                <input type="checkbox" data-tb-reqdev="${tIdx}-${rIdx}" ${fila.reqDevolucion ? 'checked' : ''} />
+                <span>Req. dev.</span>
+              </label>
+              <button type="button" class="btn-icon peligro" data-tb-delrow="${tIdx}-${rIdx}" title="Quitar renglón" style="padding:2px 6px;flex:none">✕</button>
             </div>
           `).join('')}
         </div>
@@ -4853,13 +5165,32 @@ async function compartirPorWhatsApp(ordenDirecta) {
       if (datos.tablas[tIdx] && datos.tablas[tIdx].filas[rIdx] && datos.tablas[tIdx].filas[rIdx][cIdx]) {
         datos.tablas[tIdx].filas[rIdx][cIdx].texto = inp.value;
         regenerarFacturaEnVivo();
+        if (datos.tablas[tIdx].filas[rIdx].reqDevolucion) {
+          sincronizarReqDevConOrden();
+        }
       }
     }));
-    cont.querySelectorAll('[data-tb-delrow]').forEach((btn) => btn.addEventListener('click', () => {
+    cont.querySelectorAll('[data-tb-reqdev]').forEach((chk) => chk.addEventListener('change', async () => {
+      const [tIdx, rIdx] = chk.dataset.tbReqdev.split('-').map(Number);
+      const fila = datos.tablas[tIdx] && datos.tablas[tIdx].filas[rIdx];
+      if (!fila) return;
+      fila.reqDevolucion = chk.checked;
+      const lbl = chk.closest('.chk-req-dev');
+      if (lbl) lbl.classList.toggle('activo', chk.checked);
+      await sincronizarReqDevConOrden();
+      regenerarFacturaEnVivo();
+      toast(chk.checked ? 'Marcado: Requiere devolución al almacén' : 'Desmarcado de devolución', 'ok');
+    }));
+    cont.querySelectorAll('[data-tb-delrow]').forEach((btn) => btn.addEventListener('click', async () => {
       const [tIdx, rIdx] = btn.dataset.tbDelrow.split('-').map(Number);
       if (datos.tablas[tIdx]) {
+        const filaElim = datos.tablas[tIdx].filas[rIdx];
+        if (filaElim && filaElim.itemOrigIdx != null && datos.ordenObj && datos.ordenObj.items && datos.ordenObj.items[filaElim.itemOrigIdx]) {
+          datos.ordenObj.items[filaElim.itemOrigIdx].reqDevolucion = false;
+        }
         datos.tablas[tIdx].filas.splice(rIdx, 1);
         renderTablasEditor();
+        await sincronizarReqDevConOrden();
         regenerarFacturaEnVivo();
       }
     }));
@@ -4872,8 +5203,11 @@ async function compartirPorWhatsApp(ordenDirecta) {
         align: h.align
       }));
       if (nuevaFila[1]) nuevaFila[1].texto = 'Nuevo ítem';
+      nuevaFila.reqDevolucion = /herramienta/i.test(tb.subtitulo);
+      nuevaFila.itemOrigIdx = null;
       tb.filas.push(nuevaFila);
       renderTablasEditor();
+      if (nuevaFila.reqDevolucion) sincronizarReqDevConOrden();
       regenerarFacturaEnVivo();
     }));
   };
@@ -5098,13 +5432,19 @@ function docOrden(o, almacenista) {
   const metaLugar = esProv
     ? (`<div><b>Proveedor:</b> ${esc(o.proveedor || '-')}</div>` + (o.frente ? `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente:</b> ${esc(o.frente)}</div>` : ''))
     : `<div><b>Contrato:</b> ${esc(contrato || '-')}</div><div><b>Frente de obra:</b> ${esc(o.frente || '-')}</div>`;
-  const itemsMat = (o.items || []).filter((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return !m || !m.esHerramienta; });
-  const itemsHerr = (o.items || []).filter((it) => { const m = estado.materiales.find((x) => x.id === it.materialId); return m && m.esHerramienta; });
-  const filasMat = itemsMat.map((it, i) => `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad)}</td></tr>`).join('');
-  const filasHerr = itemsHerr.map((it, i) => {
-    const m = estado.materiales.find((x) => x.id === it.materialId);
-    return `<tr><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td>${esc(m ? m.serial || '' : '')}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td></tr>`;
+  const itemsConIdx = (o.items || []).map((it, origIdx) => ({ it, origIdx }));
+  const itemsMat = itemsConIdx.filter(({ it }) => { const m = estado.materiales.find((x) => x.id === it.materialId); return !m || !m.esHerramienta; });
+  const itemsHerr = itemsConIdx.filter(({ it }) => { const m = estado.materiales.find((x) => x.id === it.materialId); return m && m.esHerramienta; });
+  const filasMat = itemsMat.map(({ it, origIdx }, i) => {
+    const req = esItemReqDevolucion(it);
+    return `<tr data-item-idx="${origIdx}"${req ? ' data-req-dev="1"' : ''}><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td><td>${esc(it.unidad)}</td></tr>`;
   }).join('');
+  const filasHerr = itemsHerr.map(({ it, origIdx }, i) => {
+    const m = estado.materiales.find((x) => x.id === it.materialId);
+    const req = esItemReqDevolucion(it);
+    return `<tr data-item-idx="${origIdx}"${req ? ' data-req-dev="1"' : ''}><td>${i + 1}</td><td>${esc(it.materialNombre)}</td><td>${esc(m ? m.serial || '' : '')}</td><td style="text-align:right">${fmtNum(it.cantidad)}</td></tr>`;
+  }).join('');
+  const algunReqDev = (o.items || []).some((it) => esItemReqDevolucion(it));
   const tablaMateriales = itemsMat.length > 0 ? `
     <h3 class="doc-sub">MATERIALES</h3>
     <table class="doc-tabla">
@@ -5116,11 +5456,11 @@ function docOrden(o, almacenista) {
     <table class="doc-tabla">
       <thead><tr><th>#</th><th>Herramienta</th><th>Serial</th><th style="text-align:right">Cantidad</th></tr></thead>
       <tbody>${filasHerr}</tbody>
-    </table>
-    ${o.tipo !== 'entrada' ? `<div style="border:3px solid #c0392b;border-radius:10px;padding:16px 20px;margin:14px 0;text-align:center;color:#c0392b;font-size:16px;font-weight:bold;line-height:1.5">
-      ⚠️ LAS HERRAMIENTAS LISTADAS ARRIBA REQUIEREN DEVOLUCIÓN<br>
-      <span style="font-size:13px;font-weight:normal">POR FAVOR RECLAMAR EN ALMACÉN AL FINALIZAR LA LABOR</span>
-    </div>` : ''}` : '';
+    </table>` : '';
+  const bloqueAvisoDevolucion = (algunReqDev && o.tipo !== 'entrada') ? `<div style="border:3px solid #c0392b;border-radius:10px;padding:16px 20px;margin:14px 0;text-align:center;color:#c0392b;font-size:16px;font-weight:bold;line-height:1.5">
+      ⚠️ LOS MATERIALES / HERRAMIENTAS MARCADOS REQUIEREN DEVOLUCIÓN<br>
+      <span style="font-size:13px;font-weight:normal">POR FAVOR ENTREGAR EN ALMACÉN AL FINALIZAR LA LABOR</span>
+    </div>` : '';
   return `<div class="doc">
     ${cabeceraDoc()}
     <h2 class="doc-titulo">${t.titulo}</h2>
@@ -5132,6 +5472,7 @@ function docOrden(o, almacenista) {
     </div>
     ${tablaMateriales}
     ${tablaHerramientas}
+    ${bloqueAvisoDevolucion}
     ${o.nota ? `<p class="doc-nota"><b>Nota:</b> ${esc(o.nota)}</p>` : ''}
     ${firmasDoc(almacenista, ordenResponsablesLista(o))}
   </div>`;

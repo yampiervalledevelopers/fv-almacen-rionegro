@@ -220,7 +220,9 @@ export async function registrarOrden(orden) {
       materialId: it.materialId,
       materialNombre: it.materialNombre || '',
       cantidad: Number(it.cantidad) || 0,
-      unidad: it.unidad || 'unidad'
+      unidad: it.unidad || 'unidad',
+      reqDevolucion: !!it.reqDevolucion,
+      devuelto: !!it.devuelto
     }));
 
   if (items.length === 0) throw new Error('Agrega al menos un material con cantidad valida.');
@@ -534,8 +536,12 @@ export async function actualizarHerramientaDespacho(materialId, responsable, fre
   }
 }
 
-export async function actualizarEstadoOrden(ordenId, nuevoEstado) {
-  await updateDoc(doc(db, 'ordenes', ordenId), { estado: nuevoEstado });
+export async function actualizarEstadoOrden(ordenId, nuevoEstado, itemsActualizados) {
+  const payload = {};
+  if (nuevoEstado !== undefined && nuevoEstado !== null) payload.estado = nuevoEstado;
+  if (Array.isArray(itemsActualizados)) payload.items = itemsActualizados;
+  if (Object.keys(payload).length === 0) return;
+  await updateDoc(doc(db, 'ordenes', ordenId), payload);
 }
 
 /* ---------------- Contratos y Frentes ---------------- */
