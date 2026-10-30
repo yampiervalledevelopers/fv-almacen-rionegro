@@ -3865,7 +3865,7 @@ function rectRedondeadoCanvas(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// Extrae todos los datos estructurados desde #print-area para dibujar la factura en imagen
+// Extrae todos los datos estructurados desde #print-area para dibujar y editar la factura en imagen
 function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
   const titulo = (area.querySelector('.doc-titulo') || {}).textContent?.trim() || 'COMPROBANTE DE ALMACÉN';
   const metaItems = [];
@@ -3965,6 +3965,12 @@ function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
       responsNombres.some((rn) => rn.toLowerCase() === (m.responsableActual || '').trim().toLowerCase())
     );
   }
+  const tituloHerrPend = herrPendientes.length > 0
+    ? `⚠️ RECORDATORIO — HERRAMIENTAS EN POSESIÓN ACTUAL DEL RESPONSABLE (${herrPendientes.length}):`
+    : '⚠️ RECORDATORIO / HERRAMIENTAS PENDIENTES:';
+  const lineasHerrPend = herrPendientes.map((h, i) =>
+    `${i + 1}. 🔧 ${h.nombre} — Serial: ${h.serial || '-'}${h.frenteActual ? ' (Frente ' + h.frenteActual + ')' : ''}`
+  );
 
   // Nota
   const notaEl = area.querySelector('.doc-nota');
@@ -3976,16 +3982,27 @@ function extraerDatosFacturaDesdeArea(area, ordenDirecta) {
     nombre: (f.querySelector('.nombre') || {}).textContent?.trim() || '-'
   }));
 
+  const fechaEmision = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' });
+
   return {
+    empresaNombre: 'FVIECOM S.A.S',
+    empresaSub: 'FV Ingeniería Eléctrica y Telecomunicaciones',
+    empresaProy: 'Proyecto: Aeropuerto Intl. José María Córdova — Rionegro',
+    empresaSello: 'F V   I N G E N I E R I A   ·   A L M A C É N   T É C N I C O',
+    etiquetaComprobante: 'COMPROBANTE DE ALMACÉN',
+    subComprobante: 'DOCUMENTO OFICIAL',
     titulo,
     numeroDoc,
     metaItems,
     tablas,
     avisoRojo,
     avisoVerde,
-    herrPendientes,
+    tituloHerrPend,
+    lineasHerrPend,
     nota,
     firmas,
+    pieIzq: `📅 Emitido: ${fechaEmision}   ·   👤 Almacenista: ${nombreUsuario()}`,
+    pieDer: 'FV INGENIERIA   ·   FVIECOM S.A.S',
     destinatarios
   };
 }
@@ -4005,14 +4022,14 @@ async function generarFacturaCanvas(datos) {
   const mctx = measureCanvas.getContext('2d');
 
   // Calculamos las geometrias de cada tabla (anchos de columna y lineas envueltas)
-  const tablasLayout = datos.tablas.map((tb) => {
-    const numCols = Math.max(1, tb.headers.length);
+  const tablasLayout = (datos.tablas || []).map((tb) => {
+    const numCols = Math.max(1, (tb.headers || []).length);
     let colWidths = [];
-    if (numCols === 4 && tb.headers[0].texto === '#') {
+    if (numCols === 4 && tb.headers[0] && tb.headers[0].texto === '#') {
       colWidths = [46, CONTENT_W - 46 - 115 - 110, 115, 110];
-    } else if (numCols === 5 && tb.headers[0].texto === '#') {
+    } else if (numCols === 5 && tb.headers[0] && tb.headers[0].texto === '#') {
       colWidths = [44, CONTENT_W - 44 - 140 - 105 - 95, 140, 105, 95];
-    } else if (numCols === 6 && tb.headers[0].texto === '#') {
+    } else if (numCols === 6 && tb.headers[0] && tb.headers[0].texto === '#') {
       colWidths = [40, CONTENT_W - 40 - 85 - 85 - 85 - 110, 85, 85, 85, 110];
     } else {
       const w = Math.floor(CONTENT_W / numCols);
@@ -4020,7 +4037,7 @@ async function generarFacturaCanvas(datos) {
       colWidths[numCols - 1] += CONTENT_W - w * numCols;
     }
 
-    const filasMedidas = tb.filas.map((fila) => {
+    const filasMedidas = (tb.filas || []).map((fila) => {
       let maxLineas = 1;
       const celdasLineas = fila.map((celda, cIdx) => {
         const cw = (colWidths[cIdx] || 100) - 18;
@@ -4038,30 +4055,43 @@ async function generarFacturaCanvas(datos) {
   });
 
   // Medir alto de metadatos (2 columnas)
-  const metaRowsCount = Math.ceil(datos.metaItems.length / 2);
-  const metaBoxH = Math.max(64, metaRowsCount * 28 + 24);
+  const metaActivos = (datos.metaItems || []).filter((m) => (m.label || '').trim() || (m.value || '').trim());
+  const metaRowsCount = Math.ceil(metaActivos.length / 2);
+  const metaBoxH = metaActivos.length > 0 ? Math.max(54, metaRowsCount * 28 + 24) : 0;
 
   // Medir avisos y notas
   mctx.font = 'bold 13.5px "Segoe UI", Arial, sans-serif';
-  const lineasAvisoRojo = datos.avisoRojo ? partirLineasCanvas(mctx, datos.avisoRojo, CONTENT_W - 40) : [];
+  const txtRojo = (datos.avisoRojo || '').trim();
+  const lineasAvisoRojo = txtRojo ? partirLineasCanvas(mctx, txtRojo, CONTENT_W - 40) : [];
   const avisoRojoH = lineasAvisoRojo.length ? (lineasAvisoRojo.length * 20 + 28) : 0;
 
-  const lineasAvisoVerde = datos.avisoVerde ? partirLineasCanvas(mctx, datos.avisoVerde, CONTENT_W - 40) : [];
+  const txtVerde = (datos.avisoVerde || '').trim();
+  const lineasAvisoVerde = txtVerde ? partirLineasCanvas(mctx, txtVerde, CONTENT_W - 40) : [];
   const avisoVerdeH = lineasAvisoVerde.length ? (lineasAvisoVerde.length * 20 + 28) : 0;
 
-  const herrPendH = datos.herrPendientes.length > 0 ? (40 + datos.herrPendientes.length * 24 + 16) : 0;
+  // Medir recuadro ambar de recordatorio / herramientas pendientes
+  const lineasAmbarRaw = (datos.lineasHerrPend || []).map((s) => String(s || '').trim()).filter(Boolean);
+  mctx.font = '12.5px "Segoe UI", Arial, sans-serif';
+  const lineasAmbarEnvueltas = [];
+  lineasAmbarRaw.forEach((ln) => {
+    partirLineasCanvas(mctx, ln, CONTENT_W - 36).forEach((sub) => lineasAmbarEnvueltas.push(sub));
+  });
+  const herrPendH = lineasAmbarEnvueltas.length > 0 ? (42 + lineasAmbarEnvueltas.length * 21 + 14) : 0;
 
   mctx.font = '13px "Segoe UI", Arial, sans-serif';
-  const lineasNota = datos.nota ? partirLineasCanvas(mctx, 'Nota: ' + datos.nota, CONTENT_W - 36) : [];
+  const txtNota = (datos.nota || '').trim();
+  const notaConPrefijo = txtNota ? (/^nota\s*:/i.test(txtNota) ? txtNota : ('Nota: ' + txtNota)) : '';
+  const lineasNota = notaConPrefijo ? partirLineasCanvas(mctx, notaConPrefijo, CONTENT_W - 36) : [];
   const notaH = lineasNota.length ? (lineasNota.length * 19 + 24) : 0;
 
-  const firmasH = datos.firmas.length > 0 ? 105 : 0;
+  const firmasActivas = (datos.firmas || []).filter((f) => (f.rol || '').trim() || (f.nombre || '').trim());
+  const firmasH = firmasActivas.length > 0 ? 105 : 0;
   const headerH = 128;
   const titleBarH = 54;
   const footerH = 48;
 
   const totalTablasH = tablasLayout.reduce((s, t) => s + t.totalTablaH, 0);
-  const totalH = PAD * 2 + headerH + titleBarH + metaBoxH + 18 + totalTablasH +
+  const totalH = PAD * 2 + headerH + titleBarH + (metaBoxH ? metaBoxH + 18 : 12) + totalTablasH +
     (avisoRojoH ? avisoRojoH + 14 : 0) +
     (avisoVerdeH ? avisoVerdeH + 14 : 0) +
     (herrPendH ? herrPendH + 14 : 0) +
@@ -4100,7 +4130,7 @@ async function generarFacturaCanvas(datos) {
   ctx.font = '900 68px "Segoe UI", Arial, sans-serif';
   ctx.fillStyle = 'rgba(14, 165, 233, 0.035)';
   ctx.textAlign = 'center';
-  ctx.fillText('FVIECOM S.A.S', 0, 0);
+  ctx.fillText(datos.empresaNombre || 'FVIECOM S.A.S', 0, 0);
   ctx.font = '800 28px "Segoe UI", Arial, sans-serif';
   ctx.fillText('FV INGENIERIA · ALMACÉN RIONEGRO', 0, 42);
   ctx.restore();
@@ -4143,19 +4173,19 @@ async function generarFacturaCanvas(datos) {
   ctx.textAlign = 'left';
   ctx.fillStyle = '#ffffff';
   ctx.font = '800 24px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('FVIECOM S.A.S', empX, y + 44);
+  ctx.fillText(datos.empresaNombre || 'FVIECOM S.A.S', empX, y + 44);
 
   ctx.fillStyle = '#7dd3fc';
   ctx.font = '600 13px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('FV Ingeniería Eléctrica y Telecomunicaciones', empX, y + 66);
+  ctx.fillText(datos.empresaSub || 'FV Ingeniería Eléctrica y Telecomunicaciones', empX, y + 66);
 
   ctx.fillStyle = '#cbd5e1';
   ctx.font = '12px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('Proyecto: Aeropuerto Intl. José María Córdova — Rionegro', empX, y + 86);
+  ctx.fillText(datos.empresaProy || 'Proyecto: Aeropuerto Intl. José María Córdova — Rionegro', empX, y + 86);
 
   ctx.fillStyle = 'rgba(186, 230, 253, 0.45)';
   ctx.font = '800 10px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('F V   I N G E N I E R I A   ·   A L M A C É N   T É C N I C O', empX, y + 105);
+  ctx.fillText(datos.empresaSello || 'F V   I N G E N I E R I A   ·   A L M A C É N   T É C N I C O', empX, y + 105);
 
   // Recuadro derecho estilo Factura (N° Comprobante)
   const boxW = 235;
@@ -4172,16 +4202,17 @@ async function generarFacturaCanvas(datos) {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#7dd3fc';
   ctx.font = '800 10.5px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('COMPROBANTE DE ALMACÉN', boxX + boxW / 2, boxY + 24);
+  ctx.fillText((datos.etiquetaComprobante || 'COMPROBANTE DE ALMACÉN').toUpperCase(), boxX + boxW / 2, boxY + 24);
 
   ctx.fillStyle = '#ffffff';
   ctx.font = '900 15.5px Consolas, "Courier New", monospace';
-  const numCorto = datos.numeroDoc.length > 21 ? datos.numeroDoc.slice(0, 21) : datos.numeroDoc;
+  const numStr = String(datos.numeroDoc || '-');
+  const numCorto = numStr.length > 21 ? numStr.slice(0, 21) : numStr;
   ctx.fillText(numCorto, boxX + boxW / 2, boxY + 50);
 
   ctx.fillStyle = '#bae6fd';
   ctx.font = '600 11px "Segoe UI", Arial, sans-serif';
-  ctx.fillText('DOCUMENTO OFICIAL', boxX + boxW / 2, boxY + 70);
+  ctx.fillText((datos.subComprobante || 'DOCUMENTO OFICIAL').toUpperCase(), boxX + boxW / 2, boxY + 70);
 
   y += headerH;
 
@@ -4198,45 +4229,47 @@ async function generarFacturaCanvas(datos) {
   ctx.textAlign = 'center';
   ctx.fillStyle = '#0a1a3a';
   ctx.font = '800 17px "Segoe UI", Arial, sans-serif';
-  ctx.fillText(datos.titulo.toUpperCase(), W / 2, y + 33);
+  ctx.fillText((datos.titulo || 'COMPROBANTE').toUpperCase(), W / 2, y + 33);
 
   y += titleBarH + 16;
 
   // 5. Tarjeta de Metadatos (2 columnas)
-  rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, metaBoxH, 10);
-  ctx.fillStyle = '#f8fafc';
-  ctx.fill();
-  ctx.strokeStyle = '#cbd5e1';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  if (metaBoxH > 0) {
+    rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, metaBoxH, 10);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fill();
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    ctx.stroke();
 
-  // Borde izquierdo azul en la tarjeta de metadatos
-  ctx.fillStyle = '#0d6efd';
-  ctx.fillRect(CONTENT_X, y + 6, 4, metaBoxH - 12);
+    // Borde izquierdo azul en la tarjeta de metadatos
+    ctx.fillStyle = '#0d6efd';
+    ctx.fillRect(CONTENT_X, y + 6, 4, metaBoxH - 12);
 
-  const colMetaW = (CONTENT_W - 36) / 2;
-  datos.metaItems.forEach((m, idx) => {
-    const col = idx % 2;
-    const row = Math.floor(idx / 2);
-    const mx = CONTENT_X + 18 + col * colMetaW;
-    const my = y + 26 + row * 28;
-    ctx.textAlign = 'left';
-    ctx.font = 'bold 12.5px "Segoe UI", Arial, sans-serif';
-    ctx.fillStyle = '#0f172a';
-    const lbl = m.label + ': ';
-    ctx.fillText(lbl, mx, my);
-    const lblW = ctx.measureText(lbl).width;
-    ctx.font = '12.5px "Segoe UI", Arial, sans-serif';
-    ctx.fillStyle = '#334155';
-    const maxValW = colMetaW - lblW - 12;
-    let valTxt = m.value;
-    while (valTxt.length > 3 && ctx.measureText(valTxt).width > maxValW) {
-      valTxt = valTxt.slice(0, -2) + '…';
-    }
-    ctx.fillText(valTxt, mx + lblW, my);
-  });
+    const colMetaW = (CONTENT_W - 36) / 2;
+    metaActivos.forEach((m, idx) => {
+      const col = idx % 2;
+      const row = Math.floor(idx / 2);
+      const mx = CONTENT_X + 18 + col * colMetaW;
+      const my = y + 26 + row * 28;
+      ctx.textAlign = 'left';
+      ctx.font = 'bold 12.5px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#0f172a';
+      const lbl = (m.label ? m.label + ': ' : '');
+      ctx.fillText(lbl, mx, my);
+      const lblW = ctx.measureText(lbl).width;
+      ctx.font = '12.5px "Segoe UI", Arial, sans-serif';
+      ctx.fillStyle = '#334155';
+      const maxValW = colMetaW - lblW - 12;
+      let valTxt = String(m.value || '');
+      while (valTxt.length > 3 && ctx.measureText(valTxt).width > maxValW) {
+        valTxt = valTxt.slice(0, -2) + '…';
+      }
+      ctx.fillText(valTxt, mx + lblW, my);
+    });
 
-  y += metaBoxH + 18;
+    y += metaBoxH + 18;
+  }
 
   // 6. Tablas de Materiales / Herramientas
   for (const tb of tablasLayout) {
@@ -4252,7 +4285,7 @@ async function generarFacturaCanvas(datos) {
     ctx.textAlign = 'left';
     ctx.font = '800 13px "Segoe UI", Arial, sans-serif';
     ctx.fillStyle = esHerr ? '#9a3412' : '#1e3a8a';
-    ctx.fillText((esHerr ? '🔧 ' : '📦 ') + tb.subtitulo.toUpperCase(), CONTENT_X + 12, y + 21);
+    ctx.fillText((esHerr ? '🔧 ' : '📦 ') + (tb.subtitulo || '').toUpperCase(), CONTENT_X + 12, y + 21);
 
     ctx.textAlign = 'right';
     ctx.font = '700 11.5px "Segoe UI", Arial, sans-serif';
@@ -4327,7 +4360,7 @@ async function generarFacturaCanvas(datos) {
     y += 18;
   }
 
-  // 7. Aviso Rojo (Herramientas requieren devolucion)
+  // 7. Aviso Rojo (Recordatorio importante / Devolucion de herramientas)
   if (avisoRojoH > 0) {
     rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, avisoRojoH, 10);
     ctx.fillStyle = '#fef2f2';
@@ -4347,7 +4380,7 @@ async function generarFacturaCanvas(datos) {
     y += avisoRojoH + 14;
   }
 
-  // 8. Aviso Verde (Devolucion recibida)
+  // 8. Aviso Verde (Confirmacion / Devolucion recibida)
   if (avisoVerdeH > 0) {
     rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, avisoVerdeH, 10);
     ctx.fillStyle = '#f0fdf4';
@@ -4367,7 +4400,7 @@ async function generarFacturaCanvas(datos) {
     y += avisoVerdeH + 14;
   }
 
-  // 9. Herramientas pendientes en posesion del responsable
+  // 9. Recuadro Ambar (Recordatorio de herramientas pendientes u otros recordatorios)
   if (herrPendH > 0) {
     rectRedondeadoCanvas(ctx, CONTENT_X, y, CONTENT_W, herrPendH, 10);
     ctx.fillStyle = '#fffbeb';
@@ -4379,15 +4412,14 @@ async function generarFacturaCanvas(datos) {
     ctx.textAlign = 'left';
     ctx.font = 'bold 12.5px "Segoe UI", Arial, sans-serif';
     ctx.fillStyle = '#b45309';
-    ctx.fillText(`⚠️ HERRAMIENTAS EN POSESIÓN ACTUAL DEL RESPONSABLE (${datos.herrPendientes.length}):`, CONTENT_X + 14, y + 24);
+    ctx.fillText(datos.tituloHerrPend || '⚠️ RECORDATORIO:', CONTENT_X + 14, y + 24);
 
-    ctx.font = '12px "Segoe UI", Arial, sans-serif';
+    ctx.font = '12.5px "Segoe UI", Arial, sans-serif';
     ctx.fillStyle = '#78350f';
     let hy = y + 46;
-    datos.herrPendientes.forEach((h, i) => {
-      const infoH = `${i + 1}. 🔧 ${h.nombre} — Serial: ${h.serial || '-'}${h.frenteActual ? ' (Frente ' + h.frenteActual + ')' : ''}`;
-      ctx.fillText(infoH, CONTENT_X + 18, hy);
-      hy += 24;
+    lineasAmbarEnvueltas.forEach((ln) => {
+      ctx.fillText(ln, CONTENT_X + 18, hy);
+      hy += 21;
     });
     y += herrPendH + 14;
   }
@@ -4416,13 +4448,13 @@ async function generarFacturaCanvas(datos) {
 
   // 11. Bloques de Firma
   if (firmasH > 0) {
-    const numF = datos.firmas.length;
+    const numF = firmasActivas.length;
     const fWidth = Math.min(260, (CONTENT_W - (numF - 1) * 40) / numF);
     const totalFWidth = numF * fWidth + (numF - 1) * 40;
     let fx = CONTENT_X + (CONTENT_W - totalFWidth) / 2;
     const fy = y + 58;
 
-    datos.firmas.forEach((f) => {
+    firmasActivas.forEach((f) => {
       ctx.strokeStyle = '#334155';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -4433,11 +4465,11 @@ async function generarFacturaCanvas(datos) {
       ctx.textAlign = 'center';
       ctx.font = '11px "Segoe UI", Arial, sans-serif';
       ctx.fillStyle = '#64748b';
-      ctx.fillText(f.rol.toUpperCase(), fx + fWidth / 2, fy + 18);
+      ctx.fillText((f.rol || '').toUpperCase(), fx + fWidth / 2, fy + 18);
 
       ctx.font = 'bold 13px "Segoe UI", Arial, sans-serif';
       ctx.fillStyle = '#0f172a';
-      ctx.fillText(f.nombre, fx + fWidth / 2, fy + 36);
+      ctx.fillText(f.nombre || '-', fx + fWidth / 2, fy + 36);
 
       fx += fWidth + 40;
     });
@@ -4463,18 +4495,18 @@ async function generarFacturaCanvas(datos) {
   ctx.textAlign = 'left';
   ctx.font = '600 11.5px "Segoe UI", Arial, sans-serif';
   ctx.fillStyle = '#0369a1';
-  ctx.fillText(`📅 Emitido: ${new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota', dateStyle: 'short', timeStyle: 'short' })}   ·   👤 Almacenista: ${nombreUsuario()}`, CONTENT_X, footY + 29);
+  ctx.fillText(datos.pieIzq || '', CONTENT_X, footY + 29);
 
   ctx.textAlign = 'right';
   ctx.font = '800 11px "Segoe UI", Arial, sans-serif';
   ctx.fillStyle = '#0284c7';
-  ctx.fillText('FV INGENIERIA   ·   FVIECOM S.A.S', CONTENT_X + CONTENT_W, footY + 29);
+  ctx.fillText(datos.pieDer || 'FV INGENIERIA   ·   FVIECOM S.A.S', CONTENT_X + CONTENT_W, footY + 29);
 
   ctx.restore();
   return canvas;
 }
 
-// Abre un modal con la Factura / Comprobante en una sola foto lista para copiar y enviar por WhatsApp
+// Abre un modal con la Factura / Comprobante editable en vivo y lista para enviar en una sola foto por WhatsApp
 async function compartirPorWhatsApp(ordenDirecta) {
   const area = $('#print-area');
   if (!area || !area.innerHTML.trim()) {
@@ -4485,12 +4517,12 @@ async function compartirPorWhatsApp(ordenDirecta) {
   const textoEspecialDev = window._devolucionWhatsAppTexto || '';
   window._devolucionWhatsAppTexto = null;
 
-  toast('Generando factura en imagen HD...', 'ok');
+  toast('Preparando editor y factura en imagen HD...', 'ok');
   const datos = extraerDatosFacturaDesdeArea(area, ordenDirecta);
-  const canvas = await generarFacturaCanvas(datos);
-  const dataUrl = canvas.toDataURL('image/png');
-  const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
-  const nombreArchivo = `${docNombreActual || ('Factura_' + datos.numeroDoc)}.png`.replace(/[^\w\-.]+/g, '_');
+  let canvas = await generarFacturaCanvas(datos);
+  let dataUrl = canvas.toDataURL('image/png');
+  let blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+  const getNombreArchivo = () => `${docNombreActual || ('Factura_' + datos.numeroDoc)}.png`.replace(/[^\w\-.]+/g, '_');
 
   // Opciones de telefono del responsable
   const listaDir = Object.entries(leerDirectorioResp()).filter(([, w]) => w);
@@ -4505,22 +4537,138 @@ async function compartirPorWhatsApp(ordenDirecta) {
       </div>`
     : '';
 
-  abrirModal('📱 Factura en Foto para WhatsApp — ' + datos.numeroDoc, `
+  const msgWaInicial = textoEspecialDev
+    ? `📋 *FVIECOM S.A.S* — ✅ *Devolución de orden (${datos.numeroDoc})*\nAdjunto comprobante oficial de devolución en imagen.`
+    : (datos.avisoRojo || datos.lineasHerrPend.length > 0)
+      ? `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n⚠️ *Recordatorio:* Por favor verificar los materiales/herramientas en la factura adjunta y recordar devolver las herramientas al almacén al finalizar la labor.`
+      : `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\nAdjunto comprobante oficial de almacén en imagen.`;
+
+  abrirModal('📱 Editar y Enviar Factura por WhatsApp — ' + datos.numeroDoc, `
     <div style="display:flex;flex-direction:column;gap:12px">
       <div id="wa-copy-banner" style="background:rgba(37,211,102,0.12);border:1px solid rgba(37,211,102,0.4);border-radius:10px;padding:10px 14px;font-size:12.5px;color:#bbf7d0;line-height:1.5">
-        ✨ <b>Todo en una sola foto:</b> Al pulsar <b>"Copiar foto y abrir WhatsApp"</b>, la factura se copia automáticamente. Cuando se abra el chat de WhatsApp, solo presiona <b>Ctrl + V (Pegar)</b> y envíala.
+        ✨ <b>Edita todo lo que necesites antes de enviar:</b> Cualquier cambio abajo actualiza la foto de la factura en tiempo real. Al pulsar <b>"Copiar foto y abrir WhatsApp"</b>, solo presionas <b>Ctrl + V (Pegar)</b> en el chat.
       </div>
 
-      <div class="campo" style="margin:0">
-        <label style="font-size:12px;color:var(--texto-dim);margin-bottom:4px;display:block">Destinatario / Número de WhatsApp (opcional, ej: 573001234567)</label>
-        ${chipsDest}
-        <input id="wa-input-telefono" list="wa-dl-numeros" value="${esc(destPrincipal.whatsapp || '')}" placeholder="Ej: 573001234567 (o déjalo vacío para elegir el contacto en WhatsApp)" style="width:100%" />
-        <datalist id="wa-dl-numeros">
-          ${listaDir.map(([n, w]) => `<option value="${esc(w)}" label="${esc(n)}"></option>`).join('')}
-        </datalist>
+      <!-- Destinatario y Mensaje de texto / recordatorio de WhatsApp -->
+      <div style="display:grid;grid-template-columns:1fr 1.3fr;gap:12px;background:rgba(255,255,255,0.03);border:1px solid var(--linea);border-radius:12px;padding:12px">
+        <div class="campo" style="margin:0">
+          <label style="font-size:12px;color:var(--texto-dim);margin-bottom:4px;display:block">📱 Teléfono WhatsApp del destinatario</label>
+          ${chipsDest}
+          <input id="wa-input-telefono" list="wa-dl-numeros" value="${esc(destPrincipal.whatsapp || '')}" placeholder="Ej: 573001234567 (o vacío para elegir en WhatsApp)" style="width:100%" />
+          <datalist id="wa-dl-numeros">
+            ${listaDir.map(([n, w]) => `<option value="${esc(w)}" label="${esc(n)}"></option>`).join('')}
+          </datalist>
+        </div>
+        <div class="campo" style="margin:0">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:4px">
+            <label style="font-size:12px;color:var(--texto-dim);margin:0">💬 Mensaje / Recordatorio que irá escrito en el chat de WhatsApp</label>
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              <button type="button" class="btn-ghost" data-wa-preset="devolucion" style="font-size:10.5px;padding:2px 7px" title="Poner recordatorio de devolución de herramientas">🔔 Recordar devolución</button>
+              <button type="button" class="btn-ghost" data-wa-preset="confirmar" style="font-size:10.5px;padding:2px 7px" title="Pedir confirmación de recibido">✅ Confirmar recibido</button>
+              <button type="button" class="btn-ghost" data-wa-preset="corto" style="font-size:10.5px;padding:2px 7px" title="Mensaje corto estándar">📄 Corto</button>
+            </div>
+          </div>
+          <textarea id="wa-input-mensaje" rows="3" style="width:100%;font-size:12.5px;line-height:1.4" placeholder="Escribe el mensaje o recordatorio que acompañará la foto en WhatsApp...">${esc(msgWaInicial)}</textarea>
+        </div>
       </div>
 
-      <div style="background:#071124;border:1px solid var(--linea);border-radius:12px;padding:10px;max-height:52vh;overflow-y:auto;text-align:center">
+      <!-- Panel Editor de la Factura (Pestañas) -->
+      <div style="background:rgba(13,110,253,0.06);border:1px solid rgba(56,189,248,0.28);border-radius:12px;padding:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px">
+          <div style="font-size:13px;font-weight:700;color:#7dd3fc">✏️ Personalizar contenido de la Factura antes de enviar (se actualiza en vivo)</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap" id="wa-edit-tabs">
+            <button type="button" class="btn-ghost wa-tab-btn activo" data-wtab="recordatorios" style="font-size:11.5px;padding:4px 10px;border-color:var(--cian);color:#fff">🔔 Recordatorios y Nota</button>
+            <button type="button" class="btn-ghost wa-tab-btn" data-wtab="cabecera" style="font-size:11.5px;padding:4px 10px">📋 Cabecera y Datos</button>
+            <button type="button" class="btn-ghost wa-tab-btn" data-wtab="items" style="font-size:11.5px;padding:4px 10px">📦 Materiales / Tabla</button>
+            <button type="button" class="btn-ghost wa-tab-btn" data-wtab="firmas" style="font-size:11.5px;padding:4px 10px">✍️ Firmas y Pie</button>
+          </div>
+        </div>
+
+        <!-- TAB 1: Recordatorios, Alertas y Nota dentro de la Factura -->
+        <div class="wa-tab-pane" data-wpane="recordatorios" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          <div class="campo" style="margin:0">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <label style="font-size:11.5px;color:#fca5a5;margin:0">🚨 Recuadro Rojo (Recordatorio / Alerta de Devolución en la factura)</label>
+              <div style="display:flex;gap:4px">
+                <button type="button" class="btn-ghost" id="wa-preset-rojo-herr" style="font-size:10px;padding:1px 6px">＋ Devolución herr.</button>
+                <button type="button" class="btn-ghost" id="wa-clear-rojo" style="font-size:10px;padding:1px 6px">Limpiar</button>
+              </div>
+            </div>
+            <textarea id="wa-ed-aviso-rojo" rows="2" placeholder="Vacío = no se muestra. Escribe aquí un recordatorio destacado en rojo..." style="width:100%;font-size:12px">${esc(datos.avisoRojo)}</textarea>
+          </div>
+
+          <div class="campo" style="margin:0">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <label style="font-size:11.5px;color:#93c5fd;margin:0">📝 Nota / Observaciones en la factura</label>
+              <button type="button" class="btn-ghost" id="wa-clear-nota" style="font-size:10px;padding:1px 6px">Limpiar</button>
+            </div>
+            <textarea id="wa-ed-nota" rows="2" placeholder="Vacío = sin nota. Escribe observaciones o notas para la factura..." style="width:100%;font-size:12px">${esc(datos.nota)}</textarea>
+          </div>
+
+          <div class="campo" style="margin:0;grid-column:1 / -1">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:6px">
+              <label style="font-size:11.5px;color:#fcd34d;margin:0">⚠️ Recuadro Ámbar de Recordatorio / Herramientas Pendientes (1 renglón por línea)</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input id="wa-ed-tit-ambar" value="${esc(datos.tituloHerrPend)}" placeholder="Título del recuadro ámbar" style="font-size:11.5px;padding:3px 8px;width:330px;max-width:55vw" />
+                <button type="button" class="btn-ghost" id="wa-add-ambar-ejemplo" style="font-size:10px;padding:2px 7px">＋ Ejemplo recordatorio</button>
+                <button type="button" class="btn-ghost" id="wa-clear-ambar" style="font-size:10px;padding:2px 7px">Ocultar recuadro</button>
+              </div>
+            </div>
+            <textarea id="wa-ed-lineas-ambar" rows="2" placeholder="Vacío = no se muestra este recuadro. Escribe aquí herramientas pendientes o puntos de recordatorio (uno por línea)..." style="width:100%;font-size:12px">${esc(datos.lineasHerrPend.join('\n'))}</textarea>
+          </div>
+
+          <div class="campo" style="margin:0;grid-column:1 / -1">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <label style="font-size:11.5px;color:#86efac;margin:0">✅ Recuadro Verde de Confirmación (opcional)</label>
+              <div style="display:flex;gap:4px">
+                <button type="button" class="btn-ghost" id="wa-preset-verde" style="font-size:10px;padding:1px 6px">＋ Recibido conforme</button>
+                <button type="button" class="btn-ghost" id="wa-clear-verde" style="font-size:10px;padding:1px 6px">Limpiar</button>
+              </div>
+            </div>
+            <input id="wa-ed-aviso-verde" value="${esc(datos.avisoVerde)}" placeholder="Vacío = no se muestra (ej: ✅ HERRAMIENTAS RECIBIDAS EN ALMACÉN)" style="width:100%;font-size:12px" />
+          </div>
+        </div>
+
+        <!-- TAB 2: Cabecera y Metadatos -->
+        <div class="wa-tab-pane" data-wpane="cabecera" hidden style="display:flex;flex-direction:column;gap:10px">
+          <div style="display:grid;grid-template-columns:1.4fr 1fr 1fr;gap:8px">
+            <div class="campo" style="margin:0"><label style="font-size:11px">Título principal del documento</label><input id="wa-ed-titulo" value="${esc(datos.titulo)}" style="font-size:12px" /></div>
+            <div class="campo" style="margin:0"><label style="font-size:11px">N° Comprobante / Orden</label><input id="wa-ed-numdoc" value="${esc(datos.numeroDoc)}" style="font-size:12px" /></div>
+            <div class="campo" style="margin:0"><label style="font-size:11px">Etiqueta recuadro derecho</label><input id="wa-ed-etqcomp" value="${esc(datos.etiquetaComprobante)}" style="font-size:12px" /></div>
+          </div>
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <span style="font-size:11.5px;color:var(--texto-dim);font-weight:600">Datos de la Orden (Etiqueta : Valor)</span>
+              <button type="button" class="btn-ghost" id="wa-add-meta" style="font-size:11px;padding:2px 8px">＋ Agregar dato</button>
+            </div>
+            <div id="wa-meta-list" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Materiales / Herramientas (Tablas) -->
+        <div class="wa-tab-pane" data-wpane="items" hidden style="display:flex;flex-direction:column;gap:10px;max-height:220px;overflow-y:auto;padding-right:4px">
+          <div id="wa-tablas-editor"></div>
+        </div>
+
+        <!-- TAB 4: Firmas y Pie de pagina -->
+        <div class="wa-tab-pane" data-wpane="firmas" hidden style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <span style="font-size:11.5px;color:var(--texto-dim);font-weight:600">Bloques de Firma</span>
+              <button type="button" class="btn-ghost" id="wa-add-firma" style="font-size:11px;padding:2px 8px">＋ Agregar firma</button>
+            </div>
+            <div id="wa-firmas-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:8px">
+            <div class="campo" style="margin:0"><label style="font-size:11px">Texto pie de página izquierdo</label><input id="wa-ed-pie-izq" value="${esc(datos.pieIzq)}" style="font-size:12px" /></div>
+            <div class="campo" style="margin:0"><label style="font-size:11px">Texto pie de página derecho</label><input id="wa-ed-pie-der" value="${esc(datos.pieDer)}" style="font-size:12px" /></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vista previa en vivo de la Factura -->
+      <div style="background:#071124;border:1px solid var(--linea);border-radius:12px;padding:10px;max-height:46vh;overflow-y:auto;text-align:center;position:relative">
+        <div style="font-size:11px;color:var(--texto-mute);margin-bottom:6px">👁️ Vista previa en vivo de la foto que se enviará por WhatsApp:</div>
         <img id="wa-factura-preview" src="${dataUrl}" alt="Factura FVIECOM" style="max-width:100%;height:auto;border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,0.45)" />
       </div>
 
@@ -4536,7 +4684,234 @@ async function compartirPorWhatsApp(ordenDirecta) {
         </div>
       </div>
     </div>
-  `, '740px');
+  `, '820px');
+
+  // Re-renderizar el canvas en vivo cuando el usuario edita cualquier campo
+  let renderTimer = null;
+  const regenerarFacturaEnVivo = () => {
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(async () => {
+      canvas = await generarFacturaCanvas(datos);
+      dataUrl = canvas.toDataURL('image/png');
+      blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      const imgEl = $('#wa-factura-preview');
+      if (imgEl) imgEl.src = dataUrl;
+    }, 90);
+  };
+
+  // Pestañas del editor
+  document.querySelectorAll('.wa-tab-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.wtab;
+      document.querySelectorAll('.wa-tab-btn').forEach((b) => {
+        const on = b.dataset.wtab === tab;
+        b.classList.toggle('activo', on);
+        b.style.borderColor = on ? 'var(--cian)' : 'var(--linea)';
+        b.style.color = on ? '#fff' : '';
+      });
+      document.querySelectorAll('.wa-tab-pane').forEach((p) => {
+        p.hidden = p.dataset.wpane !== tab;
+      });
+    });
+  });
+
+  // Eventos de Presets del mensaje de texto de WhatsApp
+  document.querySelectorAll('[data-wa-preset]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tipoP = btn.dataset.waPreset;
+      const inpMsg = $('#wa-input-mensaje');
+      if (!inpMsg) return;
+      if (tipoP === 'devolucion') {
+        inpMsg.value = `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n🔔 *Recordatorio importante:* Por favor recuerda devolver al almacén las herramientas asignadas tan pronto finalices la labor. Adjunto comprobante en foto.`;
+      } else if (tipoP === 'confirmar') {
+        inpMsg.value = `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})\n✅ Adjunto comprobante de despacho en foto. Por favor confirmar de recibido por este medio.`;
+      } else {
+        inpMsg.value = `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})`;
+      }
+      inpMsg.focus();
+    });
+  });
+
+  // Eventos TAB 1: Recordatorios, Alertas y Nota
+  const inpRojo = $('#wa-ed-aviso-rojo');
+  const inpNota = $('#wa-ed-nota');
+  const inpTitAmbar = $('#wa-ed-tit-ambar');
+  const inpLineasAmbar = $('#wa-ed-lineas-ambar');
+  const inpVerde = $('#wa-ed-aviso-verde');
+
+  if (inpRojo) inpRojo.addEventListener('input', () => { datos.avisoRojo = inpRojo.value; regenerarFacturaEnVivo(); });
+  if (inpNota) inpNota.addEventListener('input', () => { datos.nota = inpNota.value; regenerarFacturaEnVivo(); });
+  if (inpTitAmbar) inpTitAmbar.addEventListener('input', () => { datos.tituloHerrPend = inpTitAmbar.value; regenerarFacturaEnVivo(); });
+  if (inpLineasAmbar) inpLineasAmbar.addEventListener('input', () => {
+    datos.lineasHerrPend = inpLineasAmbar.value.split('\n').map((s) => s.trim()).filter(Boolean);
+    regenerarFacturaEnVivo();
+  });
+  if (inpVerde) inpVerde.addEventListener('input', () => { datos.avisoVerde = inpVerde.value; regenerarFacturaEnVivo(); });
+
+  $('#wa-preset-rojo-herr')?.addEventListener('click', () => {
+    datos.avisoRojo = '⚠️ LAS HERRAMIENTAS LISTADAS ARRIBA REQUIEREN DEVOLUCIÓN — POR FAVOR ENTREGAR EN ALMACÉN AL FINALIZAR LA LABOR';
+    if (inpRojo) inpRojo.value = datos.avisoRojo;
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-clear-rojo')?.addEventListener('click', () => {
+    datos.avisoRojo = '';
+    if (inpRojo) inpRojo.value = '';
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-clear-nota')?.addEventListener('click', () => {
+    datos.nota = '';
+    if (inpNota) inpNota.value = '';
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-add-ambar-ejemplo')?.addEventListener('click', () => {
+    const nuevaLinea = '• Por favor verificar el estado de los materiales y reportar cualquier novedad al almacén.';
+    datos.lineasHerrPend.push(nuevaLinea);
+    if (inpLineasAmbar) inpLineasAmbar.value = datos.lineasHerrPend.join('\n');
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-clear-ambar')?.addEventListener('click', () => {
+    datos.lineasHerrPend = [];
+    if (inpLineasAmbar) inpLineasAmbar.value = '';
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-preset-verde')?.addEventListener('click', () => {
+    datos.avisoVerde = '✅ MATERIALES Y HERRAMIENTAS VERIFICADOS EN ALMACÉN';
+    if (inpVerde) inpVerde.value = datos.avisoVerde;
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-clear-verde')?.addEventListener('click', () => {
+    datos.avisoVerde = '';
+    if (inpVerde) inpVerde.value = '';
+    regenerarFacturaEnVivo();
+  });
+
+  // Eventos TAB 2: Cabecera y Metadatos
+  $('#wa-ed-titulo')?.addEventListener('input', (e) => { datos.titulo = e.target.value; regenerarFacturaEnVivo(); });
+  $('#wa-ed-numdoc')?.addEventListener('input', (e) => { datos.numeroDoc = e.target.value; regenerarFacturaEnVivo(); });
+  $('#wa-ed-etqcomp')?.addEventListener('input', (e) => { datos.etiquetaComprobante = e.target.value; regenerarFacturaEnVivo(); });
+
+  const renderMetaEditor = () => {
+    const cont = $('#wa-meta-list');
+    if (!cont) return;
+    cont.innerHTML = datos.metaItems.map((m, i) => `
+      <div style="display:flex;gap:4px;align-items:center">
+        <input data-meta-lbl="${i}" value="${esc(m.label)}" placeholder="Campo" style="width:110px;font-size:11.5px;padding:5px 7px" />
+        <input data-meta-val="${i}" value="${esc(m.value)}" placeholder="Valor" style="flex:1;font-size:11.5px;padding:5px 7px" />
+        <button type="button" class="btn-icon peligro" data-meta-del="${i}" title="Quitar campo" style="padding:3px 7px">✕</button>
+      </div>
+    `).join('');
+    cont.querySelectorAll('[data-meta-lbl]').forEach((inp) => inp.addEventListener('input', () => {
+      datos.metaItems[Number(inp.dataset.metaLbl)].label = inp.value;
+      regenerarFacturaEnVivo();
+    }));
+    cont.querySelectorAll('[data-meta-val]').forEach((inp) => inp.addEventListener('input', () => {
+      datos.metaItems[Number(inp.dataset.metaVal)].value = inp.value;
+      regenerarFacturaEnVivo();
+    }));
+    cont.querySelectorAll('[data-meta-del]').forEach((btn) => btn.addEventListener('click', () => {
+      datos.metaItems.splice(Number(btn.dataset.metaDel), 1);
+      renderMetaEditor();
+      regenerarFacturaEnVivo();
+    }));
+  };
+  renderMetaEditor();
+  $('#wa-add-meta')?.addEventListener('click', () => {
+    datos.metaItems.push({ label: 'Recordatorio', value: 'Revisar entrega' });
+    renderMetaEditor();
+    regenerarFacturaEnVivo();
+  });
+
+  // Eventos TAB 3: Editor de Tablas (Materiales / Herramientas)
+  const renderTablasEditor = () => {
+    const cont = $('#wa-tablas-editor');
+    if (!cont) return;
+    cont.innerHTML = datos.tablas.map((tb, tIdx) => `
+      <div style="background:rgba(255,255,255,0.03);border:1px solid var(--linea);border-radius:8px;padding:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+          <input data-tb-sub="${tIdx}" value="${esc(tb.subtitulo)}" placeholder="Título de sección" style="font-size:12px;font-weight:700;padding:4px 8px;flex:1" />
+          <button type="button" class="btn-ghost" data-tb-addrow="${tIdx}" style="font-size:11px;padding:3px 8px">＋ Agregar renglón</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          ${tb.filas.map((fila, rIdx) => `
+            <div style="display:flex;gap:4px;align-items:center">
+              ${fila.map((cel, cIdx) => `
+                <input data-tb-cell="${tIdx}-${rIdx}-${cIdx}" value="${esc(cel.texto)}" placeholder="${esc((tb.headers[cIdx] || {}).texto || '')}" style="flex:${cIdx === 1 ? 2.5 : (cIdx === 0 ? 0.45 : 1)};font-size:11.5px;padding:4px 6px;text-align:${cel.align}" />
+              `).join('')}
+              <button type="button" class="btn-icon peligro" data-tb-delrow="${tIdx}-${rIdx}" title="Quitar renglón" style="padding:2px 6px">✕</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `).join('');
+
+    cont.querySelectorAll('[data-tb-sub]').forEach((inp) => inp.addEventListener('input', () => {
+      datos.tablas[Number(inp.dataset.tbSub)].subtitulo = inp.value;
+      regenerarFacturaEnVivo();
+    }));
+    cont.querySelectorAll('[data-tb-cell]').forEach((inp) => inp.addEventListener('input', () => {
+      const [tIdx, rIdx, cIdx] = inp.dataset.tbCell.split('-').map(Number);
+      if (datos.tablas[tIdx] && datos.tablas[tIdx].filas[rIdx] && datos.tablas[tIdx].filas[rIdx][cIdx]) {
+        datos.tablas[tIdx].filas[rIdx][cIdx].texto = inp.value;
+        regenerarFacturaEnVivo();
+      }
+    }));
+    cont.querySelectorAll('[data-tb-delrow]').forEach((btn) => btn.addEventListener('click', () => {
+      const [tIdx, rIdx] = btn.dataset.tbDelrow.split('-').map(Number);
+      if (datos.tablas[tIdx]) {
+        datos.tablas[tIdx].filas.splice(rIdx, 1);
+        renderTablasEditor();
+        regenerarFacturaEnVivo();
+      }
+    }));
+    cont.querySelectorAll('[data-tb-addrow]').forEach((btn) => btn.addEventListener('click', () => {
+      const tIdx = Number(btn.dataset.tbAddrow);
+      const tb = datos.tablas[tIdx];
+      if (!tb) return;
+      const nuevaFila = tb.headers.map((h, cIdx) => ({
+        texto: cIdx === 0 ? String(tb.filas.length + 1) : (h.align === 'right' ? '1' : 'unidad'),
+        align: h.align
+      }));
+      if (nuevaFila[1]) nuevaFila[1].texto = 'Nuevo ítem';
+      tb.filas.push(nuevaFila);
+      renderTablasEditor();
+      regenerarFacturaEnVivo();
+    }));
+  };
+  renderTablasEditor();
+
+  // Eventos TAB 4: Firmas y Pie de pagina
+  const renderFirmasEditor = () => {
+    const cont = $('#wa-firmas-list');
+    if (!cont) return;
+    cont.innerHTML = datos.firmas.map((f, i) => `
+      <div style="display:flex;gap:4px;align-items:center">
+        <input data-firma-rol="${i}" value="${esc(f.rol)}" placeholder="Rol (ej: Responsable)" style="width:120px;font-size:11.5px;padding:5px 7px" />
+        <input data-firma-nom="${i}" value="${esc(f.nombre)}" placeholder="Nombre" style="flex:1;font-size:11.5px;padding:5px 7px" />
+        <button type="button" class="btn-icon peligro" data-firma-del="${i}" title="Quitar firma" style="padding:3px 7px">✕</button>
+      </div>
+    `).join('');
+    cont.querySelectorAll('[data-firma-rol]').forEach((inp) => inp.addEventListener('input', () => {
+      datos.firmas[Number(inp.dataset.firmaRol)].rol = inp.value;
+      regenerarFacturaEnVivo();
+    }));
+    cont.querySelectorAll('[data-firma-nom]').forEach((inp) => inp.addEventListener('input', () => {
+      datos.firmas[Number(inp.dataset.firmaNom)].nombre = inp.value;
+      regenerarFacturaEnVivo();
+    }));
+    cont.querySelectorAll('[data-firma-del]').forEach((btn) => btn.addEventListener('click', () => {
+      datos.firmas.splice(Number(btn.dataset.firmaDel), 1);
+      renderFirmasEditor();
+      regenerarFacturaEnVivo();
+    }));
+  };
+  renderFirmasEditor();
+  $('#wa-add-firma')?.addEventListener('click', () => {
+    datos.firmas.push({ rol: 'Vo. Bo. / Testigo', nombre: '' });
+    renderFirmasEditor();
+    regenerarFacturaEnVivo();
+  });
+  $('#wa-ed-pie-izq')?.addEventListener('input', (e) => { datos.pieIzq = e.target.value; regenerarFacturaEnVivo(); });
+  $('#wa-ed-pie-der')?.addEventListener('input', (e) => { datos.pieDer = e.target.value; regenerarFacturaEnVivo(); });
 
   // Seleccionar chip de responsable
   document.querySelectorAll('.wa-chip-dest').forEach((btn) => {
@@ -4548,8 +4923,22 @@ async function compartirPorWhatsApp(ordenDirecta) {
     });
   });
 
+  // Asegura que el canvas/blob refleje el ultimo cambio antes de copiar o descargar
+  const asegurarImagenActualizada = async () => {
+    if (renderTimer) {
+      clearTimeout(renderTimer);
+      renderTimer = null;
+      canvas = await generarFacturaCanvas(datos);
+      dataUrl = canvas.toDataURL('image/png');
+      blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      const imgEl = $('#wa-factura-preview');
+      if (imgEl) imgEl.src = dataUrl;
+    }
+  };
+
   // Funcion auxiliar para copiar el PNG al portapapeles
   const copiarFotoAlPortapapeles = async () => {
+    await asegurarImagenActualizada();
     if (!blob || !navigator.clipboard || !window.ClipboardItem) return false;
     try {
       await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
@@ -4566,26 +4955,32 @@ async function compartirPorWhatsApp(ordenDirecta) {
   };
 
   // Mostrar boton de compartir nativo si el navegador soporta compartir archivos (celulares/tablets)
-  const archivoPng = blob ? new File([blob], nombreArchivo, { type: 'image/png' }) : null;
   const btnShareNativo = $('#wa-btn-share-nativo');
-  if (btnShareNativo && archivoPng && navigator.canShare && navigator.canShare({ files: [archivoPng] })) {
-    btnShareNativo.hidden = false;
-    btnShareNativo.addEventListener('click', async () => {
-      try {
-        await navigator.share({
-          files: [archivoPng],
-          title: `Comprobante FVIECOM — ${datos.numeroDoc}`,
-          text: `📋 FVIECOM S.A.S — ${datos.titulo} (${datos.numeroDoc})`
-        });
-      } catch (_e) { /* usuario cancelo share */ }
-    });
+  if (btnShareNativo && blob && navigator.canShare) {
+    const testFile = new File([blob], getNombreArchivo(), { type: 'image/png' });
+    if (navigator.canShare({ files: [testFile] })) {
+      btnShareNativo.hidden = false;
+      btnShareNativo.addEventListener('click', async () => {
+        await asegurarImagenActualizada();
+        const archivoActual = new File([blob], getNombreArchivo(), { type: 'image/png' });
+        const msgTexto = (($('#wa-input-mensaje') || {}).value || '').trim();
+        try {
+          await navigator.share({
+            files: [archivoActual],
+            title: `Comprobante FVIECOM — ${datos.numeroDoc}`,
+            text: msgTexto || `📋 FVIECOM S.A.S — ${datos.titulo} (${datos.numeroDoc})`
+          });
+        } catch (_e) { /* usuario cancelo share */ }
+      });
+    }
   }
 
   // Descargar PNG
-  $('#wa-btn-descargar').addEventListener('click', () => {
+  $('#wa-btn-descargar').addEventListener('click', async () => {
+    await asegurarImagenActualizada();
     const a = document.createElement('a');
     a.href = dataUrl;
-    a.download = nombreArchivo;
+    a.download = getNombreArchivo();
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -4595,7 +4990,7 @@ async function compartirPorWhatsApp(ordenDirecta) {
   // Solo copiar foto al portapapeles
   $('#wa-btn-solo-copiar').addEventListener('click', async () => {
     const ok = await copiarFotoAlPortapapeles();
-    if (ok) toast('✅ Foto copiada al portapapeles. Pégala con Ctrl + V en WhatsApp.', 'ok');
+    if (ok) toast('✅ Foto actualizada y copiada al portapapeles. Pégala con Ctrl + V en WhatsApp.', 'ok');
     else toast('Tu navegador no permitió copiar directo; usa "Descargar PNG".', 'error');
   });
 
@@ -4608,10 +5003,9 @@ async function compartirPorWhatsApp(ordenDirecta) {
   $('#wa-btn-enviar').addEventListener('click', async () => {
     const copiado = await copiarFotoAlPortapapeles();
     if (!copiado) {
-      // Si el navegador bloquea el portapapeles, descargamos la foto automaticamente para que la tenga a mano
       const a = document.createElement('a');
       a.href = dataUrl;
-      a.download = nombreArchivo;
+      a.download = getNombreArchivo();
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -4622,16 +5016,15 @@ async function compartirPorWhatsApp(ordenDirecta) {
       numRaw = '57' + numRaw; // Prefijo Colombia automatico para celulares de 10 digitos
     }
 
-    const caption = textoEspecialDev
-      ? `📋 *FVIECOM S.A.S* — ✅ *Devolución de orden (${datos.numeroDoc})*`
-      : `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})`;
+    const caption = (($('#wa-input-mensaje') || {}).value || '').trim() ||
+      `📋 *FVIECOM S.A.S* — *${datos.titulo}* (${datos.numeroDoc})`;
 
     const url = `https://wa.me/${numRaw}?text=${encodeURIComponent(caption)}`;
     window.open(url, '_blank');
     toast(copiado ? '✅ Foto copiada. En WhatsApp presiona Ctrl + V para pegar la factura.' : 'Abriendo WhatsApp... adjunta la imagen descargada.', 'ok');
   });
 
-  // Copiar automaticamente al abrir el modal para ahorrarle incluso un clic si ya tiene WhatsApp abierto
+  // Copiar automaticamente la version inicial al abrir el modal
   copiarFotoAlPortapapeles();
 }
 
