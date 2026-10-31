@@ -604,11 +604,15 @@ function renderBarraVentanas() {
   }
   const trabajo = ventanas.lista.filter((v) => v.multitarea);
   barra.hidden = trabajo.length === 0;
-  barra.innerHTML = `<span class="vt-lbl">🗂 Multitarea (${trabajo.length})</span>` + trabajo.map((v) => `
-    <div class="vt-chip ${ventanas.activa === v ? 'activa' : ''}" data-vid="${v.id}" title="${ventanas.activa === v ? 'Minimizar' : 'Abrir'}: ${esc(v.titulo)}">
-      <span>${v.icono || '🗂'}</span><span class="vt-tit">${esc(v.titulo)}</span>
+  barra.innerHTML = `<span class="vt-lbl">🗂 Multitarea (${trabajo.length})</span>` + trabajo.map((v) => {
+    const ico = v.icono || '🗂';
+    const titLimpio = (v.titulo || '').startsWith(ico) ? v.titulo.slice(ico.length).trim() : (v.titulo || '');
+    return `
+    <div class="vt-chip ${ventanas.activa === v ? 'activa' : ''}" data-vid="${v.id}" title="${ventanas.activa === v ? 'Minimizar' : 'Abrir'}: ${esc(titLimpio)}">
+      <span>${ico}</span><span class="vt-tit">${esc(titLimpio)}</span>
       <button type="button" class="vt-x" data-cerrar-vid="${v.id}" title="Cerrar ventana">✕</button>
-    </div>`).join('') + `<button type="button" class="vt-new-btn" data-vt-nueva="1" title="Abrir otra orden, material o movimiento sin cerrar lo actual">＋ Nueva tarea</button>`;
+    </div>`;
+  }).join('') + `<button type="button" class="vt-new-btn" data-vt-nueva="1" title="Abrir otra orden, material o movimiento sin cerrar lo actual">＋ Nueva tarea</button>`;
 }
 
 let menuRapidoEl = null;
@@ -1026,7 +1030,7 @@ function inyectarExtras() {
   /* --- Modal draggable, minimizable, maximizable & 8-way resizable --- */
   .modal { position:relative; display:flex; flex-direction:column; max-width:96vw; max-height:92vh; overflow:visible !important; }
   .modal-head { flex:0 0 auto; cursor:move; user-select:none; }
-  .modal-body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; }
+  .modal-body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; }
   .modal-wrap.modal-draggable { align-items:flex-start; justify-content:flex-start; pointer-events:none; }
   .modal-wrap.modal-draggable .modal { pointer-events:all; position:absolute; cursor:default; margin:0; }
   .modal-head .modal-controles { display:flex; gap:6px; align-items:center; }
@@ -1059,7 +1063,7 @@ function inyectarExtras() {
   .modal-rz-handle.rz-sw { bottom:-6px; left:-6px; width:16px; height:16px; cursor:nesw-resize; border-radius:4px; }
   .modal-rz-handle.rz-se { bottom:-4px; right:-4px; width:18px; height:18px; cursor:nwse-resize; border-radius:0 0 14px 0; background:linear-gradient(135deg, transparent 50%, rgba(0,200,255,0.45) 50%); }
   .modal-rz-handle.rz-se:hover { background:linear-gradient(135deg, transparent 40%, #00c8ff 40%); }
-  .ia-scan-grid { display:grid; grid-template-columns:minmax(280px, 0.82fr) minmax(360px, 1.38fr); gap:14px; align-items:stretch; flex:1 1 auto; min-height:0; }
+  .ia-scan-grid { display:grid; grid-template-columns:minmax(280px, 0.85fr) minmax(360px, 1.35fr); gap:14px; align-items:start; }
   .ia-scan-grid > div { min-width:0; }
   @media (max-width: 780px) { .ia-scan-grid { grid-template-columns: 1fr !important; } }
   /* --- Responsive --- */
@@ -7387,8 +7391,8 @@ function modalEscanearListaIA(opciones = {}) {
   }
 
   const htmlModal = `
-    <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:12px;flex:1 1 auto;min-height:0">
-      <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;flex:0 0 auto">
+    <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:14px">
+      <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div style="font-size:12.5px;color:#dbeafe;line-height:1.45">
           ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Antes de agregar los materiales puedes editar libremente su <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b>, <b>Clase</b> y <b>Unidad</b>. Puedes estirar esta ventana desde cualquier borde o esquina, o pulsar <b>🗖</b> arriba.
         </div>
@@ -7467,8 +7471,8 @@ function modalEscanearListaIA(opciones = {}) {
         </div>
 
         <!-- Columna derecha: Renglones reconocidos -->
-        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;flex:0 0 auto">
+        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <div>
               <span style="font-weight:700;font-size:13.5px;color:#e2e8f0">📋 Renglones reconocidos (<span id="ia-count-items">0</span>)</span>
               <span id="ia-resumen-match" style="font-size:11.5px;color:var(--texto-dim);margin-left:8px"></span>
@@ -7481,18 +7485,18 @@ function modalEscanearListaIA(opciones = {}) {
           </div>
 
           <!-- Barra rápida opcional para aplicar Tipo y Clase a todos los materiales nuevos de una vez -->
-          <div id="ia-lote-clasificar" hidden style="background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:8px;padding:7px 10px;display:none;align-items:center;gap:6px;flex-wrap:wrap;flex:0 0 auto">
+          <div id="ia-lote-clasificar" hidden style="background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:8px;padding:7px 10px;display:none;align-items:center;gap:6px;flex-wrap:wrap">
             <span style="font-size:11px;color:#7dd3fc;font-weight:600">🏷️ Aplicar a todos los nuevos:</span>
             <input type="text" id="ia-lote-cat" list="ia-dl-categorias" placeholder="Tipo (categoría)..." style="flex:1;min-width:130px;font-size:11.5px;padding:4px 7px" />
             <input type="text" id="ia-lote-clase" list="ia-dl-clases-global" placeholder="Clase (subgrupo)..." style="flex:1;min-width:120px;font-size:11.5px;padding:4px 7px" />
             <button type="button" class="btn-ghost" id="ia-btn-aplicar-lote" style="font-size:11px;padding:4px 9px;border-color:rgba(0,200,255,0.4);color:#7dd3fc">Aplicar</button>
           </div>
 
-          <div id="ia-lista-renglones" style="flex:1 1 420px;min-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding-right:2px"></div>
+          <div id="ia-lista-renglones" style="max-height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding-right:2px"></div>
         </div>
       </div>
 
-      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:4px;flex:0 0 auto">
+      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.08)">
         <button type="button" class="btn-ghost" id="ia-btn-cancelar" style="margin-right:auto">Cancelar</button>
         ${enOrdenActiva ? `
           <button type="button" class="btn-primary" id="ia-btn-pasar-orden">✅ Pasar renglones a la orden actual</button>
