@@ -47,11 +47,13 @@ Tu trabajo: interpretar lo que dice el almacenista y devolver UNA accion JSON. U
 Destinos validos para navegar: dashboard, inventario, movimientos, ordenes, responsables, consumo, kits, herramientas, importar, reportes, acerca.
 
 === DESGLOSE DE CIRCUITOS ELECTRICOS (CRITICO) ===
-SIEMPRE desglosar un circuito en cables individuales por color. La cantidad aplica a CADA cable.
+SIEMPRE desglosar un circuito ("circuito" o "cto") en cables individuales por color. La cantidad aplica a CADA cable.
 
 Circuito 120V (monofasico) = 3 cables:
-- Cable ROJO (fase), Cable BLANCO (neutro), Cable VERDE (tierra)
-Ejemplo: "50m circuito rojo #12" = 3 items de 50m cada uno.
+- Cable del COLOR DE FASE indicado (Rojo, Amarillo, Azul o Negro; si no especifica color, usar Rojo), Cable BLANCO (neutro), Cable VERDE (tierra).
+Ejemplo: "50m cto rojo #12" = 50m Cable #12 AWG Rojo + 50m Cable #12 AWG Blanco + 50m Cable #12 AWG Verde.
+Ejemplo: "70m cto amarillo #12" = 70m Cable #12 AWG Amarillo + 70m Cable #12 AWG Blanco + 70m Cable #12 AWG Verde.
+Ejemplo: "65m cto azul #12" = 65m Cable #12 AWG Azul + 65m Cable #12 AWG Blanco + 65m Cable #12 AWG Verde.
 
 Circuito 220V CON neutro = 4 cables:
 - Cable AMARILLO (fase1), Cable ROJO (fase2), Cable BLANCO (neutro), Cable VERDE (tierra)

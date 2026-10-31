@@ -20,7 +20,7 @@ import {
   actualizarHerramientaDespacho,
   actualizarEstadoOrden,
   escucharContratos, guardarContratosEnNube
-} from './db.js?v=64';
+} from './db.js?v=68';
 
 /* ------------------------------------------------------------------ */
 /* Estado global                                                       */
@@ -6855,6 +6855,98 @@ function optimizarImagenParaIA(fuente, realzarManuscrito = true, rotacionGrados 
   });
 }
 
+// Desglosa automáticamente cualquier renglón que mencione "cto" o "circuito" en sus 3 cables:
+// el color de fase que define el circuito (Amarillo, Azul, Rojo o Negro; Rojo por defecto) + Blanco (Neutro) + Verde (Tierra).
+function desglosarCircuitosIA(items) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const resultado = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it || typeof it !== 'object') continue;
+    if (it._desglosadoCto) {
+      resultado.push(it);
+      continue;
+    }
+    const rawNombre = String(it.nombre || '').trim();
+    const rawOrig = String(it.textoOriginal || '').trim();
+    const combinado = `${rawNombre} ${rawOrig}`.trim();
+    const norm = normTxt(combinado);
+
+    const esCircuito = /\b(cto|ctos|circuito|circuitos)\b/i.test(norm);
+    if (!esCircuito) {
+      resultado.push(it);
+      continue;
+    }
+
+    // Extraer calibre (#12, #10, #14, #8...) ignorando el N° de circuito tras "cto" (ej. "cto 3", "cto 23")
+    const sinNumCto = norm.replace(/\b(?:cto|ctos|circuito|circuitos)\s+\d+\b/g, ' ');
+    let calibre = '';
+    const mCalExplicit = combinado.match(/#\s*(\d{1,2})\b/i)
+      || combinado.match(/\b(\d{1,2})\s*awg\b/i)
+      || combinado.match(/\bcal(?:ibre)?\s*#?\s*(\d{1,2})\b/i);
+    if (mCalExplicit) {
+      calibre = mCalExplicit[1];
+    } else {
+      const mCalSimple = sinNumCto.match(/\b(6|8|10|12|14|16)\b/);
+      calibre = mCalSimple ? mCalSimple[1] : (/\b220\s*v?\b/.test(norm) ? '10' : '12');
+    }
+
+    const cantNum = Number(it.cantidad) > 0 ? Number(it.cantidad) : 1;
+    const sig1 = items[i + 1];
+    const sig2 = items[i + 2];
+    const sig1Norm = sig1 ? normTxt(`${sig1.nombre || ''} ${sig1.textoOriginal || ''}`) : '';
+    const sig2Norm = sig2 ? normTxt(`${sig2.nombre || ''} ${sig2.textoOriginal || ''}`) : '';
+    const yaDesglosado = sig1 && sig2
+      && Number(sig1.cantidad) === cantNum
+      && Number(sig2.cantidad) === cantNum
+      && !/\b(cto|ctos|circuito|circuitos)\b/.test(sig1Norm)
+      && !/\b(cto|ctos|circuito|circuitos)\b/.test(sig2Norm)
+      && (/\bblanco\b/.test(sig1Norm) || /\bverde\b/.test(sig1Norm))
+      && (/\bblanco\b/.test(sig2Norm) || /\bverde\b/.test(sig2Norm));
+
+    if (yaDesglosado) {
+      const nombreLimpio = rawNombre.replace(/\b(cto|ctos|circuito|circuitos)(?:\s+\d+)?\b/gi, 'Cable').replace(/\s+/g, ' ').trim();
+      resultado.push({ ...it, nombre: nombreLimpio, _desglosadoCto: true });
+      continue;
+    }
+
+    // Color(es) de fase que definen el circuito
+    const coloresFase = [];
+    if (/\bamarill[oa]s?\b/.test(norm)) coloresFase.push('Amarillo');
+    if (/\bazul(?:es)?\b/.test(norm)) coloresFase.push('Azul');
+    if (/\broj[oa]s?\b/.test(norm)) coloresFase.push('Rojo');
+    if (/\bnegr[oa]s?\b/.test(norm)) coloresFase.push('Negro');
+
+    if (coloresFase.length === 0) {
+      if (/\b220\s*v?\b/.test(norm)) {
+        coloresFase.push('Amarillo', 'Rojo');
+      } else {
+        coloresFase.push('Rojo');
+      }
+    }
+
+    const sinNeutro = /\bsin\s+neutro\b/.test(norm);
+    const coloresCircuito = [...coloresFase];
+    if (!sinNeutro && !coloresCircuito.includes('Blanco')) coloresCircuito.push('Blanco');
+    if (!coloresCircuito.includes('Verde')) coloresCircuito.push('Verde');
+
+    const etiquetaBase = rawOrig || rawNombre;
+    coloresCircuito.forEach((color) => {
+      const rol = color === 'Blanco' ? 'Neutro' : (color === 'Verde' ? 'Tierra' : 'Fase');
+      resultado.push({
+        ...it,
+        codigo: '',
+        nombre: `Cable #${calibre} AWG ${color}`,
+        textoOriginal: `${etiquetaBase} → ${rol} ${color}`,
+        cantidad: cantNum,
+        unidad: 'metro',
+        _desglosadoCto: true
+      });
+    });
+  }
+  return resultado;
+}
+
 // Envía una foto de lista (manuscrita, factura electrónica de proveedor o remisión) o texto a Gemini
 // usando modo lista y un esquema JSON directo para garantizar lectura 100% confiable.
 async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExtra, tipoOrden = 'salida' }) {
@@ -6862,14 +6954,14 @@ async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExt
     'MODO RAPIDO SIN PENSAR: Extrae directo en una sola linea JSON todos los renglones de materiales/herramientas de esta imagen o texto.',
     'Reglas:',
     '- Factura/remision de proveedor: "tipo":"entrada", empresa en "proveedor", N° factura en "nota", y cada fila con "codigo", "nombre" (max 55 caract), "cantidad" y "unidad" (UND->"unidad", MT->"metro", RLL->"rollo"). Ignora precios/IVA/QR.',
-    '- Lista escrita a mano: lee cada renglon. Si dice "cto" junto a un color/calibre (ej. "70 mts cto amarillo #12 x (2)", "70 mts cto 3 Rojo #12", "60 mts cto 23 Rojo #12", "65 mts cto Azul #12"), significa Cable THHN de ese color y calibre (NO lo desgloses en 3 colores si ya dice el color; el numero tras "cto" es el N° de circuito, no cantidad). Si al final dice "x (2)" o "x2", multiplica la cantidad por 2. Si no tiene numero (ej. "cinta aislante negra"), cantidad es 1. Nombres de personas arriba van TODOS en "responsables". "Intervencion 5" -> "frente":"5" y lugar en "nota".',
+    '- Lista escrita a mano: lee cada renglon. Si dice "cto" o "circuito" junto a un color/calibre (ej. "70 mts cto amarillo #12 x (2)", "70 mts cto 3 Rojo #12", "60 mts cto 23 Rojo #12", "65 mts cto Azul #12"), escribe en "nombre" la palabra "Cto" seguida del calibre y el color escrito (ej. "Cto #12 AWG Amarillo", "Cto #12 AWG Rojo", "Cto #12 AWG Azul"; el numero tras "cto" como 3 o 23 es el N° de circuito, no la cantidad). Si al final dice "x (2)" o "x2", multiplica la cantidad por 2. Si no tiene numero (ej. "cinta aislante negra"), cantidad es 1. Nombres de personas arriba van TODOS en "responsables". "Intervencion 5" -> "frente":"5" y lugar en "nota".',
     '- Devuelve SOLO este JSON compacto:',
     '{"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}',
     instruccionExtra ? ('Nota: ' + instruccionExtra) : '',
     textoLista ? ('Lista:\n' + textoLista) : ''
   ].filter(Boolean).join('\n');
 
-  const promptReintento = 'SIN EXPLICACIONES: Transcribe directo todos los items de esta imagen a JSON compacto (nombres max 45 caract; "cto"+color = Cable de ese color; "x (2)" multiplica x2; sin numero = 1): {"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}';
+  const promptReintento = 'SIN EXPLICACIONES: Transcribe directo todos los items de esta imagen a JSON compacto (nombres max 45 caract; si dice "cto"+color escribe "Cto #<calibre> AWG <Color>"; "x (2)" multiplica x2; sin numero = 1): {"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}';
 
   const llamarEndpoint = async (promptTxt) => {
     const payload = {
@@ -6902,6 +6994,9 @@ async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExt
   let json = await llamarEndpoint(promptCompacto);
   for (let intento = 1; intento <= 2 && (!Array.isArray(json.items) || json.items.length === 0) && base64; intento++) {
     json = await llamarEndpoint(promptReintento);
+  }
+  if (json && Array.isArray(json.items)) {
+    json.items = desglosarCircuitosIA(json.items);
   }
   return json;
 }
@@ -7010,7 +7105,7 @@ function modalEscanearListaIA(opciones = {}) {
     }
     metaIA.mensajeIA = json.mensaje || '';
 
-    const rawItems = Array.isArray(json.items) ? json.items : [];
+    const rawItems = desglosarCircuitosIA(Array.isArray(json.items) ? json.items : []);
     renglonesIA = rawItems.map((it, idx) => {
       const codigoItem = String(it.codigo || '').trim();
       const nombreItem = String(it.nombre || it.textoOriginal || it.nombreInventario || '').trim();
@@ -7020,7 +7115,7 @@ function modalEscanearListaIA(opciones = {}) {
       }
       const match = matPorCodigo
         ? { material: matPorCodigo, score: 1, confianza: 'alta' }
-        : buscarMaterialInteligente(nombreItem, it.nombreInventario || it.textoOriginal || codigoItem);
+        : buscarMaterialInteligente(nombreItem, it.nombreInventario || (it._desglosadoCto ? '' : it.textoOriginal) || codigoItem);
       const mat = match.material;
       const conf = it.confianza || match.confianza || (mat ? 'alta' : 'media');
       const esHerr = !!(it.esHerramienta || (mat && mat.esHerramienta));
@@ -7137,6 +7232,7 @@ function modalEscanearListaIA(opciones = {}) {
               <span id="ia-resumen-match" style="font-size:11.5px;color:var(--texto-dim);margin-left:8px"></span>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button type="button" class="btn-ghost" id="ia-btn-sumar-iguales" hidden style="font-size:11.5px;padding:4px 10px;border-color:rgba(56,189,248,0.5);color:#7dd3fc" title="Suma en un solo renglón los cables o materiales del mismo calibre y color">🧮 Sumar repetidos</button>
               <button type="button" class="btn-ghost" id="ia-btn-crear-todos" hidden style="font-size:11.5px;padding:4px 10px;border-color:rgba(16,185,129,0.5);color:#6ee7b7">⚡ Crear nuevos en inventario</button>
               <button type="button" class="btn-ghost" id="ia-btn-add-fila" style="font-size:11.5px;padding:4px 10px">＋ Agregar renglón</button>
             </div>
@@ -7179,6 +7275,7 @@ function modalEscanearListaIA(opciones = {}) {
   const txtListaEl = $('#ia-texto-lista');
   const inpExtraEl = $('#ia-instruccion-extra');
   const btnAnalizar = $('#ia-btn-analizar');
+  const btnSumarIguales = $('#ia-btn-sumar-iguales');
   const btnCrearTodos = $('#ia-btn-crear-todos');
   const boxLoteClasificar = $('#ia-lote-clasificar');
   const estadoLectura = $('#ia-estado-lectura');
@@ -7282,6 +7379,16 @@ function modalEscanearListaIA(opciones = {}) {
     $('#ia-resumen-match').innerHTML = renglonesIA.length > 0
       ? (`<span style="color:#6ee7b7">✓ ${vinculados} en inventario</span>` + (sinVincular > 0 ? ` · <span style="color:#38bdf8">🆕 ${sinVincular} nuevo(s) para agregar</span>` : ''))
       : '';
+    if (btnSumarIguales) {
+      const vistos = new Set();
+      let hayRepetidos = false;
+      for (const r of renglonesIA) {
+        const k = r.materialId ? `id:${r.materialId}` : `nom:${normTxt(r.nombreDetectado || '')}|${r.unidad || ''}`;
+        if (vistos.has(k)) { hayRepetidos = true; break; }
+        vistos.add(k);
+      }
+      btnSumarIguales.hidden = !hayRepetidos;
+    }
     if (btnCrearTodos) {
       btnCrearTodos.hidden = sinVincular === 0;
       btnCrearTodos.textContent = `⚡ Agregar ${sinVincular} nuevo(s) al catálogo`;
@@ -7518,6 +7625,33 @@ function modalEscanearListaIA(opciones = {}) {
       });
       renderRenglonesIA();
       toast(`Tipo/Clase aplicado a ${aplicados} material(es) nuevo(s)`, 'ok');
+    });
+  }
+
+  if (btnSumarIguales) {
+    btnSumarIguales.addEventListener('click', () => {
+      const mapa = new Map();
+      const agrupados = [];
+      for (const r of renglonesIA) {
+        const clave = r.materialId
+          ? `id:${r.materialId}`
+          : `nom:${normTxt(r.nombreDetectado || '')}|${r.unidad || ''}`;
+        if (mapa.has(clave)) {
+          const prev = mapa.get(clave);
+          prev.cantidad = (Number(prev.cantidad) || 0) + (Number(r.cantidad) || 0);
+          if (r.textoOriginal && prev.textoOriginal !== r.textoOriginal) {
+            prev.textoOriginal = `${prev.textoOriginal} + ${r.textoOriginal}`;
+          }
+        } else {
+          const copia = { ...r };
+          mapa.set(clave, copia);
+          agrupados.push(copia);
+        }
+      }
+      const antes = renglonesIA.length;
+      renglonesIA = agrupados;
+      renderRenglonesIA();
+      toast(`Se sumaron ${antes} renglones en ${renglonesIA.length} total(es) por color/material`, 'ok');
     });
   }
 
@@ -7998,6 +8132,9 @@ async function enviarAGemini(texto) {
 }
 
 async function ejecutarRespuesta(json) {
+  if (json && Array.isArray(json.items)) {
+    json.items = desglosarCircuitosIA(json.items);
+  }
   const accion = json.accion;
   const mensaje = json.mensaje || '';
 

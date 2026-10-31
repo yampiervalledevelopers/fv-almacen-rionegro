@@ -244,11 +244,9 @@ export async function registrarOrden(orden) {
   const estadoOrden = esPedidoPendiente ? 'pendiente' : 'completado';
 
   if (!esPedidoPendiente) {
+    const deltasPorMaterial = {};
     for (const it of items) {
-      batch.update(doc(db, COL_MATERIALES, it.materialId), {
-        cantidad: increment(deltaStock(tipo, it.cantidad)),
-        actualizado: fecha
-      });
+      deltasPorMaterial[it.materialId] = (deltasPorMaterial[it.materialId] || 0) + deltaStock(tipo, it.cantidad);
       const movRef = doc(collection(db, COL_MOVIMIENTOS));
       batch.set(movRef, {
         tipo,
@@ -265,6 +263,12 @@ export async function registrarOrden(orden) {
         fecha,
         ordenId: ordenRef.id,
         ordenNumero: numero
+      });
+    }
+    for (const [matId, deltaTotal] of Object.entries(deltasPorMaterial)) {
+      batch.update(doc(db, COL_MATERIALES, matId), {
+        cantidad: increment(deltaTotal),
+        actualizado: fecha
       });
     }
   }
