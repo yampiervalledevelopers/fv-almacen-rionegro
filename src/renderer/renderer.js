@@ -405,8 +405,9 @@ const ventanas = { lista: [], activa: null, seq: 0, proxima: null };
 // Llamar al inicio de un formulario de trabajo (orden, movimiento, material...)
 // ANTES de tocar estado.itemsOrden / itemsKit / itemsAdicion.
 function iniciarVentanaTrabajo(icono) {
+  const desplazadaId = ventanas.activa ? ventanas.activa.id : null;
   liberarPantalla();
-  ventanas.proxima = { icono: icono || '🗂' };
+  ventanas.proxima = { icono: icono || '🗂', desplazada: desplazadaId };
 }
 // Deja la pantalla libre: estaciona la ventana de trabajo activa o cierra la pasajera.
 function liberarPantalla() {
@@ -416,6 +417,7 @@ function liberarPantalla() {
   else cerrarModal({ sinRestaurar: true });
 }
 function quitarVentana(v) {
+  if (typeof v.alCerrar === 'function') { try { v.alCerrar(); } catch (_e) { /* ignore */ } }
   ventanas.lista = ventanas.lista.filter((x) => x !== v);
   if (ventanas.activa === v) ventanas.activa = null;
   if (v.draftKey) {
@@ -444,6 +446,8 @@ function ocultarCascaronModal() {
 }
 function estacionarVentana(v) {
   if (!v || ventanas.activa !== v) return;
+  v.multitarea = true;
+  if (!v.icono) v.icono = '🗂';
   const body = $('#modal-body');
   const m = $('#modal .modal');
   const nodo = document.createElement('div');
@@ -670,7 +674,7 @@ function abrirModal(titulo, htmlBody, ancho) {
   const v = {
     id: TAB_ID + '-' + (++ventanas.seq), titulo, ancho: ancho || '',
     multitarea: !!prox, icono: prox ? prox.icono : '',
-    desplazada: prox ? null : desplazada, nodo: null, snapshot: null, draftKey: null
+    desplazada: (prox && prox.desplazada) ? prox.desplazada : desplazada, nodo: null, snapshot: null, draftKey: null
   };
   ventanas.lista.push(v);
   ventanas.activa = v;
@@ -704,9 +708,9 @@ function cerrarModal(opts) {
   try { if (asistente && asistente.estadoAgente === 'en_modal') { asistente.estadoAgente = 'libre'; asistente.modalTipo = null; } } catch (_e) { /* asistente aun no inicializado */ }
   if (v) {
     quitarVentana(v);
-    // Al cerrar una ventana pasajera (confirmacion, documento...), vuelve la que tapó.
+    // Al cerrar una ventana que tapó a otra, vuelve la que tapó.
     const sinRestaurar = opts && opts.sinRestaurar === true;
-    if (!sinRestaurar && !v.multitarea && v.desplazada) {
+    if (!sinRestaurar && v.desplazada) {
       const d = ventanas.lista.find((x) => x.id === v.desplazada);
       if (d) restaurarVentana(d);
     }
@@ -715,7 +719,9 @@ function cerrarModal(opts) {
 }
 function minimizarModal() {
   const v = ventanas.activa;
-  if (v && v.multitarea) {
+  if (v) {
+    v.multitarea = true;
+    if (!v.icono) v.icono = '🗂';
     estacionarVentana(v);
     toast('Ventana minimizada en la barra inferior. Puedes seguir trabajando.', 'ok');
     return;
@@ -947,8 +953,15 @@ $('#modal-minimizar').addEventListener('click', minimizarModal);
 $('#modal').addEventListener('click', (e) => {
   if (e.target.id !== 'modal') return;
   if (Date.now() - ultimoArrastreModal < 300) return;
-  const v = ventanas.activa;
-  if (v && v.multitarea) estacionarVentana(v); else cerrarModal();
+  // Al hacer clic fuera de la ventana NO se cierra ni se borra lo que se está haciendo.
+  // Brindamos una suave animación de atención visual (pulso/glow).
+  const m = $('#modal .modal');
+  if (m) {
+    m.classList.remove('modal-atencion');
+    void m.offsetWidth; // reiniciar animación
+    m.classList.add('modal-atencion');
+    setTimeout(() => { if (m) m.classList.remove('modal-atencion'); }, 320);
+  }
 });
 
 /* ==================================================================
@@ -1023,6 +1036,18 @@ function inyectarExtras() {
   .modal.modal-minimizado .modal-body, .modal.modal-minimizado .modal-rz-handle { display:none !important; }
   .modal.modal-minimizado { max-height:56px !important; height:56px !important; min-height:auto !important; resize:none; }
   .modal.modal-maximizado { position:fixed !important; left:8px !important; top:8px !important; width:calc(100vw - 16px) !important; height:calc(100vh - 16px) !important; max-width:none !important; max-height:none !important; border-radius:12px !important; z-index:80; }
+  @keyframes modal-atencion {
+    0% { transform: scale(1); box-shadow: var(--sombra); }
+    50% { transform: scale(1.012); box-shadow: 0 0 0 3px rgba(0,200,255,0.45), 0 22px 50px rgba(0,0,0,0.8); }
+    100% { transform: scale(1); box-shadow: var(--sombra); }
+  }
+  @keyframes modal-atencion-max {
+    0% { box-shadow: inset 0 0 0 0 rgba(0,200,255,0); }
+    50% { box-shadow: inset 0 0 0 3px rgba(0,200,255,0.6), 0 0 25px rgba(0,200,255,0.4); }
+    100% { box-shadow: inset 0 0 0 0 rgba(0,200,255,0); }
+  }
+  .modal.modal-atencion { animation: modal-atencion 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  .modal.modal-maximizado.modal-atencion { animation: modal-atencion-max 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
   .modal-rz-handle { position:absolute; z-index:30; user-select:none; transition:background 0.15s ease; }
   .modal-rz-handle:hover { background:rgba(0,200,255,0.28); }
   .modal-rz-handle.rz-n { top:-5px; left:12px; right:12px; height:10px; cursor:ns-resize; border-radius:4px; }
@@ -7288,6 +7313,7 @@ function opcionesMaterialEscanerIA(sel, filtro) {
 
 // Modal interactivo para escanear listas escritas a mano, facturas de proveedores o texto
 function modalEscanearListaIA(opciones = {}) {
+  iniciarVentanaTrabajo('📷');
   const enOrdenActiva = !!opciones.enOrdenActiva;
   const alConfirmarEnOrden = opciones.alConfirmarEnOrden || null;
   let tipoSeleccionado = opciones.tipoOrden || 'salida';
@@ -8006,10 +8032,7 @@ function modalEscanearListaIA(opciones = {}) {
 
   // Pegar imagen con Ctrl+V mientras el modal está abierto
   const onPasteModal = (e) => {
-    if (!document.body.contains(root)) {
-      document.removeEventListener('paste', onPasteModal);
-      return;
-    }
+    if (!document.body.contains(root) || $('#modal').hidden) return;
     const items = (e.clipboardData && e.clipboardData.items) || [];
     for (const it of items) {
       if (it.type && it.type.startsWith('image/')) {
@@ -8024,6 +8047,12 @@ function modalEscanearListaIA(opciones = {}) {
     }
   };
   document.addEventListener('paste', onPasteModal);
+  const vActualEscaner = ventanas.activa;
+  if (vActualEscaner) {
+    vActualEscaner.alCerrar = () => {
+      document.removeEventListener('paste', onPasteModal);
+    };
+  }
 
   const recolectarDatosConfirmados = () => {
     const tipoFinal = $('#ia-meta-tipo') ? $('#ia-meta-tipo').value : tipoSeleccionado;
