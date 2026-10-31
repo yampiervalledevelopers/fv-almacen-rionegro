@@ -430,7 +430,16 @@ function ocultarCascaronModal() {
   const wrap = $('#modal');
   wrap.hidden = true;
   const m = $('#modal .modal');
-  if (m) { m.classList.remove('modal-minimizado'); m.style.left = ''; m.style.top = ''; m.style.position = ''; }
+  if (m) {
+    m.classList.remove('modal-minimizado', 'modal-resized', 'modal-maximizado');
+    m.style.left = '';
+    m.style.top = '';
+    m.style.width = '';
+    m.style.height = '';
+    m.style.maxWidth = '';
+    m.style.maxHeight = '';
+    m.style.position = '';
+  }
   wrap.classList.remove('modal-draggable');
 }
 function estacionarVentana(v) {
@@ -441,7 +450,18 @@ function estacionarVentana(v) {
   while (body.firstChild) nodo.appendChild(body.firstChild);
   v.nodo = nodo;
   v.snapshot = { itemsOrden: estado.itemsOrden, itemsKit: estado.itemsKit, itemsAdicion: estado.itemsAdicion };
-  v.pos = m ? { left: m.style.left, top: m.style.top, position: m.style.position, drag: $('#modal').classList.contains('modal-draggable') } : null;
+  v.pos = m ? {
+    left: m.style.left,
+    top: m.style.top,
+    width: m.style.width,
+    height: m.style.height,
+    maxWidth: m.style.maxWidth,
+    maxHeight: m.style.maxHeight,
+    position: m.style.position,
+    drag: $('#modal').classList.contains('modal-draggable'),
+    resized: m.classList.contains('modal-resized'),
+    maximizado: m.classList.contains('modal-maximizado')
+  } : null;
   ventanas.activa = null;
   ocultarCascaronModal();
   renderBarraVentanas();
@@ -462,14 +482,29 @@ function restaurarVentana(v) {
   const wrap = $('#modal');
   const m = $('#modal .modal');
   if (m) {
-    m.style.maxWidth = v.ancho || '';
+    const wDefault = v.ancho ? `min(${v.ancho}, 96vw)` : '';
     m.classList.remove('modal-minimizado');
-    if (v.pos && v.pos.drag) {
-      wrap.classList.add('modal-draggable');
-      m.style.position = v.pos.position; m.style.left = v.pos.left; m.style.top = v.pos.top;
+    if (v.pos && (v.pos.drag || v.pos.resized || v.pos.maximizado)) {
+      if (v.pos.drag) wrap.classList.add('modal-draggable'); else wrap.classList.remove('modal-draggable');
+      m.classList.toggle('modal-resized', !!v.pos.resized);
+      m.classList.toggle('modal-maximizado', !!v.pos.maximizado);
+      m.style.position = v.pos.position || '';
+      m.style.left = v.pos.left || '';
+      m.style.top = v.pos.top || '';
+      m.style.width = v.pos.width || wDefault;
+      m.style.height = v.pos.height || '';
+      m.style.maxWidth = v.pos.maxWidth || wDefault;
+      m.style.maxHeight = v.pos.maxHeight || '';
     } else {
       wrap.classList.remove('modal-draggable');
-      m.style.position = ''; m.style.left = ''; m.style.top = '';
+      m.classList.remove('modal-resized', 'modal-maximizado');
+      m.style.position = '';
+      m.style.left = '';
+      m.style.top = '';
+      m.style.width = wDefault;
+      m.style.height = '';
+      m.style.maxWidth = wDefault;
+      m.style.maxHeight = '';
     }
   }
   wrap.hidden = false;
@@ -620,6 +655,8 @@ function abrirMenuNuevaVentana(anchorEl) {
   setTimeout(() => document.addEventListener('click', cerrarMenuNuevaVentana), 0);
 }
 
+let ultimoArrastreModal = 0;
+
 function abrirModal(titulo, htmlBody, ancho) {
   // Si hay una ventana visible: la de trabajo se estaciona, la pasajera se reemplaza.
   let desplazada = null;
@@ -643,8 +680,12 @@ function abrirModal(titulo, htmlBody, ancho) {
   const wrap = $('#modal');
   const m = $('#modal .modal');
   if (m) {
-    m.style.maxWidth = ancho ? ancho : '';
-    m.classList.remove('modal-minimizado');
+    const wCss = ancho ? `min(${ancho}, 96vw)` : '';
+    m.style.width = wCss;
+    m.style.maxWidth = wCss;
+    m.style.height = '';
+    m.style.maxHeight = '';
+    m.classList.remove('modal-minimizado', 'modal-resized', 'modal-maximizado');
     // Centrar el modal
     m.style.left = '';
     m.style.top = '';
@@ -652,7 +693,7 @@ function abrirModal(titulo, htmlBody, ancho) {
     wrap.classList.remove('modal-draggable');
   }
   wrap.hidden = false;
-  // Habilitar arrastre despues de abrir
+  // Habilitar arrastre y estiramiento manual por todos los lados despues de abrir
   setTimeout(() => habilitarDragModal(), 50);
   renderBarraVentanas();
 }
@@ -682,17 +723,158 @@ function minimizarModal() {
   const m = $('#modal .modal');
   if (m) m.classList.toggle('modal-minimizado');
 }
+function maximizarModal() {
+  const m = $('#modal .modal');
+  if (!m) return;
+  m.classList.remove('modal-minimizado');
+  const max = m.classList.toggle('modal-maximizado');
+  const btnMax = $('#modal-maximizar');
+  if (btnMax) {
+    btnMax.textContent = max ? '🗗' : '🗖';
+    btnMax.title = max ? 'Restaurar tamaño anterior' : 'Ver en marco completo / Pantalla completa';
+  }
+}
 function habilitarDragModal() {
   const wrap = $('#modal');
   const m = wrap.querySelector('.modal');
   const head = wrap.querySelector('.modal-head');
   if (!m || !head) return;
+
+  // Botón de Marco Completo / Maximizar en la cabecera
+  const controles = head.querySelector('.modal-controles');
+  if (controles && !controles.querySelector('#modal-maximizar')) {
+    const btnMax = document.createElement('button');
+    btnMax.type = 'button';
+    btnMax.className = 'modal-maximizar';
+    btnMax.id = 'modal-maximizar';
+    btnMax.title = 'Ver en marco completo / Restaurar tamaño (o doble clic en la barra superior)';
+    btnMax.textContent = '🗖';
+    btnMax.addEventListener('click', maximizarModal);
+    const btnCerrar = controles.querySelector('#modal-cerrar');
+    controles.insertBefore(btnMax, btnCerrar || null);
+  }
+  const btnMaxAct = head.querySelector('#modal-maximizar');
+  if (btnMaxAct) {
+    const isMax = m.classList.contains('modal-maximizado');
+    btnMaxAct.textContent = isMax ? '🗗' : '🗖';
+  }
+
+  // Crear los 8 bordes y esquinas para estirar manualmente hacia todos los lados
+  if (!m._resizeSetup) {
+    m._resizeSetup = true;
+    const dirs = ['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'];
+    dirs.forEach((dir) => {
+      const h = document.createElement('div');
+      h.className = `modal-rz-handle rz-${dir}`;
+      h.dataset.rzDir = dir;
+      h.title = 'Arrastra para estirar y ajustar el tamaño de la ventana';
+      m.appendChild(h);
+    });
+
+    let rzState = null;
+    const iniciarResize = (dir, clientX, clientY) => {
+      const rect = m.getBoundingClientRect();
+      m.classList.remove('modal-maximizado', 'modal-minimizado');
+      const bMax = head.querySelector('#modal-maximizar');
+      if (bMax) bMax.textContent = '🗖';
+      wrap.classList.add('modal-draggable');
+      m.classList.add('modal-resized');
+      m.style.position = 'absolute';
+      m.style.left = rect.left + 'px';
+      m.style.top = rect.top + 'px';
+      m.style.width = rect.width + 'px';
+      m.style.height = rect.height + 'px';
+      m.style.maxWidth = 'none';
+      m.style.maxHeight = 'none';
+      rzState = {
+        dir,
+        startX: clientX,
+        startY: clientY,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height
+      };
+      ultimoArrastreModal = Date.now();
+    };
+
+    const moverResize = (clientX, clientY) => {
+      if (!rzState) return;
+      const dx = clientX - rzState.startX;
+      const dy = clientY - rzState.startY;
+      const minW = 340;
+      const minH = 220;
+      let newLeft = rzState.left;
+      let newTop = rzState.top;
+      let newW = rzState.width;
+      let newH = rzState.height;
+
+      if (rzState.dir.includes('e')) {
+        newW = Math.max(minW, rzState.width + dx);
+      }
+      if (rzState.dir.includes('s')) {
+        newH = Math.max(minH, rzState.height + dy);
+      }
+      if (rzState.dir.includes('w')) {
+        const w = Math.max(minW, rzState.width - dx);
+        newLeft = rzState.left + (rzState.width - w);
+        newW = w;
+      }
+      if (rzState.dir.includes('n')) {
+        const h = Math.max(minH, rzState.height - dy);
+        newTop = Math.max(0, rzState.top + (rzState.height - h));
+        newH = h;
+      }
+
+      m.style.left = newLeft + 'px';
+      m.style.top = newTop + 'px';
+      m.style.width = newW + 'px';
+      m.style.height = newH + 'px';
+      ultimoArrastreModal = Date.now();
+    };
+
+    const finResize = () => {
+      if (rzState) {
+        ultimoArrastreModal = Date.now();
+        rzState = null;
+      }
+    };
+
+    m.querySelectorAll('.modal-rz-handle').forEach((handle) => {
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        iniciarResize(handle.dataset.rzDir, e.clientX, e.clientY);
+      });
+      handle.addEventListener('touchstart', (e) => {
+        if (!e.touches || !e.touches[0]) return;
+        e.stopPropagation();
+        iniciarResize(handle.dataset.rzDir, e.touches[0].clientX, e.touches[0].clientY);
+      }, { passive: true });
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (rzState) moverResize(e.clientX, e.clientY);
+    });
+    document.addEventListener('mouseup', finResize);
+    document.addEventListener('touchmove', (e) => {
+      if (rzState && e.touches && e.touches[0]) {
+        moverResize(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }, { passive: true });
+    document.addEventListener('touchend', finResize);
+  }
+
   let isDragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
-  // Remove previous listeners by cloning head content approach - use flag instead
   if (head._dragSetup) return;
   head._dragSetup = true;
+  head.addEventListener('dblclick', (e) => {
+    if (e.target.closest('button')) return;
+    maximizarModal();
+  });
   head.addEventListener('mousedown', (e) => {
     if (e.target.closest('button')) return;
+    if (m.classList.contains('modal-maximizado')) return;
     isDragging = true;
     // Switch to draggable mode
     if (!wrap.classList.contains('modal-draggable')) {
@@ -701,11 +883,13 @@ function habilitarDragModal() {
       m.style.position = 'absolute';
       m.style.left = rect.left + 'px';
       m.style.top = rect.top + 'px';
+      m.style.width = rect.width + 'px';
     }
     startX = e.clientX;
     startY = e.clientY;
-    origX = parseInt(m.style.left) || 0;
-    origY = parseInt(m.style.top) || 0;
+    origX = parseFloat(m.style.left) || 0;
+    origY = parseFloat(m.style.top) || 0;
+    ultimoArrastreModal = Date.now();
     e.preventDefault();
   });
   document.addEventListener('mousemove', (e) => {
@@ -713,12 +897,19 @@ function habilitarDragModal() {
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
     m.style.left = (origX + dx) + 'px';
-    m.style.top = (origY + dy) + 'px';
+    m.style.top = Math.max(0, origY + dy) + 'px';
+    ultimoArrastreModal = Date.now();
   });
-  document.addEventListener('mouseup', () => { isDragging = false; });
+  document.addEventListener('mouseup', () => {
+    if (isDragging) {
+      ultimoArrastreModal = Date.now();
+      isDragging = false;
+    }
+  });
   // Touch support for mobile
   head.addEventListener('touchstart', (e) => {
     if (e.target.closest('button')) return;
+    if (m.classList.contains('modal-maximizado')) return;
     isDragging = true;
     const touch = e.touches[0];
     if (!wrap.classList.contains('modal-draggable')) {
@@ -727,11 +918,12 @@ function habilitarDragModal() {
       m.style.position = 'absolute';
       m.style.left = rect.left + 'px';
       m.style.top = rect.top + 'px';
+      m.style.width = rect.width + 'px';
     }
     startX = touch.clientX;
     startY = touch.clientY;
-    origX = parseInt(m.style.left) || 0;
-    origY = parseInt(m.style.top) || 0;
+    origX = parseFloat(m.style.left) || 0;
+    origY = parseFloat(m.style.top) || 0;
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
     if (!isDragging) return;
@@ -739,15 +931,22 @@ function habilitarDragModal() {
     const dx = touch.clientX - startX;
     const dy = touch.clientY - startY;
     m.style.left = (origX + dx) + 'px';
-    m.style.top = (origY + dy) + 'px';
+    m.style.top = Math.max(0, origY + dy) + 'px';
+    ultimoArrastreModal = Date.now();
   }, { passive: true });
-  document.addEventListener('touchend', () => { isDragging = false; });
+  document.addEventListener('touchend', () => {
+    if (isDragging) {
+      ultimoArrastreModal = Date.now();
+      isDragging = false;
+    }
+  });
 }
 
 $('#modal-cerrar').addEventListener('click', cerrarModal);
 $('#modal-minimizar').addEventListener('click', minimizarModal);
 $('#modal').addEventListener('click', (e) => {
   if (e.target.id !== 'modal') return;
+  if (Date.now() - ultimoArrastreModal < 300) return;
   const v = ventanas.activa;
   if (v && v.multitarea) estacionarVentana(v); else cerrarModal();
 });
@@ -811,16 +1010,33 @@ function inyectarExtras() {
   .mat-picker .mat-filtro { font-size:12px; padding:7px 9px; }
   .orden-aviso { background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35); color:#c9f0d8; border-radius:8px; padding:9px 12px; font-size:12.5px; margin-bottom:12px; }
   .link-btn { background:none; border:none; color:#4da3ff; cursor:pointer; text-decoration:underline; font-size:12.5px; padding:0; }
-  /* --- Modal draggable & minimizable --- */
+  /* --- Modal draggable, minimizable, maximizable & 8-way resizable --- */
+  .modal { position:relative; display:flex; flex-direction:column; max-width:96vw; max-height:92vh; overflow:visible !important; }
+  .modal-head { flex:0 0 auto; cursor:move; user-select:none; }
+  .modal-body { flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; display:flex; flex-direction:column; }
   .modal-wrap.modal-draggable { align-items:flex-start; justify-content:flex-start; pointer-events:none; }
   .modal-wrap.modal-draggable .modal { pointer-events:all; position:absolute; cursor:default; margin:0; }
-  .modal-head { cursor:move; user-select:none; }
   .modal-head .modal-controles { display:flex; gap:6px; align-items:center; }
-  .modal-head .modal-minimizar { background:none; border:none; color:var(--texto-dim); font-size:16px; cursor:pointer; padding:2px 6px; }
-  .modal-head .modal-minimizar:hover { color:var(--cian); }
-  .modal.modal-minimizado { overflow:hidden; }
-  .modal.modal-minimizado .modal-body { display:none; }
-  .modal.modal-minimizado { max-height:56px !important; min-height:auto; resize:none; }
+  .modal-head .modal-minimizar, .modal-head .modal-maximizar { background:none; border:none; color:var(--texto-dim); font-size:16px; cursor:pointer; padding:2px 6px; border-radius:6px; transition:all 0.15s ease; }
+  .modal-head .modal-minimizar:hover, .modal-head .modal-maximizar:hover { color:var(--cian); background:rgba(0,200,255,0.1); }
+  .modal.modal-minimizado { overflow:hidden !important; }
+  .modal.modal-minimizado .modal-body, .modal.modal-minimizado .modal-rz-handle { display:none !important; }
+  .modal.modal-minimizado { max-height:56px !important; height:56px !important; min-height:auto !important; resize:none; }
+  .modal.modal-maximizado { position:fixed !important; left:8px !important; top:8px !important; width:calc(100vw - 16px) !important; height:calc(100vh - 16px) !important; max-width:none !important; max-height:none !important; border-radius:12px !important; z-index:80; }
+  .modal-rz-handle { position:absolute; z-index:30; user-select:none; transition:background 0.15s ease; }
+  .modal-rz-handle:hover { background:rgba(0,200,255,0.28); }
+  .modal-rz-handle.rz-n { top:-5px; left:12px; right:12px; height:10px; cursor:ns-resize; border-radius:4px; }
+  .modal-rz-handle.rz-s { bottom:-5px; left:12px; right:12px; height:10px; cursor:ns-resize; border-radius:4px; }
+  .modal-rz-handle.rz-e { right:-5px; top:12px; bottom:12px; width:10px; cursor:ew-resize; border-radius:4px; }
+  .modal-rz-handle.rz-w { left:-5px; top:12px; bottom:12px; width:10px; cursor:ew-resize; border-radius:4px; }
+  .modal-rz-handle.rz-nw { top:-6px; left:-6px; width:16px; height:16px; cursor:nwse-resize; border-radius:4px; }
+  .modal-rz-handle.rz-ne { top:-6px; right:-6px; width:16px; height:16px; cursor:nesw-resize; border-radius:4px; }
+  .modal-rz-handle.rz-sw { bottom:-6px; left:-6px; width:16px; height:16px; cursor:nesw-resize; border-radius:4px; }
+  .modal-rz-handle.rz-se { bottom:-4px; right:-4px; width:18px; height:18px; cursor:nwse-resize; border-radius:0 0 14px 0; background:linear-gradient(135deg, transparent 50%, rgba(0,200,255,0.45) 50%); }
+  .modal-rz-handle.rz-se:hover { background:linear-gradient(135deg, transparent 40%, #00c8ff 40%); }
+  .ia-scan-grid { display:grid; grid-template-columns:minmax(280px, 0.82fr) minmax(360px, 1.38fr); gap:14px; align-items:stretch; flex:1 1 auto; min-height:0; }
+  .ia-scan-grid > div { min-width:0; }
+  @media (max-width: 780px) { .ia-scan-grid { grid-template-columns: 1fr !important; } }
   /* --- Responsive --- */
   @media (max-width: 900px) {
     .app { grid-template-columns: 1fr !important; }
@@ -7145,19 +7361,19 @@ function modalEscanearListaIA(opciones = {}) {
   }
 
   const htmlModal = `
-    <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:14px">
-      <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+    <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:12px;flex:1 1 auto;min-height:0">
+      <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;flex:0 0 auto">
         <div style="font-size:12.5px;color:#dbeafe;line-height:1.45">
-          ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Antes de agregar los materiales puedes editar libremente su <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b>, <b>Clase</b> y <b>Unidad</b>.
+          ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Antes de agregar los materiales puedes editar libremente su <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b>, <b>Clase</b> y <b>Unidad</b>. Puedes estirar esta ventana desde cualquier borde o esquina, o pulsar <b>🗖</b> arriba.
         </div>
       </div>
 
       <datalist id="ia-dl-categorias">${categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
       <datalist id="ia-dl-clases-global">${clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
 
-      <div style="display:grid;grid-template-columns:minmax(275px,0.9fr) minmax(380px,1.4fr);gap:14px;align-items:start">
+      <div class="ia-scan-grid">
         <!-- Columna izquierda: Imagen / Entrada -->
-        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px">
+        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0">
           <div id="ia-dropzone" class="ia-dropzone">
             <div id="ia-preview-vacio">
               <div style="font-size:28px;margin-bottom:4px">📷 🧾 ✍️</div>
@@ -7165,7 +7381,7 @@ function modalEscanearListaIA(opciones = {}) {
               <div style="font-size:11.5px;color:var(--texto-dim);margin-top:4px">Reconoce facturas electrónicas (Francisco Murillo, etc.), remisiones y listas a mano</div>
             </div>
             <div id="ia-preview-img-wrap" hidden style="display:none;flex-direction:column;align-items:center;gap:8px">
-              <img id="ia-preview-img" alt="Lista escaneada" style="max-width:100%;max-height:260px;border-radius:8px;border:1px solid rgba(0,200,255,0.3);object-fit:contain;background:#0b1325" />
+              <img id="ia-preview-img" alt="Lista escaneada" style="max-width:100%;max-height:280px;border-radius:8px;border:1px solid rgba(0,200,255,0.3);object-fit:contain;background:#0b1325" />
             </div>
             <input type="file" id="ia-file-input" accept="image/*" style="display:none" />
           </div>
@@ -7225,8 +7441,8 @@ function modalEscanearListaIA(opciones = {}) {
         </div>
 
         <!-- Columna derecha: Renglones reconocidos -->
-        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;flex:0 0 auto">
             <div>
               <span style="font-weight:700;font-size:13.5px;color:#e2e8f0">📋 Renglones reconocidos (<span id="ia-count-items">0</span>)</span>
               <span id="ia-resumen-match" style="font-size:11.5px;color:var(--texto-dim);margin-left:8px"></span>
@@ -7239,18 +7455,18 @@ function modalEscanearListaIA(opciones = {}) {
           </div>
 
           <!-- Barra rápida opcional para aplicar Tipo y Clase a todos los materiales nuevos de una vez -->
-          <div id="ia-lote-clasificar" hidden style="background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:8px;padding:7px 10px;display:none;align-items:center;gap:6px;flex-wrap:wrap">
+          <div id="ia-lote-clasificar" hidden style="background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:8px;padding:7px 10px;display:none;align-items:center;gap:6px;flex-wrap:wrap;flex:0 0 auto">
             <span style="font-size:11px;color:#7dd3fc;font-weight:600">🏷️ Aplicar a todos los nuevos:</span>
             <input type="text" id="ia-lote-cat" list="ia-dl-categorias" placeholder="Tipo (categoría)..." style="flex:1;min-width:130px;font-size:11.5px;padding:4px 7px" />
             <input type="text" id="ia-lote-clase" list="ia-dl-clases-global" placeholder="Clase (subgrupo)..." style="flex:1;min-width:120px;font-size:11.5px;padding:4px 7px" />
             <button type="button" class="btn-ghost" id="ia-btn-aplicar-lote" style="font-size:11px;padding:4px 9px;border-color:rgba(0,200,255,0.4);color:#7dd3fc">Aplicar</button>
           </div>
 
-          <div id="ia-lista-renglones" style="max-height:430px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding-right:2px"></div>
+          <div id="ia-lista-renglones" style="flex:1 1 420px;min-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding-right:2px"></div>
         </div>
       </div>
 
-      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:4px">
+      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:4px;flex:0 0 auto">
         <button type="button" class="btn-ghost" id="ia-btn-cancelar" style="margin-right:auto">Cancelar</button>
         ${enOrdenActiva ? `
           <button type="button" class="btn-primary" id="ia-btn-pasar-orden">✅ Pasar renglones a la orden actual</button>
@@ -7263,7 +7479,7 @@ function modalEscanearListaIA(opciones = {}) {
     </div>
   `;
 
-  abrirModal('📷 Escáner IA de Facturas y Listas Manuscritas', htmlModal, '1060px');
+  abrirModal('📷 Escáner IA de Facturas y Listas Manuscritas', htmlModal, '1180px');
 
   const root = $('#ia-scan-root');
   const dropzone = $('#ia-dropzone');
