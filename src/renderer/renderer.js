@@ -20,7 +20,7 @@ import {
   actualizarHerramientaDespacho,
   actualizarEstadoOrden,
   escucharContratos, guardarContratosEnNube
-} from './db.js?v=61';
+} from './db.js?v=64';
 
 /* ------------------------------------------------------------------ */
 /* Estado global                                                       */
@@ -2702,6 +2702,7 @@ function modalRecibir(orden) {
           <button class="btn-icon peligro" data-quitar="${it._id}" title="Quitar">✕</button>
         </div>
         <div class="adic-nuevo"${nuevo ? '' : ' hidden'}>
+          <input type="text" data-campo="nuevoCodigo" placeholder="Código (opcional)" value="${esc(it.nuevoCodigo || '')}" />
           <input type="text" data-campo="nuevoNombre" placeholder="Nombre del material nuevo *" value="${esc(it.nuevoNombre || '')}" />
           <select data-campo="nuevoUnidad">${opcionesSelect(UNIDADES, it.nuevoUnidad || 'unidad')}</select>
           <input type="text" list="lista-categorias-rec" data-campo="nuevoCategoria" placeholder="Tipo (categoria)" value="${esc(it.nuevoCategoria || '')}" />
@@ -2717,6 +2718,7 @@ function modalRecibir(orden) {
       if (filtroEl) filtroEl.addEventListener('input', () => { item._filtro = filtroEl.value; selEl.innerHTML = opcionesAdic(item.materialId, item._filtro); });
       selEl.addEventListener('change', () => { item.materialId = selEl.value; renderAdic(); });
       row.querySelector('input[data-campo="cantidad"]').addEventListener('input', (e) => { item.cantidad = e.target.value; });
+      const ncod = row.querySelector('[data-campo="nuevoCodigo"]'); if (ncod) ncod.addEventListener('input', (e) => { item.nuevoCodigo = e.target.value; });
       const nn = row.querySelector('[data-campo="nuevoNombre"]'); if (nn) nn.addEventListener('input', (e) => { item.nuevoNombre = e.target.value; });
       const nu = row.querySelector('[data-campo="nuevoUnidad"]'); if (nu) nu.addEventListener('change', (e) => { item.nuevoUnidad = e.target.value; });
       const nc = row.querySelector('[data-campo="nuevoCategoria"]'); if (nc) nc.addEventListener('input', (e) => { item.nuevoCategoria = e.target.value; });
@@ -2727,7 +2729,7 @@ function modalRecibir(orden) {
   renderAdic();
 
   $('#adic-add').addEventListener('click', () => {
-    estado.itemsAdicion.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '', nuevoNombre: '', nuevoUnidad: 'unidad', nuevoCategoria: '', nuevoClase: '' });
+    estado.itemsAdicion.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', _filtro: '', nuevoCodigo: '', nuevoNombre: '', nuevoUnidad: 'unidad', nuevoCategoria: '', nuevoClase: '' });
     renderAdic();
   });
   if ($('#rec-minimizar')) $('#rec-minimizar').addEventListener('click', minimizarModal);
@@ -2744,7 +2746,7 @@ function modalRecibir(orden) {
       if (it.materialId === '__nuevo__') {
         const nombre = (it.nuevoNombre || '').trim();
         if (!nombre) { toast('Ponle nombre al material nuevo de las adiciones', 'error'); return; }
-        adiciones.push({ nuevo: true, materialNombre: nombre, unidad: it.nuevoUnidad || 'unidad', cantidad, categoria: (it.nuevoCategoria || '').trim() || 'Sin clasificar', clase: (it.nuevoClase || '').trim() });
+        adiciones.push({ nuevo: true, codigo: (it.nuevoCodigo || '').trim(), materialNombre: nombre, unidad: it.nuevoUnidad || 'unidad', cantidad, categoria: (it.nuevoCategoria || '').trim() || 'Sin clasificar', clase: (it.nuevoClase || '').trim() });
       } else if (it.materialId) {
         const m = estado.materiales.find((x) => x.id === it.materialId);
         adiciones.push({ nuevo: false, materialId: it.materialId, materialNombre: m ? m.nombre : '', unidad: m ? m.unidad : 'unidad', cantidad });
@@ -6175,19 +6177,71 @@ function normalizarUnidadIA(u) {
   return 'unidad';
 }
 
+// Sugiere Tipo (categoría) y Clase inicial a partir del nombre o materiales similares del inventario
+function inferirCategoriaYClaseIA(nombre, esHerr) {
+  const n = normTxt(nombre || '');
+  if (esHerr) return { categoria: 'Herramientas', clase: '' };
+  const primeraPalabra = n.split(/\s+/).find((w) => w.length >= 4);
+  if (primeraPalabra) {
+    const similar = estado.materiales.find((m) => {
+      const mn = normTxt(m.nombre || '');
+      return mn.startsWith(primeraPalabra) || mn.split(/\s+/).includes(primeraPalabra);
+    });
+    if (similar && similar.categoria) {
+      return { categoria: similar.categoria, clase: similar.clase || '' };
+    }
+  }
+  if (/bandeja|escalera.*galv|tubo|tuber|conduit|emt|imc|pvc|curva|tee\b|union|canaleta|coraza|perfil|riel|platina|soporte/.test(n)) {
+    return { categoria: 'Canalizacion y Tuberia', clase: /bandeja|curva.*bandeja|tee.*bandeja/.test(n) ? 'Bandejas portacables' : '' };
+  }
+  if (/cable|alambre|thhn|conductor|encauchetado|duplex/.test(n)) {
+    return { categoria: 'Cables y Conductores', clase: '' };
+  }
+  if (/caja|tapa|prensaestopa|abrazadera|tornillo|tuerca|arandela|chazo|perno|varilla roscada|amarre|cinta/.test(n)) {
+    return { categoria: 'Cajas y Accesorios', clase: /tornillo|tuerca|arandela|chazo|perno/.test(n) ? 'Tornilleria y Fijacion' : '' };
+  }
+  if (/breaker|tablero|fusible|contactor|dps|guardamotor|relevador/.test(n)) {
+    return { categoria: 'Tableros y Proteccion', clase: '' };
+  }
+  if (/toma|interruptor|clavija|switche|plafon|roseta/.test(n)) {
+    return { categoria: 'Tomas e Interruptores', clase: '' };
+  }
+  if (/lampara|reflector|luminaria|bombillo|led|panel/.test(n)) {
+    return { categoria: 'Iluminacion', clase: '' };
+  }
+  if (/soldadura|molde|aterrizaje|barraje|cooperweld/.test(n)) {
+    return { categoria: 'Puesta a Tierra', clase: '' };
+  }
+  if (/utp|rj45|fibra|patch|jack|faceplate|rack/.test(n)) {
+    return { categoria: 'Comunicaciones', clase: '' };
+  }
+  if (/guante|casco|gafa|arnes|eslinga|bota|chaleco|epp/.test(n)) {
+    return { categoria: 'EPP y Seguridad', clase: '' };
+  }
+  if (/taladro|pulidora|alicate|destornillador|llave|curvadora|ponchadora|multimetro|pinza|diferencial/.test(n)) {
+    return { categoria: 'Herramientas', clase: '' };
+  }
+  return { categoria: 'Sin clasificar', clase: '' };
+}
+
+// Opciones para el selector de vínculo en el escáner IA (permite elegir "Crear como material nuevo")
+function opcionesMaterialEscanerIA(sel, filtro) {
+  return `<option value="" ${!sel ? 'selected' : ''}>🆕 Crear como material nuevo en catálogo</option>` +
+    opcionesMaterialAgrupadas(sel, filtro, true);
+}
+
 // Modal interactivo para escanear listas escritas a mano, facturas de proveedores o texto
 function modalEscanearListaIA(opciones = {}) {
   const enOrdenActiva = !!opciones.enOrdenActiva;
   const alConfirmarEnOrden = opciones.alConfirmarEnOrden || null;
   let tipoSeleccionado = opciones.tipoOrden || 'salida';
   let fuenteImagenActual = opciones.archivoInicial || opciones.dataUrlInicial || null;
-  // Desactivar el filtro de alto contraste por defecto en facturas impresas si se desea, o mantenerlo suave
   let realzarContraste = false;
   let rotacionActual = 0;
   let imagenProcesada = null;
   let analizando = false;
 
-  // Renglones detectados: [{ _id, codigo, textoOriginal, nombreDetectado, materialId, cantidad, unidad, reqDevolucion, confianza, _filtro }]
+  // Renglones detectados: [{ _id, codigo, textoOriginal, nombreDetectado, categoria, clase, materialId, cantidad, unidad, reqDevolucion, confianza, _filtro, _editado }]
   let renglonesIA = [];
   let metaIA = {
     frente: '',
@@ -6211,7 +6265,6 @@ function modalEscanearListaIA(opciones = {}) {
     renglonesIA = rawItems.map((it, idx) => {
       const codigoItem = String(it.codigo || '').trim();
       const nombreItem = String(it.nombre || it.textoOriginal || it.nombreInventario || '').trim();
-      // Primero buscar por código exacto si viene en la factura (ej. BP130, TX038)
       let matPorCodigo = null;
       if (codigoItem) {
         matPorCodigo = estado.materiales.find((m) => m.codigo && normTxt(m.codigo) === normTxt(codigoItem));
@@ -6223,18 +6276,22 @@ function modalEscanearListaIA(opciones = {}) {
       const conf = it.confianza || match.confianza || (mat ? 'alta' : 'media');
       const esHerr = !!(it.esHerramienta || (mat && mat.esHerramienta));
       const unidadNorm = mat ? mat.unidad : normalizarUnidadIA(it.unidad);
+      const sugerencia = inferirCategoriaYClaseIA(nombreItem, esHerr);
       return {
         _id: Date.now() + idx + Math.random(),
         codigo: codigoItem || (mat ? (mat.codigo || '') : ''),
         textoOriginal: it.textoOriginal || (codigoItem ? `[${codigoItem}] ${nombreItem}` : nombreItem),
-        nombreDetectado: nombreItem || 'Material detectado',
+        nombreDetectado: mat ? mat.nombre : (nombreItem || 'Material detectado'),
+        categoria: mat ? (mat.categoria || 'Sin clasificar') : (it.categoria || sugerencia.categoria || 'Sin clasificar'),
+        clase: mat ? (mat.clase || '') : (it.clase || sugerencia.clase || ''),
         materialId: mat ? mat.id : '',
         cantidad: Number(it.cantidad) > 0 ? Number(it.cantidad) : 1,
         unidad: unidadNorm,
         esHerramienta: esHerr,
         reqDevolucion: !!(it.reqDevolucion || esHerr),
         confianza: mat ? conf : 'nueva',
-        _filtro: ''
+        _filtro: '',
+        _editado: false
       };
     });
   };
@@ -6247,11 +6304,14 @@ function modalEscanearListaIA(opciones = {}) {
     <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:14px">
       <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div style="font-size:12.5px;color:#dbeafe;line-height:1.45">
-          ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Sube una foto, <b>pégala con Ctrl+V</b> o pega texto. Si un material de la factura es nuevo, el sistema lo crea automáticamente en el inventario al continuar.
+          ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Antes de agregar los materiales puedes editar libremente su <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b>, <b>Clase</b> y <b>Unidad</b>.
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;align-items:start">
+      <datalist id="ia-dl-categorias">${categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+      <datalist id="ia-dl-clases-global">${clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+
+      <div style="display:grid;grid-template-columns:minmax(275px,0.9fr) minmax(380px,1.4fr);gap:14px;align-items:start">
         <!-- Columna izquierda: Imagen / Entrada -->
         <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px">
           <div id="ia-dropzone" class="ia-dropzone">
@@ -6333,7 +6393,15 @@ function modalEscanearListaIA(opciones = {}) {
             </div>
           </div>
 
-          <div id="ia-lista-renglones" style="max-height:380px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px"></div>
+          <!-- Barra rápida opcional para aplicar Tipo y Clase a todos los materiales nuevos de una vez -->
+          <div id="ia-lote-clasificar" hidden style="background:rgba(0,200,255,0.06);border:1px solid rgba(0,200,255,0.2);border-radius:8px;padding:7px 10px;display:none;align-items:center;gap:6px;flex-wrap:wrap">
+            <span style="font-size:11px;color:#7dd3fc;font-weight:600">🏷️ Aplicar a todos los nuevos:</span>
+            <input type="text" id="ia-lote-cat" list="ia-dl-categorias" placeholder="Tipo (categoría)..." style="flex:1;min-width:130px;font-size:11.5px;padding:4px 7px" />
+            <input type="text" id="ia-lote-clase" list="ia-dl-clases-global" placeholder="Clase (subgrupo)..." style="flex:1;min-width:120px;font-size:11.5px;padding:4px 7px" />
+            <button type="button" class="btn-ghost" id="ia-btn-aplicar-lote" style="font-size:11px;padding:4px 9px;border-color:rgba(0,200,255,0.4);color:#7dd3fc">Aplicar</button>
+          </div>
+
+          <div id="ia-lista-renglones" style="max-height:430px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding-right:2px"></div>
         </div>
       </div>
 
@@ -6350,7 +6418,7 @@ function modalEscanearListaIA(opciones = {}) {
     </div>
   `;
 
-  abrirModal('📷 Escáner IA de Facturas y Listas Manuscritas', htmlModal, '980px');
+  abrirModal('📷 Escáner IA de Facturas y Listas Manuscritas', htmlModal, '1060px');
 
   const root = $('#ia-scan-root');
   const dropzone = $('#ia-dropzone');
@@ -6363,16 +6431,52 @@ function modalEscanearListaIA(opciones = {}) {
   const inpExtraEl = $('#ia-instruccion-extra');
   const btnAnalizar = $('#ia-btn-analizar');
   const btnCrearTodos = $('#ia-btn-crear-todos');
+  const boxLoteClasificar = $('#ia-lote-clasificar');
   const estadoLectura = $('#ia-estado-lectura');
   const contRenglones = $('#ia-lista-renglones');
 
-  // Crea en el inventario cualquier renglón que aún no tenga materialId asignado
+  const refrescarDatalistsGlobales = () => {
+    const dlCat = $('#ia-dl-categorias');
+    if (dlCat) dlCat.innerHTML = categoriasExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
+    const dlCl = $('#ia-dl-clases-global');
+    if (dlCl) dlCl.innerHTML = clasesExistentes().map((c) => `<option value="${esc(c)}"></option>`).join('');
+  };
+
+  // Crea en el inventario cualquier renglón nuevo (!r.materialId) con el Código, Nombre, Tipo (categoría), Clase y Unidad editados por el usuario,
+  // y actualiza los materiales existentes si el usuario modificó sus datos.
   const asegurarMaterialesCreados = async (sumarStockInicial = false) => {
-    const pendientes = renglonesIA.filter((r) => !r.materialId && (r.nombreDetectado || r.textoOriginal));
-    for (const item of pendientes) {
+    for (const item of renglonesIA) {
       const nombreNuevo = (item.nombreDetectado || item.textoOriginal || 'Material nuevo').trim();
       const codigoNuevo = (item.codigo || '').trim();
-      // Verificar si ya se creó uno con el mismo nombre o código en esta tanda
+      const categoriaNueva = (item.categoria || '').trim() || (item.esHerramienta ? 'Herramientas' : 'Sin clasificar');
+      const claseNueva = (item.clase || '').trim();
+      const unidadNueva = normalizarUnidadIA(item.unidad || 'unidad');
+
+      if (item.materialId) {
+        if (item._editado) {
+          await actualizarMaterial(item.materialId, {
+            codigo: codigoNuevo,
+            nombre: nombreNuevo,
+            categoria: categoriaNueva,
+            clase: claseNueva,
+            unidad: unidadNueva
+          });
+          const mLocal = estado.materiales.find((x) => x.id === item.materialId);
+          if (mLocal) {
+            mLocal.codigo = codigoNuevo;
+            mLocal.nombre = nombreNuevo;
+            mLocal.categoria = categoriaNueva;
+            mLocal.clase = claseNueva;
+            mLocal.unidad = unidadNueva;
+          }
+          item._editado = false;
+        }
+        continue;
+      }
+
+      if (!nombreNuevo) continue;
+
+      // Verificar si ya existe un material con el mismo código o nombre exacto
       const existente = estado.materiales.find((m) =>
         (codigoNuevo && m.codigo && normTxt(m.codigo) === normTxt(codigoNuevo)) ||
         normTxt(m.nombre) === normTxt(nombreNuevo)
@@ -6380,41 +6484,69 @@ function modalEscanearListaIA(opciones = {}) {
       if (existente) {
         item.materialId = existente.id;
         item.confianza = 'alta';
+        if (item._editado) {
+          await actualizarMaterial(existente.id, {
+            codigo: codigoNuevo || existente.codigo || '',
+            nombre: nombreNuevo,
+            categoria: categoriaNueva,
+            clase: claseNueva,
+            unidad: unidadNueva
+          });
+          existente.codigo = codigoNuevo || existente.codigo || '';
+          existente.nombre = nombreNuevo;
+          existente.categoria = categoriaNueva;
+          existente.clase = claseNueva;
+          existente.unidad = unidadNueva;
+        }
         continue;
       }
-      const creado = await agregarMaterial({
+
+      const datosMat = {
         codigo: codigoNuevo,
         nombre: nombreNuevo,
-        categoria: item.esHerramienta ? 'Herramientas' : 'Sin clasificar',
+        categoria: categoriaNueva,
+        clase: claseNueva,
         cantidad: sumarStockInicial ? (Number(item.cantidad) || 0) : 0,
-        unidad: item.unidad || 'unidad',
+        unidad: unidadNueva,
         minimo: 0,
         ubicacion: '',
         esHerramienta: !!item.esHerramienta,
         serial: ''
-      });
-      item.materialId = creado.id;
+      };
+      const creado = await agregarMaterial(datosMat);
+      const nuevoId = (typeof creado === 'string') ? creado : (creado && creado.id);
+      if (nuevoId && !estado.materiales.some((m) => m.id === nuevoId)) {
+        estado.materiales.push({ id: nuevoId, ...datosMat });
+      }
+      item.materialId = nuevoId;
       item.confianza = 'alta';
+      item._editado = false;
     }
+    refrescarDatalistsGlobales();
   };
 
   const renderRenglonesIA = () => {
+    refrescarDatalistsGlobales();
     $('#ia-count-items').textContent = renglonesIA.length;
     const vinculados = renglonesIA.filter((r) => r.materialId).length;
     const sinVincular = renglonesIA.length - vinculados;
     $('#ia-resumen-match').innerHTML = renglonesIA.length > 0
-      ? (`<span style="color:#6ee7b7">✓ ${vinculados} en inventario</span>` + (sinVincular > 0 ? ` · <span style="color:#38bdf8">🆕 ${sinVincular} nuevo(s) (se crearán al continuar)</span>` : ''))
+      ? (`<span style="color:#6ee7b7">✓ ${vinculados} en inventario</span>` + (sinVincular > 0 ? ` · <span style="color:#38bdf8">🆕 ${sinVincular} nuevo(s) para agregar</span>` : ''))
       : '';
     if (btnCrearTodos) {
       btnCrearTodos.hidden = sinVincular === 0;
-      btnCrearTodos.textContent = `⚡ Crear ${sinVincular} nuevo(s) en catálogo`;
+      btnCrearTodos.textContent = `⚡ Agregar ${sinVincular} nuevo(s) al catálogo`;
+    }
+    if (boxLoteClasificar) {
+      boxLoteClasificar.hidden = sinVincular === 0;
+      boxLoteClasificar.style.display = sinVincular > 0 ? 'flex' : 'none';
     }
 
     if (renglonesIA.length === 0) {
       contRenglones.innerHTML = `
         <div style="padding:36px 16px;text-align:center;color:var(--texto-dim);font-size:12.5px;border:1px dashed rgba(255,255,255,0.1);border-radius:10px">
           Sube o pega una foto de la factura o lista escrita a mano y pulsa <b>"🧠 Leer con IA"</b>.<br>
-          Aquí aparecerá cada renglón leído junto con su código, cantidad y material del inventario.
+          Aquí podrás editar el <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b> y <b>Clase</b> de cada material antes de agregarlo.
         </div>`;
       return;
     }
@@ -6422,39 +6554,83 @@ function modalEscanearListaIA(opciones = {}) {
     contRenglones.innerHTML = renglonesIA.map((r, i) => {
       const esVinculado = !!r.materialId;
       const confClase = esVinculado ? 'ia-conf-alta' : 'ia-conf-media';
-      const confTexto = esVinculado ? '🟢 En inventario' : '🆕 Material nuevo';
+      const confTexto = esVinculado ? '🟢 En inventario' : '🆕 Material nuevo (editable antes de agregar)';
+      const clasesCat = clasesDeCategoria(r.categoria);
+      const listaClasesRow = clasesCat.length > 0 ? clasesCat : clasesExistentes();
       return `
-        <div class="ia-renglon-card" data-rid="${r._id}" style="background:rgba(15,23,42,0.65);border:1px solid ${esVinculado ? 'rgba(255,255,255,0.1)' : 'rgba(56,189,248,0.4)'};border-radius:9px;padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+        <div class="ia-renglon-card" data-rid="${r._id}" style="background:rgba(15,23,42,0.72);border:1px solid ${esVinculado ? 'rgba(255,255,255,0.12)' : 'rgba(56,189,248,0.45)'};border-radius:10px;padding:9px 11px;display:flex;flex-direction:column;gap:7px">
+          <!-- Cabecera del renglón: # + estado + botón agregar rápido + eliminar -->
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
-            <div style="font-size:11.5px;color:#cbd5e1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1">
-              <span style="color:var(--texto-dim);font-weight:700">#${i + 1}</span>
-              ${r.codigo ? `<span style="background:rgba(0,200,255,0.14);color:#7dd3fc;padding:1px 6px;border-radius:4px;font-family:monospace;font-size:11px">${esc(r.codigo)}</span>` : ''}
-              <input type="text" class="ia-row-nom" value="${esc(r.nombreDetectado)}" title="Nombre detectado (editable si es material nuevo)" style="flex:1;min-width:140px;font-size:11.5px;padding:3px 7px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);border-radius:5px;color:#e2e8f0" />
+            <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+              <span style="color:#7dd3fc;font-weight:700;font-size:12px">#${i + 1}</span>
               <span class="ia-conf-badge ${confClase}">${confTexto}</span>
+              ${r.textoOriginal ? `<span style="font-size:11px;color:var(--texto-mute)" title="Texto leído de la factura/lista">Leído: <i>${esc(r.textoOriginal.slice(0, 55))}${r.textoOriginal.length > 55 ? '…' : ''}</i></span>` : ''}
             </div>
-            ${!esVinculado ? `<button type="button" class="btn-ghost ia-btn-crear-mat" data-crear-mat="${r._id}" style="font-size:11px;padding:2px 8px;border-color:rgba(16,185,129,0.5);color:#6ee7b7" title="Crear este material ahora mismo en el inventario">⚡ Crear ya</button>` : ''}
+            <div style="display:flex;align-items:center;gap:6px">
+              ${!esVinculado ? `<button type="button" class="btn-ghost ia-btn-crear-mat" data-crear-mat="${r._id}" style="font-size:11px;padding:3px 9px;border-color:rgba(16,185,129,0.55);color:#6ee7b7" title="Guardar este material ahora mismo en el inventario con el Código, Nombre, Tipo y Clase indicados">⚡ Agregar al inventario</button>` : ''}
+              <button type="button" class="btn-icon peligro ia-row-del" title="Quitar renglón" style="flex:none">✕</button>
+            </div>
           </div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap">
-            <input type="text" class="ia-row-filtro" placeholder="🔎 Buscar existente..." value="${esc(r._filtro || '')}" style="flex:0.85;min-width:0;width:0;font-size:11.5px;padding:5px 7px" title="Escribe para vincular con un material existente del inventario" />
-            <select class="ia-row-mat select" style="flex:2.1;min-width:0;width:0;font-size:12px;padding:5px 7px">
-              ${opcionesMaterialAgrupadas(r.materialId, r._filtro)}
+
+          <!-- Campos editables del material: Código, Nombre, Tipo (categoría), Clase y Unidad -->
+          <div style="display:grid;grid-template-columns:105px 1fr 110px;gap:6px;align-items:end">
+            <div>
+              <label style="display:block;font-size:10px;color:#93c5fd;margin-bottom:2px;font-weight:600">Código</label>
+              <input type="text" class="ia-row-cod" value="${esc(r.codigo || '')}" placeholder="Ej: BP130" style="width:100%;font-size:12px;padding:5px 7px;font-family:monospace" />
+            </div>
+            <div>
+              <label style="display:block;font-size:10px;color:#93c5fd;margin-bottom:2px;font-weight:600">Nombre del material *</label>
+              <input type="text" class="ia-row-nom" value="${esc(r.nombreDetectado || '')}" placeholder="Nombre del material *" style="width:100%;font-size:12px;padding:5px 8px" />
+            </div>
+            <div>
+              <label style="display:block;font-size:10px;color:#93c5fd;margin-bottom:2px;font-weight:600">Unidad</label>
+              <select class="ia-row-unidad select" style="width:100%;font-size:12px;padding:5px 6px">
+                ${opcionesSelect(UNIDADES, r.unidad || 'unidad')}
+              </select>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;align-items:end">
+            <div>
+              <label style="display:block;font-size:10px;color:#93c5fd;margin-bottom:2px;font-weight:600">Tipo (categoría)</label>
+              <input type="text" class="ia-row-cat" list="ia-dl-categorias" value="${esc(r.categoria || '')}" placeholder="Elige o escribe Tipo (categoría)" autocomplete="off" style="width:100%;font-size:12px;padding:5px 8px" />
+            </div>
+            <div>
+              <label style="display:block;font-size:10px;color:#93c5fd;margin-bottom:2px;font-weight:600">Clase (subgrupo)</label>
+              <input type="text" class="ia-row-clase" list="ia-dl-clases-${i}" value="${esc(r.clase || '')}" placeholder="Elige o escribe Clase (opcional)" autocomplete="off" style="width:100%;font-size:12px;padding:5px 8px" />
+              <datalist id="ia-dl-clases-${i}">${listaClasesRow.map((c) => `<option value="${esc(c)}"></option>`).join('')}</datalist>
+            </div>
+          </div>
+
+          <!-- Vínculo con inventario existente + Cantidad + Requiere devolución -->
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.08)">
+            <input type="text" class="ia-row-filtro" placeholder="🔎 Buscar en catálogo..." value="${esc(r._filtro || '')}" style="flex:0.8;min-width:0;width:0;font-size:11.5px;padding:5px 7px" title="Filtra si deseas vincularlo a un material que ya existe en el inventario" />
+            <select class="ia-row-mat select" style="flex:1.8;min-width:0;width:0;font-size:11.5px;padding:5px 7px" title="Deja 'Crear como material nuevo' o selecciona uno existente">
+              ${opcionesMaterialEscanerIA(r.materialId, r._filtro)}
             </select>
-            <input type="number" step="any" min="0" class="ia-row-cant" value="${r.cantidad}" placeholder="Cant." style="flex:0.65;min-width:0;width:0;font-size:12px;padding:5px 6px;text-align:right" />
-            <label class="chk-req-dev ${r.reqDevolucion ? 'activo' : ''}" title="Marcar si requiere devolución al almacén" style="padding:4px 7px;font-size:10.5px">
+            <div style="display:flex;align-items:center;gap:4px;flex:0.7;min-width:80px">
+              <span style="font-size:10.5px;color:var(--texto-dim);white-space:nowrap">Cant:</span>
+              <input type="number" step="any" min="0" class="ia-row-cant" value="${r.cantidad}" placeholder="Cant." style="width:100%;font-size:12px;padding:5px 6px;text-align:right;font-weight:700" />
+            </div>
+            <label class="chk-req-dev ${r.reqDevolucion ? 'activo' : ''}" title="Marcar si requiere devolución al almacén" style="padding:4px 7px;font-size:10.5px;flex:none">
               <input type="checkbox" class="ia-row-reqdev" ${r.reqDevolucion ? 'checked' : ''} />
               <span>Req. dev.</span>
             </label>
-            <button type="button" class="btn-icon peligro ia-row-del" title="Quitar renglón" style="flex:none">✕</button>
           </div>
         </div>
       `;
     }).join('');
 
-    contRenglones.querySelectorAll('.ia-renglon-card').forEach((card) => {
+    contRenglones.querySelectorAll('.ia-renglon-card').forEach((card, idx) => {
       const rid = Number(card.dataset.rid);
       const item = renglonesIA.find((x) => x._id === rid);
       if (!item) return;
+      const codEl = card.querySelector('.ia-row-cod');
       const nomEl = card.querySelector('.ia-row-nom');
+      const uniEl = card.querySelector('.ia-row-unidad');
+      const catEl = card.querySelector('.ia-row-cat');
+      const claseEl = card.querySelector('.ia-row-clase');
+      const dlClasesRow = card.querySelector(`#ia-dl-clases-${idx}`);
       const filtroEl = card.querySelector('.ia-row-filtro');
       const selEl = card.querySelector('.ia-row-mat');
       const cantEl = card.querySelector('.ia-row-cant');
@@ -6463,22 +6639,61 @@ function modalEscanearListaIA(opciones = {}) {
       const btnDel = card.querySelector('.ia-row-del');
       const btnCrear = card.querySelector('.ia-btn-crear-mat');
 
+      if (codEl) {
+        codEl.addEventListener('input', () => {
+          item.codigo = codEl.value;
+          item._editado = true;
+        });
+      }
       if (nomEl) {
         nomEl.addEventListener('input', () => {
           item.nombreDetectado = nomEl.value;
+          item._editado = true;
+        });
+      }
+      if (uniEl) {
+        uniEl.addEventListener('change', () => {
+          item.unidad = uniEl.value;
+          item._editado = true;
+        });
+      }
+      if (catEl) {
+        const onCatChange = () => {
+          item.categoria = catEl.value;
+          item._editado = true;
+          if (dlClasesRow) {
+            const cls = clasesDeCategoria(catEl.value);
+            const lista = cls.length > 0 ? cls : clasesExistentes();
+            dlClasesRow.innerHTML = lista.map((c) => `<option value="${esc(c)}"></option>`).join('');
+          }
+        };
+        catEl.addEventListener('input', onCatChange);
+        catEl.addEventListener('change', onCatChange);
+      }
+      if (claseEl) {
+        claseEl.addEventListener('input', () => {
+          item.clase = claseEl.value;
+          item._editado = true;
         });
       }
       filtroEl.addEventListener('input', () => {
         item._filtro = filtroEl.value;
-        selEl.innerHTML = opcionesMaterialAgrupadas(item.materialId, item._filtro);
+        selEl.innerHTML = opcionesMaterialEscanerIA(item.materialId, item._filtro);
       });
       selEl.addEventListener('change', () => {
         item.materialId = selEl.value;
         const m = estado.materiales.find((x) => x.id === item.materialId);
         if (m) {
+          item.codigo = m.codigo || item.codigo || '';
+          item.nombreDetectado = m.nombre || item.nombreDetectado;
+          item.categoria = m.categoria || 'Sin clasificar';
+          item.clase = m.clase || '';
           item.unidad = m.unidad || 'unidad';
           item.confianza = 'alta';
+          item._editado = false;
           if (m.esHerramienta) item.reqDevolucion = true;
+        } else {
+          item.confianza = 'nueva';
         }
         renderRenglonesIA();
       });
@@ -6495,42 +6710,75 @@ function modalEscanearListaIA(opciones = {}) {
       });
       if (btnCrear) {
         btnCrear.addEventListener('click', async () => {
+          const nombreNuevo = (item.nombreDetectado || item.textoOriginal || '').trim();
+          if (!nombreNuevo) {
+            toast('Escribe el nombre del material antes de agregarlo', 'error');
+            if (nomEl) nomEl.focus();
+            return;
+          }
           btnCrear.disabled = true;
-          btnCrear.textContent = 'Creando...';
+          btnCrear.textContent = '⏳ Agregando...';
           try {
-            const nombreNuevo = (item.nombreDetectado || item.textoOriginal || 'Material nuevo').trim();
-            const creado = await agregarMaterial({
-              codigo: item.codigo || '',
+            const datosMat = {
+              codigo: (item.codigo || '').trim(),
               nombre: nombreNuevo,
-              categoria: item.esHerramienta ? 'Herramientas' : 'Sin clasificar',
+              categoria: (item.categoria || '').trim() || (item.esHerramienta ? 'Herramientas' : 'Sin clasificar'),
+              clase: (item.clase || '').trim(),
               cantidad: 0,
-              unidad: item.unidad || 'unidad',
+              unidad: normalizarUnidadIA(item.unidad || 'unidad'),
               minimo: 0,
               ubicacion: '',
               esHerramienta: !!item.esHerramienta,
               serial: ''
-            });
-            item.materialId = creado.id;
+            };
+            const creado = await agregarMaterial(datosMat);
+            const nuevoId = (typeof creado === 'string') ? creado : (creado && creado.id);
+            if (nuevoId && !estado.materiales.some((m) => m.id === nuevoId)) {
+              estado.materiales.push({ id: nuevoId, ...datosMat });
+            }
+            item.materialId = nuevoId;
             item.confianza = 'alta';
-            toast(`Material "${nombreNuevo}" creado en el catálogo`, 'ok');
+            item._editado = false;
+            toast(`Material "${nombreNuevo}" agregado al catálogo`, 'ok');
             renderRenglonesIA();
           } catch (err) {
             toast('Error al crear material: ' + err.message, 'error');
             btnCrear.disabled = false;
-            btnCrear.textContent = '⚡ Crear ya';
+            btnCrear.textContent = '⚡ Agregar al inventario';
           }
         });
       }
     });
   };
 
+  if ($('#ia-btn-aplicar-lote')) {
+    $('#ia-btn-aplicar-lote').addEventListener('click', () => {
+      const catLote = ($('#ia-lote-cat') ? $('#ia-lote-cat').value : '').trim();
+      const claseLote = ($('#ia-lote-clase') ? $('#ia-lote-clase').value : '').trim();
+      if (!catLote && !claseLote) {
+        toast('Escribe un Tipo (categoría) o Clase para aplicar a los materiales nuevos', 'error');
+        return;
+      }
+      let aplicados = 0;
+      renglonesIA.forEach((r) => {
+        if (!r.materialId) {
+          if (catLote) r.categoria = catLote;
+          if (claseLote) r.clase = claseLote;
+          aplicados++;
+        }
+      });
+      renderRenglonesIA();
+      toast(`Tipo/Clase aplicado a ${aplicados} material(es) nuevo(s)`, 'ok');
+    });
+  }
+
   if (btnCrearTodos) {
     btnCrearTodos.addEventListener('click', async () => {
       btnCrearTodos.disabled = true;
-      btnCrearTodos.textContent = '⏳ Creando...';
+      btnCrearTodos.textContent = '⏳ Agregando...';
       try {
         await asegurarMaterialesCreados(false);
-        toast('Todos los materiales nuevos fueron creados en el catálogo', 'ok');
+        toast('Todos los materiales nuevos fueron agregados al catálogo con sus datos', 'ok');
         renderRenglonesIA();
       } catch (err) {
         toast('Error creando materiales: ' + err.message, 'error');
@@ -6569,7 +6817,7 @@ function modalEscanearListaIA(opciones = {}) {
       if ($('#ia-meta-nota') && metaIA.nota) $('#ia-meta-nota').value = metaIA.nota;
 
       if (renglonesIA.length > 0) {
-        estadoLectura.innerHTML = `✅ <b>Se reconocieron ${renglonesIA.length} renglón(es)${metaIA.proveedor ? (' de ' + esc(metaIA.proveedor)) : ''}.</b>`;
+        estadoLectura.innerHTML = `✅ <b>Se reconocieron ${renglonesIA.length} renglón(es)${metaIA.proveedor ? (' de ' + esc(metaIA.proveedor)) : ''}.</b> Puedes ajustar Código, Nombre, Tipo y Clase antes de agregarlos.`;
       } else {
         estadoLectura.innerHTML = `<span style="color:#fcd34d">⚠️ ${esc(metaIA.mensajeIA || 'No se detectaron renglones. Intenta girar la imagen o darle una pista.')}</span>`;
       }
@@ -6643,13 +6891,16 @@ function modalEscanearListaIA(opciones = {}) {
       codigo: '',
       textoOriginal: 'Agregado manual',
       nombreDetectado: '',
+      categoria: 'Sin clasificar',
+      clase: '',
       materialId: '',
       cantidad: 1,
       unidad: 'unidad',
       esHerramienta: false,
       reqDevolucion: false,
-      confianza: 'alta',
-      _filtro: ''
+      confianza: 'nueva',
+      _filtro: '',
+      _editado: false
     });
     renderRenglonesIA();
   });
@@ -6816,11 +7067,12 @@ function modalEscanearListaIA(opciones = {}) {
         const listaImp = renglonesIA.map((r) => {
           const m = r.materialId ? estado.materiales.find((x) => x.id === r.materialId) : null;
           return {
-            codigo: m ? m.codigo : (r.codigoDetectado || ''),
-            nombre: m ? m.nombre : (r.nombreDetectado || r.textoOriginal || '').trim(),
-            categoria: m ? m.categoria : (r.esHerramienta ? 'Herramientas' : 'Sin clasificar'),
+            codigo: (r.codigo || (m && m.codigo) || '').trim(),
+            nombre: (r.nombreDetectado || (m && m.nombre) || r.textoOriginal || '').trim(),
+            categoria: (r.categoria || (m && m.categoria) || (r.esHerramienta ? 'Herramientas' : 'Sin clasificar')).trim() || 'Sin clasificar',
+            clase: (r.clase || (m && m.clase) || '').trim(),
             cantidad: Number(r.cantidad) || 0,
-            unidad: m ? m.unidad : normalizarUnidadIA(r.unidad || 'unidad')
+            unidad: normalizarUnidadIA(r.unidad || (m && m.unidad) || 'unidad')
           };
         }).filter((x) => x.nombre);
         const res = await importarMateriales(listaImp, estado.materiales);
@@ -6830,7 +7082,7 @@ function modalEscanearListaIA(opciones = {}) {
       } catch (err) {
         toast('Error al importar: ' + err.message, 'error');
         btn.disabled = false;
-        btn.textContent = '📦 Agregar al Inventario';
+        btn.textContent = '📦 Sumar directo al Inventario';
       }
     });
   }

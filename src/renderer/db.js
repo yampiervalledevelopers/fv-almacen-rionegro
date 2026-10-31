@@ -127,10 +127,14 @@ export async function importarMateriales(lista, existentes) {
     const ya = porNombre[clave];
     if (ya) {
       const ref = doc(db, COL_MATERIALES, ya.id);
-      batch.update(ref, {
+      const upd = {
         cantidad: increment(Number(it.cantidad) || 0),
         actualizado: serverTimestamp()
-      });
+      };
+      if (it.codigo) upd.codigo = it.codigo;
+      if (it.categoria && it.categoria !== 'Sin clasificar') upd.categoria = it.categoria;
+      if (it.clase) upd.clase = it.clase;
+      batch.update(ref, upd);
       actualizados++;
     } else {
       const ref = doc(collection(db, COL_MATERIALES));
@@ -138,11 +142,12 @@ export async function importarMateriales(lista, existentes) {
         codigo: it.codigo || '',
         nombre: it.nombre || '',
         categoria: it.categoria || 'Sin clasificar',
+        clase: it.clase || '',
         cantidad: Number(it.cantidad) || 0,
         unidad: it.unidad || 'unidad',
         minimo: 0,
         ubicacion: '',
-        nota: 'Importado de PDF',
+        nota: 'Importado con IA / PDF',
         creado: serverTimestamp(),
         actualizado: serverTimestamp()
       });
