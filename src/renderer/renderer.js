@@ -1073,6 +1073,146 @@ function inyectarExtras() {
   .ia-conf-alta { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35); }
   .ia-conf-media { background: rgba(245, 158, 11, 0.18); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.35); }
   .ia-conf-baja { background: rgba(244, 63, 94, 0.18); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.35); }
+  .ord-th-sort {
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s ease;
+    position: relative;
+    white-space: nowrap;
+  }
+  .ord-th-sort:hover {
+    color: #00c8ff !important;
+    background: rgba(0, 200, 255, 0.08);
+  }
+  .ord-th-sort.activo {
+    color: #00c8ff !important;
+    background: rgba(0, 200, 255, 0.12);
+  }
+  .ord-sort-ic {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 10.5px;
+    margin-left: 4px;
+    opacity: 0.45;
+    color: #7dd3fc;
+  }
+  .ord-th-sort:hover .ord-sort-ic,
+  .ord-th-sort.activo .ord-sort-ic {
+    opacity: 1;
+  }
+  .ord-sort-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #00c8ff;
+    color: #04122b;
+    font-size: 9.5px;
+    font-weight: 800;
+  }
+  .ord-controles-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    background: rgba(15, 23, 42, 0.65);
+    border: 1px solid rgba(0, 200, 255, 0.16);
+    border-radius: 10px;
+  }
+  .ord-dd-wrap {
+    position: relative;
+  }
+  .ord-dd-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: #cbd5e1;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+  }
+  .ord-dd-btn:hover {
+    border-color: rgba(0, 200, 255, 0.5);
+    color: #fff;
+  }
+  .ord-dd-btn.con-filtro {
+    border-color: #00c8ff;
+    background: rgba(0, 200, 255, 0.14);
+    color: #7dd3fc;
+    font-weight: 700;
+  }
+  .ord-dd-menu {
+    position: absolute;
+    top: calc(100% + 5px);
+    left: 0;
+    z-index: 80;
+    min-width: 230px;
+    max-width: 310px;
+    background: #07142b;
+    border: 1px solid rgba(0, 200, 255, 0.4);
+    border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .ord-dd-menu[hidden] {
+    display: none !important;
+  }
+  .ord-dd-lista {
+    max-height: 210px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .ord-dd-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 6px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #e2e8f0;
+    cursor: pointer;
+  }
+  .ord-dd-item:hover {
+    background: rgba(0, 200, 255, 0.12);
+  }
+  .ord-dd-item input {
+    width: auto;
+    margin: 0;
+    accent-color: #00c8ff;
+  }
+  .ord-sel-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 14px;
+    margin-bottom: 10px;
+    background: linear-gradient(90deg, rgba(0, 200, 255, 0.16), rgba(16, 185, 129, 0.14));
+    border: 1px solid rgba(0, 200, 255, 0.45);
+    border-radius: 10px;
+  }
+  .ord-sel-bar[hidden] {
+    display: none !important;
+  }
+  tr.grupo-row.ord-fila-sel {
+    background: rgba(0, 200, 255, 0.11) !important;
+  }
   `;
   const style = document.createElement('style');
   style.id = 'fviecom-extra';
@@ -1126,12 +1266,53 @@ function inyectarExtras() {
       <button class="btn-primary" data-nueva-orden="devolucion">🔄 Nueva devolucion</button>
       <button class="btn-ghost btn-ia-scan" id="btn-escanear-ia-ord" title="Leer una lista escrita a mano o foto para armar la orden automáticamente">📷 Escanear lista (Foto / Letra a mano)</button>
     </div>
-    <div class="mov-hint">💡 Haz <b>doble clic</b> en una orden (o clic en la ▸) para desplegar los materiales que la componen.</div>
+    <div class="ord-controles-bar" id="ord-controles-bar">
+      <input type="search" id="ord-buscar-txt" class="input-buscar" placeholder="🔎 Buscar orden, responsable, frente o material..." style="min-width:210px;flex:1;padding:5px 10px;font-size:12px" />
+      <div class="ord-dd-wrap" data-dd="tipo">
+        <button type="button" class="ord-dd-btn" id="ord-dd-btn-tipo" title="Escoger uno o varios Tipos a la vez">🏷 Tipo: <span id="ord-dd-lbl-tipo">Todos</span> ▾</button>
+        <div class="ord-dd-menu" id="ord-dd-menu-tipo" hidden></div>
+      </div>
+      <div class="ord-dd-wrap" data-dd="estado">
+        <button type="button" class="ord-dd-btn" id="ord-dd-btn-estado" title="Escoger uno o varios Estados a la vez">📌 Estado: <span id="ord-dd-lbl-estado">Todos</span> ▾</button>
+        <div class="ord-dd-menu" id="ord-dd-menu-estado" hidden></div>
+      </div>
+      <div class="ord-dd-wrap" data-dd="responsable">
+        <button type="button" class="ord-dd-btn" id="ord-dd-btn-responsable" title="Escoger uno o varios Responsables a la vez">👷 Responsable: <span id="ord-dd-lbl-responsable">Todos</span> ▾</button>
+        <div class="ord-dd-menu" id="ord-dd-menu-responsable" hidden></div>
+      </div>
+      <div class="ord-dd-wrap" data-dd="lugar">
+        <button type="button" class="ord-dd-btn" id="ord-dd-btn-lugar" title="Escoger uno o varios Frentes / Proveedores a la vez">🏗 Frente / Prov.: <span id="ord-dd-lbl-lugar">Todos</span> ▾</button>
+        <div class="ord-dd-menu" id="ord-dd-menu-lugar" hidden></div>
+      </div>
+      <button type="button" class="ord-dd-btn" id="ord-btn-multisort" title="Actívalo para escoger varios títulos de columna a la vez y combinar el orden (también puedes usar Shift + Clic en los títulos)">🔗 Combinar títulos</button>
+      <button type="button" class="ord-dd-btn" id="ord-btn-reset" hidden style="border-color:rgba(244,63,94,0.45);color:#fda4af" title="Volver al orden por defecto (Fecha y N° de Orden) y limpiar filtros">↺ Por defecto</button>
+    </div>
+    <div class="ord-sel-bar" id="ord-barra-seleccion" hidden>
+      <div style="font-size:12.5px;color:#e2e8f0;font-weight:700">
+        ✅ <span id="ord-sel-count">0</span> orden(es) seleccionada(s)
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button type="button" class="btn-primary" id="ord-btn-print-sel" style="font-size:12px;padding:5px 11px">🖨 Imprimir seleccionadas</button>
+        <button type="button" class="btn-ghost" id="ord-btn-del-sel" style="font-size:12px;padding:5px 11px;border-color:rgba(244,63,94,0.5);color:#fda4af">🗑 Eliminar seleccionadas</button>
+        <button type="button" class="btn-ghost" id="ord-btn-clear-sel" style="font-size:12px;padding:5px 10px">✕ Quitar selección</button>
+      </div>
+    </div>
+    <div class="mov-hint" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+      <span>💡 Haz <b>clic en cualquier título de columna</b> (Tipo, Estado, Responsable, Frente/Proveedor...) para ordenar, o <b>doble clic</b> en una fila para ver sus materiales.</span>
+      <span id="ord-estado-ordenamiento" style="color:#7dd3fc;font-size:11.5px;font-weight:600">Orden actual: Por defecto (Fecha y N° Orden ▼)</span>
+    </div>
     <div class="panel sin-pad">
       <table class="tabla" id="tabla-ordenes">
         <thead><tr>
-          <th>N° Orden</th><th>Fecha</th><th>Tipo</th><th>Estado</th><th>Responsable</th>
-          <th>Frente / Proveedor</th><th class="der">Items</th><th class="cen">Acciones</th>
+          <th class="cen" style="width:34px"><input type="checkbox" id="ord-chk-all" title="Seleccionar o deseleccionar todas las órdenes visibles" style="width:auto;margin:0;accent-color:#00c8ff;cursor:pointer" /></th>
+          <th class="ord-th-sort" data-sort="numero" title="Clic para ordenar por N° de Orden">N° Orden <span class="ord-sort-ic">⇅</span></th>
+          <th class="ord-th-sort" data-sort="fecha" title="Clic para ordenar por Fecha">Fecha <span class="ord-sort-ic">⇅</span></th>
+          <th class="ord-th-sort" data-sort="tipo" title="Clic para ordenar por Tipo (Salida, Entrada, Devolución)">Tipo <span class="ord-sort-ic">⇅</span></th>
+          <th class="ord-th-sort" data-sort="estado" title="Clic para ordenar por Estado (Completado, Req. devolución, Pendiente...)">Estado <span class="ord-sort-ic">⇅</span></th>
+          <th class="ord-th-sort" data-sort="responsable" title="Clic para ordenar por Responsable">Responsable <span class="ord-sort-ic">⇅</span></th>
+          <th class="ord-th-sort" data-sort="lugar" title="Clic para ordenar por Frente de obra o Proveedor">Frente / Proveedor <span class="ord-sort-ic">⇅</span></th>
+          <th class="ord-th-sort der" data-sort="items" title="Clic para ordenar por cantidad de materiales">Items <span class="ord-sort-ic">⇅</span></th>
+          <th class="cen">Acciones</th>
         </tr></thead>
         <tbody id="cuerpo-ordenes"></tbody>
       </table>
@@ -2366,37 +2547,399 @@ function etiquetaDiaElegante(ymd) {
   }
 }
 
-// Conjunto de dias plegados manualmente por el usuario (vacio por defecto = todas las franjas abiertas).
+// Conjunto de grupos/días plegados manualmente por el usuario (vacío por defecto = todas las franjas abiertas).
 const diasColapsadosOrdenes = new Set();
+
+// Estado interactivo de la tabla de Órdenes (ordenamiento por clic en títulos, filtros múltiples y selección múltiple)
+const estadoTablaOrdenes = {
+  busqueda: '',
+  modoMultiSort: false,
+  // vacío = por defecto (Fecha y N° Orden descendente agrupado por día)
+  criteriosOrden: [], // [{ col: 'numero'|'fecha'|'tipo'|'estado'|'responsable'|'lugar'|'items', dir: 'asc'|'desc' }]
+  filtros: {
+    tipo: new Set(),
+    estado: new Set(),
+    responsable: new Set(),
+    lugar: new Set()
+  },
+  seleccionadas: new Set()
+};
+
+const NOMBRES_COL_ORDEN = {
+  numero: 'N° Orden',
+  fecha: 'Fecha',
+  tipo: 'Tipo',
+  estado: 'Estado',
+  responsable: 'Responsable',
+  lugar: 'Frente / Proveedor',
+  items: 'Items'
+};
+
+function valorTipoOrden(o) {
+  return (TIPOS[o.tipo] || {}).label || o.tipo || 'Salida';
+}
+
+function valorEstadoPrincipalOrden(o) {
+  const info = estadoOrdenInfo(o);
+  const pendDevol = ordenTieneDevolucionPendiente(o);
+  if (pendDevol) {
+    if (estadoOrden(o) === 'devolucion_parcial') return 'Devolucion parcial (Req. devolución)';
+    return '🔧 Requiere devolución';
+  }
+  return info.label || 'Completado';
+}
+
+function etiquetasEstadoFiltroOrden(o) {
+  const info = estadoOrdenInfo(o);
+  const pendDevol = ordenTieneDevolucionPendiente(o);
+  const tags = [info.label || 'Completado'];
+  if (pendDevol) tags.push('🔧 Requiere devolución');
+  return Array.from(new Set(tags));
+}
+
+function listaResponsablesLimpiadaOrden(o) {
+  const raw = ordenResponsablesLista(o)
+    .map((r) => String(typeof r === 'object' ? (r.nombre || '') : (r || '')).trim())
+    .filter(Boolean);
+  return raw.length > 0 ? raw : ['(Sin responsable)'];
+}
+
+function valorResponsableOrden(o) {
+  return listaResponsablesLimpiadaOrden(o).join(', ');
+}
+
+function valorLugarOrden(o) {
+  if (o.frente) {
+    const c = contratoReal(o);
+    return `Frente ${o.frente}${c ? ' (' + c + ')' : ''}`;
+  }
+  if (o.proveedor && String(o.proveedor).trim()) {
+    return String(o.proveedor).trim();
+  }
+  return '(Sin frente / proveedor)';
+}
+
+function compararOrdenesPorColumna(a, b, col, dir) {
+  const mul = dir === 'desc' ? -1 : 1;
+  if (col === 'fecha') {
+    const fa = String(a.fecha || '');
+    const fb = String(b.fecha || '');
+    if (fa !== fb) return fa.localeCompare(fb) * mul;
+    return String(a.numero || '').localeCompare(String(b.numero || ''), 'es', { numeric: true }) * mul;
+  }
+  if (col === 'numero') {
+    return String(a.numero || '').localeCompare(String(b.numero || ''), 'es', { numeric: true, sensitivity: 'base' }) * mul;
+  }
+  if (col === 'items') {
+    const ia = (a.items || []).length;
+    const ib = (b.items || []).length;
+    return (ia - ib) * mul;
+  }
+  let va = '';
+  let vb = '';
+  if (col === 'tipo') { va = valorTipoOrden(a); vb = valorTipoOrden(b); }
+  else if (col === 'estado') { va = valorEstadoPrincipalOrden(a); vb = valorEstadoPrincipalOrden(b); }
+  else if (col === 'responsable') { va = valorResponsableOrden(a); vb = valorResponsableOrden(b); }
+  else if (col === 'lugar') { va = valorLugarOrden(a); vb = valorLugarOrden(b); }
+
+  // Dejar los valores vacíos "(Sin ...)" siempre al final
+  const vacioA = va.startsWith('(Sin ');
+  const vacioB = vb.startsWith('(Sin ');
+  if (vacioA !== vacioB) return vacioA ? 1 : -1;
+
+  const cmp = va.localeCompare(vb, 'es', { numeric: true, sensitivity: 'base' });
+  return cmp * mul;
+}
+
+function claveYEtiquetaGrupoOrden(o) {
+  const crits = estadoTablaOrdenes.criteriosOrden;
+  if (crits.length === 0 || (crits.length === 1 && (crits[0].col === 'fecha' || crits[0].col === 'numero'))) {
+    const dKey = diaLocalOrden(o.fecha);
+    return {
+      key: 'dia:' + dKey,
+      icono: '📅',
+      label: etiquetaDiaElegante(dKey)
+    };
+  }
+  // Si está ordenado por Tipo, Estado, Responsable, Frente/Proveedor (uno o varios combinados), agrupar visualmente por esos criterios
+  const partesKey = [];
+  const partesLbl = [];
+  for (const c of crits) {
+    if (c.col === 'tipo') {
+      const v = valorTipoOrden(o);
+      partesKey.push('t:' + v);
+      partesLbl.push('🏷 ' + v);
+    } else if (c.col === 'estado') {
+      const v = valorEstadoPrincipalOrden(o);
+      partesKey.push('e:' + v);
+      partesLbl.push('📌 ' + v);
+    } else if (c.col === 'responsable') {
+      const v = valorResponsableOrden(o);
+      partesKey.push('r:' + v);
+      partesLbl.push('👷 ' + v);
+    } else if (c.col === 'lugar') {
+      const v = valorLugarOrden(o);
+      partesKey.push('l:' + v);
+      partesLbl.push((o.frente ? '🏗 ' : '🏢 ') + v);
+    } else if (c.col === 'fecha') {
+      const dKey = diaLocalOrden(o.fecha);
+      partesKey.push('f:' + dKey);
+      partesLbl.push('📅 ' + etiquetaDiaElegante(dKey));
+    } else if (c.col === 'items') {
+      const n = (o.items || []).length;
+      partesKey.push('i:' + n);
+      partesLbl.push(`📦 ${n} ${n === 1 ? 'ítem' : 'ítems'}`);
+    }
+  }
+  if (partesLbl.length === 0) {
+    const dKey = diaLocalOrden(o.fecha);
+    return { key: 'dia:' + dKey, icono: '📅', label: etiquetaDiaElegante(dKey) };
+  }
+  return {
+    key: partesKey.join('|'),
+    icono: '',
+    label: partesLbl.join('  ·  ')
+  };
+}
+
+function poblarMenusFiltroOrdenes() {
+  const tiposMap = new Map();
+  const estadosMap = new Map();
+  const respMap = new Map();
+  const lugarMap = new Map();
+
+  for (const o of estado.ordenes) {
+    const t = valorTipoOrden(o);
+    tiposMap.set(t, (tiposMap.get(t) || 0) + 1);
+
+    for (const estTag of etiquetasEstadoFiltroOrden(o)) {
+      estadosMap.set(estTag, (estadosMap.get(estTag) || 0) + 1);
+    }
+
+    for (const r of listaResponsablesLimpiadaOrden(o)) {
+      respMap.set(r, (respMap.get(r) || 0) + 1);
+    }
+
+    const l = valorLugarOrden(o);
+    lugarMap.set(l, (lugarMap.get(l) || 0) + 1);
+  }
+
+  const cfg = [
+    { key: 'tipo', map: tiposMap, conBuscador: false },
+    { key: 'estado', map: estadosMap, conBuscador: false },
+    { key: 'responsable', map: respMap, conBuscador: true },
+    { key: 'lugar', map: lugarMap, conBuscador: true }
+  ];
+
+  for (const { key, map, conBuscador } of cfg) {
+    const menu = $(`#ord-dd-menu-${key}`);
+    const btn = $(`#ord-dd-btn-${key}`);
+    const lbl = $(`#ord-dd-lbl-${key}`);
+    const selSet = estadoTablaOrdenes.filtros[key];
+    if (lbl && btn) {
+      if (selSet.size === 0) {
+        lbl.textContent = 'Todos';
+        btn.classList.remove('con-filtro');
+      } else if (selSet.size === 1) {
+        const unico = Array.from(selSet)[0];
+        lbl.textContent = unico.length > 16 ? (unico.slice(0, 15) + '…') : unico;
+        btn.classList.add('con-filtro');
+      } else {
+        lbl.textContent = `${selSet.size} escogidos`;
+        btn.classList.add('con-filtro');
+      }
+    }
+    if (!menu) continue;
+    // Conservar texto de búsqueda interna si el menú está abierto
+    const busqPrevia = (menu.querySelector('.ord-dd-search') || {}).value || '';
+    const entradas = Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0], 'es', { numeric: true, sensitivity: 'base' }));
+
+    menu.innerHTML = `
+      ${conBuscador ? `<input type="search" class="ord-dd-search" placeholder="🔎 Filtrar opciones..." value="${esc(busqPrevia)}" style="font-size:11.5px;padding:4px 8px;border-radius:6px" />` : ''}
+      <div class="ord-dd-lista">
+        ${entradas.length === 0 ? `<div style="padding:8px;font-size:11.5px;color:var(--texto-mute)">Sin opciones</div>` : entradas.map(([val, cnt]) => {
+          const oculto = busqPrevia && !normTxt(val).includes(normTxt(busqPrevia));
+          return `<label class="ord-dd-item" data-val-txt="${esc(normTxt(val))}"${oculto ? ' style="display:none"' : ''}>
+            <input type="checkbox" value="${esc(val)}" ${selSet.has(val) ? 'checked' : ''} />
+            <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${esc(val)}</span>
+            <span style="font-size:10.5px;color:var(--texto-mute)">(${cnt})</span>
+          </label>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;gap:6px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.08)">
+        <button type="button" class="btn-ghost ord-dd-all" style="font-size:10.5px;padding:3px 7px;flex:1">☑ Todos</button>
+        <button type="button" class="btn-ghost ord-dd-none" style="font-size:10.5px;padding:3px 7px;flex:1">✕ Limpiar</button>
+      </div>
+    `;
+
+    const searchEl = menu.querySelector('.ord-dd-search');
+    if (searchEl) {
+      searchEl.addEventListener('input', (e) => {
+        e.stopPropagation();
+        const q = normTxt(searchEl.value);
+        menu.querySelectorAll('.ord-dd-item').forEach((lblItem) => {
+          lblItem.style.display = (!q || (lblItem.dataset.valTxt || '').includes(q)) ? 'flex' : 'none';
+        });
+      });
+      searchEl.addEventListener('click', (e) => e.stopPropagation());
+    }
+
+    menu.querySelectorAll('input[type="checkbox"]').forEach((chk) => {
+      chk.addEventListener('change', (e) => {
+        e.stopPropagation();
+        if (chk.checked) selSet.add(chk.value);
+        else selSet.delete(chk.value);
+        renderOrdenes();
+      });
+    });
+
+    const btnAll = menu.querySelector('.ord-dd-all');
+    if (btnAll) {
+      btnAll.addEventListener('click', (e) => {
+        e.stopPropagation();
+        entradas.forEach(([val]) => selSet.add(val));
+        renderOrdenes();
+      });
+    }
+    const btnNone = menu.querySelector('.ord-dd-none');
+    if (btnNone) {
+      btnNone.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selSet.clear();
+        renderOrdenes();
+      });
+    }
+  }
+}
+
+function actualizarIndicadoresCabeceraOrdenes() {
+  const crits = estadoTablaOrdenes.criteriosOrden;
+  const hayFiltros = Object.values(estadoTablaOrdenes.filtros).some((s) => s.size > 0) || !!estadoTablaOrdenes.busqueda;
+  const btnReset = $('#ord-btn-reset');
+  if (btnReset) btnReset.hidden = (crits.length === 0 && !hayFiltros);
+
+  const btnMulti = $('#ord-btn-multisort');
+  if (btnMulti) {
+    btnMulti.classList.toggle('con-filtro', estadoTablaOrdenes.modoMultiSort);
+    btnMulti.innerHTML = estadoTablaOrdenes.modoMultiSort ? '🔗 Combinar títulos: ACTIVO' : '🔗 Combinar títulos';
+  }
+
+  const lblEstadoOrd = $('#ord-estado-ordenamiento');
+  if (lblEstadoOrd) {
+    if (crits.length === 0) {
+      lblEstadoOrd.innerHTML = 'Orden actual: <b>Por defecto (Fecha y N° Orden ▼)</b>';
+    } else {
+      const desc = crits.map((c, idx) => `${crits.length > 1 ? (idx + 1) + '° ' : ''}${NOMBRES_COL_ORDEN[c.col] || c.col} ${c.dir === 'asc' ? '▲' : '▼'}`).join('  ➔  ');
+      lblEstadoOrd.innerHTML = `Ordenado por: <b>${esc(desc)}</b>`;
+    }
+  }
+
+  $$('#tabla-ordenes th.ord-th-sort').forEach((th) => {
+    const col = th.dataset.sort;
+    const ic = th.querySelector('.ord-sort-ic');
+    const idx = crits.findIndex((c) => c.col === col);
+    if (idx === -1) {
+      th.classList.remove('activo');
+      if (ic) ic.innerHTML = '⇅';
+    } else {
+      th.classList.add('activo');
+      const dirSym = crits[idx].dir === 'asc' ? '▲' : '▼';
+      const numBadge = (crits.length > 1 || estadoTablaOrdenes.modoMultiSort) ? `<span class="ord-sort-num">${idx + 1}</span>` : '';
+      if (ic) ic.innerHTML = `${numBadge}${dirSym}`;
+    }
+  });
+}
 
 function renderOrdenes() {
   if (!$('#cuerpo-ordenes')) return;
-  $('#ord-vacio').hidden = estado.ordenes.length !== 0;
+  poblarMenusFiltroOrdenes();
+  actualizarIndicadoresCabeceraOrdenes();
 
-  // Contar cuantas ordenes hay por dia para mostrar el conteo en la franja
-  const conteoPorDia = {};
-  for (const o of estado.ordenes) {
-    const dKey = diaLocalOrden(o.fecha);
-    conteoPorDia[dKey] = (conteoPorDia[dKey] || 0) + 1;
+  // Limpiar seleccionadas que ya no existan
+  const idsExistentes = new Set(estado.ordenes.map((o) => o.id));
+  Array.from(estadoTablaOrdenes.seleccionadas).forEach((id) => {
+    if (!idsExistentes.has(id)) estadoTablaOrdenes.seleccionadas.delete(id);
+  });
+
+  // 1) Filtrar por texto y por selección múltiple de Tipo, Estado, Responsable y Frente/Proveedor
+  const q = normTxt(estadoTablaOrdenes.busqueda || '');
+  const fTipo = estadoTablaOrdenes.filtros.tipo;
+  const fEst = estadoTablaOrdenes.filtros.estado;
+  const fResp = estadoTablaOrdenes.filtros.responsable;
+  const fLugar = estadoTablaOrdenes.filtros.lugar;
+
+  const listaFiltrada = estado.ordenes.filter((o) => {
+    if (fTipo.size > 0 && !fTipo.has(valorTipoOrden(o))) return false;
+    if (fEst.size > 0) {
+      const tags = etiquetasEstadoFiltroOrden(o);
+      if (!tags.some((t) => fEst.has(t))) return false;
+    }
+    if (fResp.size > 0) {
+      const resps = listaResponsablesLimpiadaOrden(o);
+      if (!resps.some((r) => fResp.has(r))) return false;
+    }
+    if (fLugar.size > 0 && !fLugar.has(valorLugarOrden(o))) return false;
+    if (q) {
+      const textoBase = normTxt([
+        o.numero, valorTipoOrden(o), valorEstadoPrincipalOrden(o),
+        valorResponsableOrden(o), valorLugarOrden(o), o.nota,
+        ...(o.items || []).map((it) => it.materialNombre)
+      ].join(' '));
+      if (!textoBase.includes(q)) return false;
+    }
+    return true;
+  });
+
+  // 2) Ordenar según los títulos de columna seleccionados (o por defecto Fecha y N° de Orden descendente)
+  const crits = estadoTablaOrdenes.criteriosOrden;
+  const listaOrdenada = listaFiltrada.slice().sort((a, b) => {
+    for (const c of crits) {
+      const cmp = compararOrdenesPorColumna(a, b, c.col, c.dir);
+      if (cmp !== 0) return cmp;
+    }
+    // Desempate y orden por defecto: Fecha descendente y N° de orden descendente
+    const fCmp = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+    if (fCmp !== 0) return fCmp;
+    return String(b.numero || '').localeCompare(String(a.numero || ''), 'es', { numeric: true });
+  });
+
+  $('#ord-vacio').hidden = listaOrdenada.length !== 0;
+  if (listaOrdenada.length === 0 && estado.ordenes.length > 0) {
+    $('#ord-vacio').textContent = 'Ninguna orden coincide con los filtros seleccionados.';
+  } else {
+    $('#ord-vacio').textContent = 'Aun no hay ordenes registradas. Crea una con los botones de arriba.';
   }
 
-  let diaAnterior = null;
+  // Contar cuántas órdenes hay por grupo (día o criterio activo)
+  const conteoPorGrupo = {};
+  const idsPorGrupo = {};
+  for (const o of listaOrdenada) {
+    const g = claveYEtiquetaGrupoOrden(o);
+    conteoPorGrupo[g.key] = (conteoPorGrupo[g.key] || 0) + 1;
+    (idsPorGrupo[g.key] = idsPorGrupo[g.key] || []).push(o.id);
+  }
+
+  let grupoAnterior = null;
   let html = '';
-  for (const o of estado.ordenes) {
-    const diaActual = diaLocalOrden(o.fecha);
-    const diaCerrado = diasColapsadosOrdenes.has(diaActual);
-    if (diaActual !== diaAnterior) {
-      diaAnterior = diaActual;
-      const cantDia = conteoPorDia[diaActual] || 1;
+  for (const o of listaOrdenada) {
+    const gInfo = claveYEtiquetaGrupoOrden(o);
+    const gKey = gInfo.key;
+    const grupoCerrado = diasColapsadosOrdenes.has(gKey);
+    if (gKey !== grupoAnterior) {
+      grupoAnterior = gKey;
+      const cantGrupo = conteoPorGrupo[gKey] || 1;
+      const idsGrupo = idsPorGrupo[gKey] || [];
+      const todosGrupoSel = idsGrupo.length > 0 && idsGrupo.every((id) => estadoTablaOrdenes.seleccionadas.has(id));
       html += `
-      <tr class="ord-dia-sep${diaCerrado ? ' cerrado' : ''}" data-dia="${esc(diaActual)}" title="Clic para plegar o desplegar las órdenes de este día">
-        <td colspan="8">
+      <tr class="ord-dia-sep${grupoCerrado ? ' cerrado' : ''}" data-dia="${esc(gKey)}" title="Clic para plegar o desplegar este grupo">
+        <td colspan="9">
           <div class="ord-dia-bar">
             <div class="ord-dia-izq">
+              <input type="checkbox" class="ord-chk-grupo" data-grupo-key="${esc(gKey)}" ${todosGrupoSel ? 'checked' : ''} title="Seleccionar todas las órdenes de este grupo" style="width:auto;margin:0 4px 0 0;accent-color:#00c8ff;cursor:pointer" />
               <span class="ord-dia-caret">▾</span>
               <span class="ord-dia-dot"></span>
-              <span>📅 ${esc(etiquetaDiaElegante(diaActual))}</span>
-              <span class="ord-dia-cnt">${cantDia} ${cantDia === 1 ? 'orden' : 'órdenes'}</span>
+              <span>${gInfo.icono ? (gInfo.icono + ' ') : ''}${esc(gInfo.label)}</span>
+              <span class="ord-dia-cnt">${cantGrupo} ${cantGrupo === 1 ? 'orden' : 'órdenes'}</span>
             </div>
             <div class="ord-dia-linea"></div>
             <span class="ord-dia-grabado">FV INGENIERIA</span>
@@ -2410,8 +2953,10 @@ function renderOrdenes() {
     const info = estadoOrdenInfo(o);
     const pendDevol = ordenTieneDevolucionPendiente(o);
     const badgeDevol = pendDevol ? '<span class="estado-badge mantenimiento" style="margin-left:4px">🔧 Req. devolución</span>' : '';
+    const estaSel = estadoTablaOrdenes.seleccionadas.has(o.id);
     html += `
-    <tr class="grupo-row" data-key="${o.id}" data-dia-ord="${esc(diaActual)}" title="Doble clic para ver el detalle"${diaCerrado ? ' hidden' : ''}>
+    <tr class="grupo-row${estaSel ? ' ord-fila-sel' : ''}" data-key="${o.id}" data-dia-ord="${esc(gKey)}" title="Doble clic para ver el detalle"${grupoCerrado ? ' hidden' : ''}>
+      <td class="cen" style="width:34px"><input type="checkbox" class="ord-chk-row" data-ord-id="${o.id}" ${estaSel ? 'checked' : ''} style="width:auto;margin:0;accent-color:#00c8ff;cursor:pointer" /></td>
       <td class="codigo-cel"><span class="caret">▸</span> ${esc(o.numero)}</td>
       <td>${fmtFecha(o.fecha)}</td>
       <td><span class="tipo-badge ${o.tipo}">${(TIPOS[o.tipo] || {}).label || o.tipo}</span></td>
@@ -2428,14 +2973,54 @@ function renderOrdenes() {
         <button class="btn-icon peligro" title="Eliminar orden" data-del-orden="${o.id}">🗑</button>
       </div></td>
     </tr>
-    <tr class="grupo-detalle" data-key="${o.id}" data-dia-ord="${esc(diaActual)}" hidden>
-      <td colspan="8">${detalleOrdenHtml(o)}</td>
+    <tr class="grupo-detalle" data-key="${o.id}" data-dia-ord="${esc(gKey)}" hidden>
+      <td colspan="9">${detalleOrdenHtml(o)}</td>
     </tr>`;
   }
   $('#cuerpo-ordenes').innerHTML = html;
-  // Plegar / desplegar las ordenes de un dia al hacer clic en su franja azul claro.
+
+  // Actualizar barra de órdenes seleccionadas y checkbox general
+  const barraSel = $('#ord-barra-seleccion');
+  const countSelEl = $('#ord-sel-count');
+  const chkAll = $('#ord-chk-all');
+  if (barraSel && countSelEl) {
+    const nSel = estadoTablaOrdenes.seleccionadas.size;
+    barraSel.hidden = nSel === 0;
+    countSelEl.textContent = nSel;
+  }
+  if (chkAll) {
+    chkAll.checked = listaOrdenada.length > 0 && listaOrdenada.every((o) => estadoTablaOrdenes.seleccionadas.has(o.id));
+  }
+
+  // Checkboxes individuales de fila
+  $('#cuerpo-ordenes').querySelectorAll('.ord-chk-row').forEach((chk) => {
+    chk.addEventListener('click', (e) => e.stopPropagation());
+    chk.addEventListener('change', () => {
+      const id = chk.dataset.ordId;
+      if (chk.checked) estadoTablaOrdenes.seleccionadas.add(id);
+      else estadoTablaOrdenes.seleccionadas.delete(id);
+      renderOrdenes();
+    });
+  });
+
+  // Checkboxes de selección de grupo completo
+  $('#cuerpo-ordenes').querySelectorAll('.ord-chk-grupo').forEach((chkG) => {
+    chkG.addEventListener('click', (e) => e.stopPropagation());
+    chkG.addEventListener('change', () => {
+      const gKey = chkG.dataset.grupoKey;
+      const ids = idsPorGrupo[gKey] || [];
+      ids.forEach((id) => {
+        if (chkG.checked) estadoTablaOrdenes.seleccionadas.add(id);
+        else estadoTablaOrdenes.seleccionadas.delete(id);
+      });
+      renderOrdenes();
+    });
+  });
+
+  // Plegar / desplegar las órdenes de un grupo al hacer clic en su franja azul claro.
   $('#cuerpo-ordenes').querySelectorAll('tr.ord-dia-sep').forEach((sep) => {
-    sep.addEventListener('click', () => {
+    sep.addEventListener('click', (e) => {
+      if (e.target.closest('input')) return;
       const diaKey = sep.dataset.dia;
       if (!diaKey) return;
       const ahoraCerrado = !diasColapsadosOrdenes.has(diaKey);
@@ -2462,7 +3047,7 @@ function renderOrdenes() {
     }
   };
   $('#cuerpo-ordenes').querySelectorAll('tr.grupo-row').forEach((row) => {
-    row.addEventListener('dblclick', (e) => { if (e.target.closest('button')) return; toggleOrd(row); });
+    row.addEventListener('dblclick', (e) => { if (e.target.closest('button, input')) return; toggleOrd(row); });
     const caret = row.querySelector('.caret');
     if (caret) caret.addEventListener('click', (e) => { e.stopPropagation(); toggleOrd(row); });
   });
@@ -2519,6 +3104,162 @@ function renderOrdenes() {
     }));
   $('#cuerpo-ordenes').querySelectorAll('[data-devolver-herr]').forEach((b) =>
     b.addEventListener('click', (e) => { e.stopPropagation(); modalDevolverHerramientas(b.dataset.devolverHerr); }));
+}
+
+function initControlesOrdenes() {
+  // Clic en cualquier título de columna de #tabla-ordenes para ordenar (soporta un título o varios a la vez)
+  $$('#tabla-ordenes th.ord-th-sort').forEach((th) => {
+    th.addEventListener('click', (e) => {
+      const col = th.dataset.sort;
+      if (!col) return;
+      const dirInicial = (col === 'fecha' || col === 'numero' || col === 'items') ? 'desc' : 'asc';
+      const dirOpuesta = dirInicial === 'asc' ? 'desc' : 'asc';
+      const combinar = estadoTablaOrdenes.modoMultiSort || e.shiftKey || e.ctrlKey || e.metaKey;
+      const crits = estadoTablaOrdenes.criteriosOrden;
+      const idx = crits.findIndex((c) => c.col === col);
+
+      if (combinar) {
+        if (idx === -1) {
+          crits.push({ col, dir: dirInicial });
+        } else if (crits[idx].dir === dirInicial) {
+          crits[idx].dir = dirOpuesta;
+        } else {
+          crits.splice(idx, 1);
+        }
+      } else {
+        if (crits.length === 1 && idx === 0) {
+          if (crits[0].dir === dirInicial) {
+            crits[0].dir = dirOpuesta;
+          } else {
+            estadoTablaOrdenes.criteriosOrden = [];
+          }
+        } else {
+          estadoTablaOrdenes.criteriosOrden = [{ col, dir: dirInicial }];
+        }
+      }
+      diasColapsadosOrdenes.clear();
+      renderOrdenes();
+    });
+  });
+
+  // Buscador de texto en Órdenes
+  const inpBusq = $('#ord-buscar-txt');
+  if (inpBusq) {
+    inpBusq.addEventListener('input', () => {
+      estadoTablaOrdenes.busqueda = inpBusq.value;
+      renderOrdenes();
+    });
+  }
+
+  // Abrir / cerrar menús desplegables de filtro múltiple (Tipo, Estado, Responsable, Frente/Proveedor)
+  $$('.ord-dd-wrap').forEach((wrap) => {
+    const key = wrap.dataset.dd;
+    const btn = $(`#ord-dd-btn-${key}`);
+    const menu = $(`#ord-dd-menu-${key}`);
+    if (!btn || !menu) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const estabaOculto = menu.hidden;
+      $$('.ord-dd-menu').forEach((m) => { m.hidden = true; });
+      menu.hidden = !estabaOculto;
+      if (!menu.hidden) {
+        const inp = menu.querySelector('.ord-dd-search');
+        if (inp) inp.focus();
+      }
+    });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+  });
+
+  document.addEventListener('click', () => {
+    $$('.ord-dd-menu').forEach((m) => { m.hidden = true; });
+  });
+
+  // Botón para activar/desactivar combinación de varios títulos de columna a la vez
+  const btnMulti = $('#ord-btn-multisort');
+  if (btnMulti) {
+    btnMulti.addEventListener('click', () => {
+      estadoTablaOrdenes.modoMultiSort = !estadoTablaOrdenes.modoMultiSort;
+      actualizarIndicadoresCabeceraOrdenes();
+      toast(
+        estadoTablaOrdenes.modoMultiSort
+          ? 'Modo Combinar Títulos ACTIVO: haz clic en varios títulos (ej. Responsable y luego Estado) para ordenar combinado'
+          : 'Modo Combinar Títulos desactivado',
+        'ok'
+      );
+    });
+  }
+
+  // Botón para volver al orden por defecto (Fecha y N° Orden) y limpiar filtros
+  const btnReset = $('#ord-btn-reset');
+  if (btnReset) {
+    btnReset.addEventListener('click', () => {
+      estadoTablaOrdenes.criteriosOrden = [];
+      estadoTablaOrdenes.modoMultiSort = false;
+      estadoTablaOrdenes.busqueda = '';
+      if (inpBusq) inpBusq.value = '';
+      Object.values(estadoTablaOrdenes.filtros).forEach((s) => s.clear());
+      diasColapsadosOrdenes.clear();
+      renderOrdenes();
+      toast('Orden restablecido por defecto (Fecha y N° de Orden)', 'ok');
+    });
+  }
+
+  // Checkbox de seleccionar todas las órdenes visibles
+  const chkAll = $('#ord-chk-all');
+  if (chkAll) {
+    chkAll.addEventListener('change', () => {
+      const filas = $$('#cuerpo-ordenes .ord-chk-row');
+      filas.forEach((c) => {
+        const id = c.dataset.ordId;
+        if (chkAll.checked) estadoTablaOrdenes.seleccionadas.add(id);
+        else estadoTablaOrdenes.seleccionadas.delete(id);
+      });
+      renderOrdenes();
+    });
+  }
+
+  // Acciones en lote para las órdenes seleccionadas
+  const btnClearSel = $('#ord-btn-clear-sel');
+  if (btnClearSel) {
+    btnClearSel.addEventListener('click', () => {
+      estadoTablaOrdenes.seleccionadas.clear();
+      renderOrdenes();
+    });
+  }
+
+  const btnPrintSel = $('#ord-btn-print-sel');
+  if (btnPrintSel) {
+    btnPrintSel.addEventListener('click', () => {
+      const ords = estado.ordenes.filter((o) => estadoTablaOrdenes.seleccionadas.has(o.id));
+      if (ords.length === 0) return;
+      const docsHtml = ords.map((o) => docOrden(o, o.usuario || nombreUsuario())).join('<div style="page-break-after:always;margin:24px 0;border-bottom:2px dashed #ccc"></div>');
+      imprimir(docsHtml, `Ordenes_Seleccionadas_${ords.length}`);
+    });
+  }
+
+  const btnDelSel = $('#ord-btn-del-sel');
+  if (btnDelSel) {
+    btnDelSel.addEventListener('click', async () => {
+      const ords = estado.ordenes.filter((o) => estadoTablaOrdenes.seleccionadas.has(o.id));
+      if (ords.length === 0) return;
+      if (!confirm(`¿Estás seguro de eliminar las ${ords.length} órdenes seleccionadas? Se revertirá su efecto en el stock.`)) return;
+      btnDelSel.disabled = true;
+      btnDelSel.textContent = 'Eliminando...';
+      try {
+        for (const o of ords) {
+          await eliminarOrden(o);
+          estadoTablaOrdenes.seleccionadas.delete(o.id);
+        }
+        toast(`${ords.length} orden(es) eliminada(s)`, 'ok');
+        renderOrdenes();
+      } catch (err) {
+        toast('Error al eliminar órdenes: ' + err.message, 'error');
+      } finally {
+        btnDelSel.disabled = false;
+        btnDelSel.textContent = '🗑 Eliminar seleccionadas';
+      }
+    });
+  }
 }
 
 // Abre un modal para devolver materiales o herramientas de una orden de salida.
@@ -5898,6 +6639,7 @@ document.addEventListener('click', (e) => {
    ARRANQUE
    ================================================================== */
 inyectarExtras();
+initControlesOrdenes();
 activarNavegacion();
 prepararFiltroTipoMov();
 initImportar();
