@@ -6859,21 +6859,17 @@ function optimizarImagenParaIA(fuente, realzarManuscrito = true, rotacionGrados 
 // usando modo lista y un esquema JSON directo para garantizar lectura 100% confiable.
 async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExtra, tipoOrden = 'salida' }) {
   const promptCompacto = [
-    'MODO TRANSCRIPCION DIRECTA: Extrae TODOS los renglones de materiales/herramientas de esta imagen (lista escrita a mano en cuaderno, factura electronica de proveedor o remision) o texto.',
-    'Reglas clave:',
-    '- Si es FACTURA o REMISION de proveedor (ej. Francisco Murillo, Centelsa, etc.), pon "tipo":"entrada", extrae la empresa proveedora en "proveedor", el numero de factura en "nota" (ej. "Factura FA-245240"), y cada fila con su "codigo" (ej. BP130, TX038), "nombre", "cantidad" y "unidad" (UND->"unidad", MT/M->"metro", RLL->"rollo"). Ignora precios, IVA y QR.',
-    '- Si es LISTA ESCRITA A MANO en cuaderno/hoja:',
-    '  1) Lee cada renglon de arriba a abajo sin saltarte ninguno.',
-    '  2) Si dice "cto" junto a un color y calibre (ej. "70 mts cto amarillo #12 x (2)", "70 mts cto 3 Rojo #12", "60 mts cto 23 Rojo #12", "65 mts cto Azul #12"), "cto" significa Cable THHN de ese color y calibre (ej. "Cable #12 AWG Amarillo", "Cable #12 AWG Rojo", "Cable #12 AWG Azul"). NO lo desgloses en 3 colores cuando ya menciona un color especifico. El numero entre "cto" y el color (ej. 3 o 23) es el numero del circuito, NO la cantidad.',
-    '  3) Si al final del renglon dice "x (2)", "x2" o similar, multiplica la cantidad por ese numero (ej. 70 x 2 = 140).',
-    '  4) Si un item no tiene numero escrito al lado (ej. "cinta aislante negra"), pon "cantidad":1.',
-    '  5) Si arriba o abajo hay varios nombres de personas separados por comas (ej. "Pedro Jaime Valle, Manuel Palomino, Crespo, Yairo, Luis Fercho"), ponlos TODOS en el array "responsables".',
-    '  6) Si dice "Intervencion 5" o "Frente 5", pon "frente":"5" y el lugar (ej. "Baños Damas / Staff") en "nota".',
-    '- Devuelve UNICAMENTE JSON puro en una sola linea con este formato exacto:',
-    '{"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","textoOriginal":"","nombre":"","cantidad":1,"unidad":"unidad"}]}',
-    instruccionExtra ? ('Nota del usuario: ' + instruccionExtra) : '',
-    textoLista ? ('Texto de la lista:\n' + textoLista) : ''
+    'MODO RAPIDO SIN PENSAR: Extrae directo en una sola linea JSON todos los renglones de materiales/herramientas de esta imagen o texto.',
+    'Reglas:',
+    '- Factura/remision de proveedor: "tipo":"entrada", empresa en "proveedor", N° factura en "nota", y cada fila con "codigo", "nombre" (max 55 caract), "cantidad" y "unidad" (UND->"unidad", MT->"metro", RLL->"rollo"). Ignora precios/IVA/QR.',
+    '- Lista escrita a mano: lee cada renglon. Si dice "cto" junto a un color/calibre (ej. "70 mts cto amarillo #12 x (2)", "70 mts cto 3 Rojo #12", "60 mts cto 23 Rojo #12", "65 mts cto Azul #12"), significa Cable THHN de ese color y calibre (NO lo desgloses en 3 colores si ya dice el color; el numero tras "cto" es el N° de circuito, no cantidad). Si al final dice "x (2)" o "x2", multiplica la cantidad por 2. Si no tiene numero (ej. "cinta aislante negra"), cantidad es 1. Nombres de personas arriba van TODOS en "responsables". "Intervencion 5" -> "frente":"5" y lugar en "nota".',
+    '- Devuelve SOLO este JSON compacto:',
+    '{"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}',
+    instruccionExtra ? ('Nota: ' + instruccionExtra) : '',
+    textoLista ? ('Lista:\n' + textoLista) : ''
   ].filter(Boolean).join('\n');
+
+  const promptReintento = 'SIN EXPLICACIONES: Transcribe directo todos los items de esta imagen a JSON compacto (nombres max 45 caract; "cto"+color = Cable de ese color; "x (2)" multiplica x2; sin numero = 1): {"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}';
 
   const llamarEndpoint = async (promptTxt) => {
     const payload = {
@@ -6904,10 +6900,8 @@ async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExt
   };
 
   let json = await llamarEndpoint(promptCompacto);
-  // Si por cualquier motivo el primer intento no trajo items, reintentar automáticamente con prompt directo ultracorto
-  if ((!Array.isArray(json.items) || json.items.length === 0) && base64) {
-    const promptUltraCorto = 'SIN EXPLICACIONES: Transcribe directo todos los renglones de esta foto a JSON puro. Nota: "cto" + color = Cable de ese color; "x (2)" multiplica por 2; sin numero = cantidad 1; nombres arriba = responsables; Intervencion N = frente N. Formato: {"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}';
-    json = await llamarEndpoint(promptUltraCorto);
+  for (let intento = 1; intento <= 2 && (!Array.isArray(json.items) || json.items.length === 0) && base64; intento++) {
+    json = await llamarEndpoint(promptReintento);
   }
   return json;
 }
