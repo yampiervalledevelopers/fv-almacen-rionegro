@@ -125,45 +125,41 @@ SIEMPRE JSON puro. Ejemplos:
 {"accion":"agregar_inventario","items":[{"nombre":"Tomacorriente doble","cantidad":50,"unidad":"unidad","esHerramienta":false,"serial":""}],"mensaje":"Abro formulario para agregar tomacorriente doble"}
 `;
 
-// Prompt especializado para leer listas de materiales (fotos, manuscritos, texto pegado).
-const LISTA_PROMPT = `Eres un experto transcriptor de listas de materiales electricos y de telecomunicaciones para el almacen de FVIECOM S.A.S (obra en el Aeropuerto Jose Maria Cordova, Rionegro, Colombia).
+// Prompt especializado para leer listas de materiales (fotos, manuscritos, facturas de proveedor, texto pegado).
+const LISTA_PROMPT = `Eres un experto transcriptor de listas de materiales electricos y de telecomunicaciones (escritas a mano en cuaderno o facturas electronicas de proveedores) para el almacen de FVIECOM S.A.S en el Aeropuerto Jose Maria Cordova, Rionegro, Colombia.
 
-Recibes una FOTO (frecuentemente una hoja de cuaderno, bloc, tablero o pantallazo de WhatsApp con LETRA A MANO, a veces rapida, cursiva, torcida o con tachones) o un TEXTO pegado con una lista de materiales. Tu trabajo es transcribir CADA renglon de la lista y emparejarlo con el inventario real.
+Recibes una FOTO (hoja de cuaderno con LETRA A MANO, factura electronica de proveedor como Francisco Murillo S.A.S., remision o pantallazo) o un TEXTO con una lista de materiales. Tu trabajo es extraer CADA renglon sin saltarte ninguno.
 
-=== COMO LEER LETRA A MANO ===
-- Lee renglon por renglon de arriba hacia abajo. No te saltes ninguno, aunque este tachado parcialmente o mal escrito. Si un renglon esta TOTALMENTE tachado, ignoralo.
-- La cantidad suele ir al inicio o al final del renglon ("50 mt cable 12 rojo", "cable 12 rojo x 50", "50m", "#12 - 50"). Tambien puede estar en una columna separada.
-- Distingue bien: 1/7, 4/9, 5/S, 0/O/6, 2/Z, 3/8 (fraccion de pulgada) vs 38. "1/2" "3/4" "1\\"" "1 1/4" son diametros de tuberia en pulgadas, NO cantidades.
-- Abreviaturas comunes: mt/mts/m = metro, und/un/u/und. = unidad, rll/rollo = rollo (100 m), cj = caja, pq/paq = paquete, gal = galon, lb = libra, kg = kilo, par = par, jgo = juego.
-- Simbolos: "#12" "No 12" "cal 12" = calibre 12 AWG. "x" entre numeros puede ser medida (2x4, 4x4) o multiplicacion de cantidad.
-- Comillas o rayas debajo (" / ditto / idem) = repetir lo de arriba.
-- Si hay encabezado con nombre de persona (responsable), frente de obra, contrato, fecha o proveedor, extraelo.
+=== REGLAS PARA FACTURAS ELECTRONICAS Y REMISIONES DE PROVEEDOR ===
+- Si es una factura o remision de proveedor (ej. FRANCISCO MURILLO S.A.S., Centelsa, Procables, etc.):
+  - Pon "tipo": "entrada".
+  - Extrae el nombre de la empresa proveedora en "proveedor".
+  - Extrae el numero de factura/remision en "nota" (ej. "Factura FA-245240").
+  - Extrae cada fila de la tabla con su "codigo" (columna Codigo, ej. "BP130", "TX038"), "nombre" (columna Detalle/Descripcion), "cantidad" (numero) y "unidad" (UND->"unidad", MT/M->"metro", RLL->"rollo"). Ignora precios, IVA, subtotales y codigos QR.
 
-=== JERGA ELECTRICA COLOMBIANA ===
-Cable 12/10/8 = Cable #12/#10/#8 AWG. EMT = tubo metalico. Conduit/PVC. Coraza = tubo flexible. Canaleta. Conduleta (LB, LL, LR, T, C). Caja 2x4 (5800), caja 4x4 (2400). Taco/breaker/minibreaker. Totalizador. Toma GFCI. Prensaestopa/prensacable. Bornera/regleta. Abrazadera/grapa/percha. Chazo/chazo expansivo. Riel omega/DIN. Union/curva/adaptador/terminal EMT. Buje/reductor. Cinta aislante (3M, Super 33). Amarras/correas plasticas. Tornillo, chazo, puntilla, varilla roscada, tuerca, arandela, cuerda, platina. LSHF = libre de halogeno.
-Circuito 120V = cable ROJO + BLANCO + VERDE (misma cantidad). 220V con neutro = AMARILLO + ROJO + BLANCO + VERDE. 220V sin neutro = AMARILLO + ROJO + VERDE. Si la lista dice "circuito", desglosa en cables por color.
-Herramientas (esHerramienta:true): taladro, rotomartillo, pulidora, curvador/dobladora, escalera, andamio, pesca/sonda, ponchadora, pelacables, nivel, multimetro, pinza amperimetrica, llave, alicate, destornillador, extension electrica.
+=== COMO LEER LETRA A MANO EN CUADERNO ===
+- Lee renglon por renglon de arriba hacia abajo. No te saltes ninguno. Si un renglon esta TOTALMENTE tachado, ignoralo.
+- La cantidad suele ir al inicio o al final del renglon ("70 mts cto amarillo #12 x (2)", "50 mt cable 12 rojo", "cable 12 rojo x 50").
+- MULTIPLICADORES AL FINAL: Si un renglon tiene "x (2)", "x2", "x (3)" al final (ej. "70 mts cto amarillo #12 x (2)"), multiplica la cantidad base por ese numero (70 * 2 = 140).
+- RENGLONES SIN NUMERO: Si un material escrito a mano no tiene cantidad numerica al lado (ej. "cinta aislante negra"), pon "cantidad": 1.
+- ABREVIATURA "cto" (CIRCUITO / CABLE):
+  - En listas escritas a mano en obra, cuando escriben "cto" junto a un color y calibre (ej. "70 mts cto amarillo #12", "70 mts cto 3 Rojo #12", "60 mts cto 23 Rojo #12", "65 mts cto Azul #12"), "cto" significa el tramo de CABLE THHN de ese color y calibre para ese circuito (ej. "Cable #12 AWG Amarillo", "Cable #12 AWG Rojo", "Cable #12 AWG Azul").
+  - ¡CRITICO!: Si el renglon ya menciona un color especifico (amarillo, rojo, azul, blanco, verde, negro), NO lo desgloses en 3 cables de distintos colores; devuelvelo como ese cable del color escrito. Solo desglosa en 3 cables (rojo, blanco, verde) cuando diga "circuito 120V" sin especificar color.
+  - Si hay un numero entre "cto" y el color (ej. "cto 3 Rojo #12" o "cto 23 Rojo #12"), ese numero (3 o 23) es el numero del circuito, NO la cantidad de cables. La cantidad son los metros al inicio (70 mts, 60 mts).
+- Distingue bien: "1/2", "3/4", "1\\"", "3/8" son diametros en pulgadas, NO cantidades. "#12", "#10", "#8" son calibres AWG.
+- ENCABEZADOS Y NOTAS AL MARGEN:
+  - Si arriba o abajo hay nombres de personas separados por comas (ej. "Pedro Jaime Valle, Manuel Palomino, Crespo, Yairo, Luis Fercho"), incluyelos TODOS en el array "responsables".
+  - Si dice "Intervencion 5" o "Frente 5", pon "frente": "5". Si ademas dice el lugar especifico (ej. "Baños Damas / Staff"), ponlo en "nota" (ej. "Intervención 5 - Baños Damas / Staff").
 
-=== EMPAREJAR CON INVENTARIO ===
-- Para cada renglon busca en "INVENTARIO ACTUAL" el material que corresponde (aunque este escrito distinto o abreviado). Pon el nombre EXACTO del inventario en "nombreInventario". Si no existe nada parecido, deja "nombreInventario":"".
-- Cuida calibre, color, diametro y tipo: "cable 12 rojo" NO es "cable 10 rojo"; "EMT 3/4" NO es "EMT 1/2".
-- "unidad" usa la del inventario si encontraste el material.
-- "confianza": "alta" si la letra es clara y el emparejamiento seguro; "media" si dudaste en la letra o en el material; "baja" si es casi ilegible o adivinaste.
-
-=== FORMATO DE RESPUESTA (JSON PURO, sin markdown) ===
-{"accion":"lista_escaneada",
+=== FORMATO DE RESPUESTA (UNICAMENTE JSON PURO, SIN MARKDOWN) ===
+{"accion":"abrir_orden",
  "tipo":"salida",
- "items":[{"textoOriginal":"50 mt cable 12 rojo","nombre":"Cable #12 AWG Rojo","nombreInventario":"Cable #12 AWG THHN Rojo","cantidad":50,"unidad":"metro","esHerramienta":false,"confianza":"alta"}],
- "responsables":["Pedro Gomez"],
- "frente":"3B",
  "proveedor":"",
- "nota":"",
- "mensaje":"Lei 12 renglones de la lista. 2 tienen letra dudosa, revisalos."}
-
-- "tipo": "salida" por defecto; "entrada" si parece pedido/compra/factura de proveedor/remision de llegada; "devolucion" si dice devolucion/reintegro.
-- "textoOriginal": lo que dice el papel tal cual lo leiste.
-- "cantidad": numero (convierte "medio rollo"=50, "rollo"=100, "docena"=12). Si no hay cantidad pon 1.
-- Si la imagen no contiene ninguna lista: {"accion":"lista_escaneada","items":[],"mensaje":"No encontre una lista de materiales en la imagen. Describe brevemente lo que ves."}
+ "frente":"5",
+ "responsables":["Pedro Jaime Valle","Manuel Palomino"],
+ "nota":"Intervención 5 - Baños Damas / Staff",
+ "items":[{"codigo":"","textoOriginal":"70 mts cto amarillo #12 x (2)","nombre":"Cable #12 AWG Amarillo","cantidad":140,"unidad":"metro","esHerramienta":false,"confianza":"alta"}],
+ "mensaje":"Lista leida correctamente"}
 `;
 
 const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
@@ -177,11 +173,11 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSecond
   try {
     const { texto, inventario, contratos, vistaActual, historial, imagen, mimeType, modo } = req.body;
     if (!texto && !imagen) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
-    const esLista = modo === 'lista';
+    const esLista = modo === 'lista' || !!imagen;
 
     // Construir contexto de inventario (en modo lista se envia completo para emparejar mejor)
     let contextoInv = '';
-    if (inventario && Array.isArray(inventario)) {
+    if (inventario && Array.isArray(inventario) && inventario.length > 0) {
       const lista = inventario.slice(0, esLista ? 1500 : 200).map((m) =>
         `- ${m.nombre}${m.esHerramienta ? ' [HERR]' : ''} | ${m.cantidad} ${m.unidad}${m.serial ? ' | serial:' + m.serial : ''}`
       ).join('\n');
@@ -206,7 +202,6 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSecond
     // Construir mensajes con historial conversacional
     const messages = [];
     if (!esLista && historial && Array.isArray(historial) && historial.length > 0) {
-      // Agrupar historial como turnos de conversacion
       for (const h of historial.slice(-6)) {
         if (h.rol === 'usuario') {
           messages.push({ role: 'user', parts: [{ text: h.texto }] });
@@ -231,8 +226,8 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSecond
     const token = await client.getAccessToken();
 
     const generationConfig = esLista
-      ? { temperature: 0.1, maxOutputTokens: 8192, responseMimeType: 'application/json', mediaResolution: 'MEDIA_RESOLUTION_HIGH' }
-      : { temperature: 0.2, maxOutputTokens: 2048 };
+      ? { temperature: 0.1, maxOutputTokens: 8192, responseMimeType: 'application/json' }
+      : { temperature: 0.2, maxOutputTokens: 4096, responseMimeType: 'application/json' };
 
     const llamar = (cfg) => fetch(VERTEX_URL, {
       method: 'POST',
@@ -248,9 +243,8 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSecond
     });
 
     let response = await llamar(generationConfig);
-    // Si el modelo no acepta algun parametro (ej. mediaResolution), reintenta sin el.
-    if (!response.ok && response.status === 400 && generationConfig.mediaResolution) {
-      const { mediaResolution, ...resto } = generationConfig;
+    if (!response.ok && response.status === 400 && generationConfig.responseMimeType) {
+      const { responseMimeType, ...resto } = generationConfig;
       response = await llamar(resto);
     }
 

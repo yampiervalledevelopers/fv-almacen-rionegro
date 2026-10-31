@@ -6690,6 +6690,8 @@ function normalizarJergaElectrica(str) {
   let s = normTxt(str || '');
   s = s
     .replace(/\b(?:calibre|cal|no\.?|nro\.?|num\.?)\s*(\d+)\b/g, '#$1')
+    .replace(/\b(?:cto|ctos|circuito|circuitos)\.?\s*(?:\d+\s*)?(?=(?:rojo|blanco|verde|amarillo|azul|negro|gris|naranja|tierra|#?\d+)\b)/g, 'cable ')
+    .replace(/\b(?:cto|ctos)\.?\b/g, 'cable')
     .replace(/\bcable\s+(\d+)\b/g, 'cable #$1')
     .replace(/\b5800\b/g, '2x4')
     .replace(/\b2400\b/g, '4x4')
@@ -6854,21 +6856,28 @@ function optimizarImagenParaIA(fuente, realzarManuscrito = true, rotacionGrados 
 }
 
 // Envía una foto de lista (manuscrita, factura electrónica de proveedor o remisión) o texto a Gemini
-// usando un esquema JSON compacto para evitar que el límite de tokens del servidor corte la respuesta.
+// usando modo lista y un esquema JSON directo para garantizar lectura 100% confiable.
 async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExtra, tipoOrden = 'salida' }) {
   const promptCompacto = [
-    'Extrae TODOS los renglones de materiales/herramientas de esta imagen (factura electronica de proveedor, remision o lista escrita a mano) o texto.',
-    'Reglas:',
-    '- Si es FACTURA o REMISION de proveedor (ej. Francisco Murillo, Centelsa, etc.), pon "tipo":"entrada", extrae el nombre de la empresa proveedora en "proveedor", el numero de factura en "nota" (ej. "Factura FA-245240"), y de la tabla extrae cada fila con su "codigo" (ej. BP130, TX038), "nombre" (columna Detalle/Descripcion), "cantidad" (numero) y "unidad" (UND->"unidad", MT/M->"metro", RLL->"rollo"). Ignora precios, IVA, subtotales y codigos QR.',
-    '- Si es LISTA ESCRITA A MANO en cuaderno/hoja, lee cada renglon de arriba a abajo, distingue medidas (1/2, 3/4, 3/8, 2x4, 4x4, #12, #10) de la cantidad, y si dice "circuito 120V/220V" desglosalo en cables por color.',
-    '- Devuelve UNICAMENTE JSON compacto (sin texto adicional y sin repetir campos largos) con este formato exacto:',
-    '{"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}',
+    'MODO TRANSCRIPCION DIRECTA: Extrae TODOS los renglones de materiales/herramientas de esta imagen (lista escrita a mano en cuaderno, factura electronica de proveedor o remision) o texto.',
+    'Reglas clave:',
+    '- Si es FACTURA o REMISION de proveedor (ej. Francisco Murillo, Centelsa, etc.), pon "tipo":"entrada", extrae la empresa proveedora en "proveedor", el numero de factura en "nota" (ej. "Factura FA-245240"), y cada fila con su "codigo" (ej. BP130, TX038), "nombre", "cantidad" y "unidad" (UND->"unidad", MT/M->"metro", RLL->"rollo"). Ignora precios, IVA y QR.',
+    '- Si es LISTA ESCRITA A MANO en cuaderno/hoja:',
+    '  1) Lee cada renglon de arriba a abajo sin saltarte ninguno.',
+    '  2) Si dice "cto" junto a un color y calibre (ej. "70 mts cto amarillo #12 x (2)", "70 mts cto 3 Rojo #12", "60 mts cto 23 Rojo #12", "65 mts cto Azul #12"), "cto" significa Cable THHN de ese color y calibre (ej. "Cable #12 AWG Amarillo", "Cable #12 AWG Rojo", "Cable #12 AWG Azul"). NO lo desgloses en 3 colores cuando ya menciona un color especifico. El numero entre "cto" y el color (ej. 3 o 23) es el numero del circuito, NO la cantidad.',
+    '  3) Si al final del renglon dice "x (2)", "x2" o similar, multiplica la cantidad por ese numero (ej. 70 x 2 = 140).',
+    '  4) Si un item no tiene numero escrito al lado (ej. "cinta aislante negra"), pon "cantidad":1.',
+    '  5) Si arriba o abajo hay varios nombres de personas separados por comas (ej. "Pedro Jaime Valle, Manuel Palomino, Crespo, Yairo, Luis Fercho"), ponlos TODOS en el array "responsables".',
+    '  6) Si dice "Intervencion 5" o "Frente 5", pon "frente":"5" y el lugar (ej. "Baños Damas / Staff") en "nota".',
+    '- Devuelve UNICAMENTE JSON puro en una sola linea con este formato exacto:',
+    '{"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","textoOriginal":"","nombre":"","cantidad":1,"unidad":"unidad"}]}',
     instruccionExtra ? ('Nota del usuario: ' + instruccionExtra) : '',
     textoLista ? ('Texto de la lista:\n' + textoLista) : ''
   ].filter(Boolean).join('\n');
 
   const llamarEndpoint = async (promptTxt) => {
     const payload = {
+      modo: 'lista',
       texto: promptTxt,
       inventario: [],
       contratos: obtenerContratos(),
@@ -6895,9 +6904,9 @@ async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExt
   };
 
   let json = await llamarEndpoint(promptCompacto);
-  // Si por longitud de descripciones el servidor devolvió fallback sin items, reintentar con nombres abreviados (máx 45 caracteres)
+  // Si por cualquier motivo el primer intento no trajo items, reintentar automáticamente con prompt directo ultracorto
   if ((!Array.isArray(json.items) || json.items.length === 0) && base64) {
-    const promptUltraCorto = 'Extrae la tabla o lista de items de esta imagen. Resume cada nombre a maximo 45 caracteres. Devuelve SOLO JSON compacto: {"accion":"abrir_orden","tipo":"entrada","proveedor":"...","nota":"...","items":[{"codigo":"...","nombre":"...","cantidad":1,"unidad":"unidad"}]}';
+    const promptUltraCorto = 'SIN EXPLICACIONES: Transcribe directo todos los renglones de esta foto a JSON puro. Nota: "cto" + color = Cable de ese color; "x (2)" multiplica por 2; sin numero = cantidad 1; nombres arriba = responsables; Intervencion N = frente N. Formato: {"accion":"abrir_orden","tipo":"' + (tipoOrden || 'salida') + '","proveedor":"","frente":"","responsables":[],"nota":"","items":[{"codigo":"","nombre":"","cantidad":1,"unidad":"unidad"}]}';
     json = await llamarEndpoint(promptUltraCorto);
   }
   return json;
@@ -6997,10 +7006,14 @@ function modalEscanearListaIA(opciones = {}) {
     if (!json) return;
     if (json.tipo && TIPOS[json.tipo] && !enOrdenActiva) tipoSeleccionado = json.tipo;
     if (json.proveedor && !enOrdenActiva && !json.tipo) tipoSeleccionado = 'entrada';
-    if (json.frente) metaIA.frente = json.frente;
+    if (json.frente) {
+      metaIA.frente = String(json.frente).replace(/^(?:frente|intervenci[oó]n)\s+/i, '').trim().toUpperCase();
+    }
     if (json.proveedor) metaIA.proveedor = json.proveedor;
     if (json.nota) metaIA.nota = json.nota;
-    if (Array.isArray(json.responsables) && json.responsables[0]) metaIA.responsable = json.responsables[0];
+    if (Array.isArray(json.responsables) && json.responsables.length > 0) {
+      metaIA.responsable = json.responsables.map((r) => String(r || '').trim()).filter(Boolean).join(', ');
+    }
     metaIA.mensajeIA = json.mensaje || '';
 
     const rawItems = Array.isArray(json.items) ? json.items : [];
@@ -7013,7 +7026,7 @@ function modalEscanearListaIA(opciones = {}) {
       }
       const match = matPorCodigo
         ? { material: matPorCodigo, score: 1, confianza: 'alta' }
-        : buscarMaterialInteligente(nombreItem, it.nombreInventario || codigoItem);
+        : buscarMaterialInteligente(nombreItem, it.nombreInventario || it.textoOriginal || codigoItem);
       const mat = match.material;
       const conf = it.confianza || match.confianza || (mat ? 'alta' : 'media');
       const esHerr = !!(it.esHerramienta || (mat && mat.esHerramienta));
@@ -7672,13 +7685,14 @@ function modalEscanearListaIA(opciones = {}) {
     const tipoFinal = $('#ia-meta-tipo') ? $('#ia-meta-tipo').value : tipoSeleccionado;
     const provFinal = ($('#ia-meta-prov') ? $('#ia-meta-prov').value : metaIA.proveedor || '').trim();
     const frenteFinal = ($('#ia-meta-frente') ? $('#ia-meta-frente').value : metaIA.frente || '').trim();
-    const respFinal = ($('#ia-meta-resp') ? $('#ia-meta-resp').value : metaIA.responsable || '').trim();
+    const respRaw = ($('#ia-meta-resp') ? $('#ia-meta-resp').value : metaIA.responsable || '').trim();
+    const listaResp = respRaw.split(',').map((s) => s.trim()).filter(Boolean);
     const notaFinal = ($('#ia-meta-nota') ? $('#ia-meta-nota').value : metaIA.nota || '').trim();
     return {
       tipo: tipoFinal,
       frente: frenteFinal,
-      responsable: respFinal,
-      responsables: respFinal ? [respFinal] : [],
+      responsable: listaResp[0] || '',
+      responsables: listaResp,
       proveedor: provFinal,
       nota: notaFinal,
       items: renglonesIA
@@ -8344,7 +8358,10 @@ function initAsistente() {
       enviarTextoChat();
     }
   });
-  chatInput.addEventListener('paste', (e) => {
+  // Permitir pegar una foto (Ctrl+V) tanto en el chat IA como dentro de una ventana de orden o en la app
+  document.addEventListener('paste', (e) => {
+    if (document.getElementById('ia-scan-root')) return; // ya lo maneja el modal del escáner
+    if (document.getElementById('wa-factura-preview')) return; // no interferir con el editor de WhatsApp
     const items = (e.clipboardData && e.clipboardData.items) || [];
     for (const it of items) {
       if (it.type && it.type.startsWith('image/')) {
