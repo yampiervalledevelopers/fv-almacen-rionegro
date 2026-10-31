@@ -97,6 +97,7 @@
         <div class="barra-acciones">
           <input type="search" id="buscar-material" class="input-buscar" placeholder="Buscar por nombre, codigo o categoria..." />
           <select id="filtro-categoria" class="select"></select>
+          <button id="btn-escanear-ia-inv" class="btn-ghost btn-ia-scan" title="Escanear lista escrita a mano o foto con Inteligencia Artificial">📷 Escanear lista (IA)</button>
           <button id="btn-nuevo-material" class="btn-primary">+ Nuevo material</button>
         </div>
         <div class="panel sin-pad">
@@ -139,10 +140,13 @@
       <!-- Vista: Importar PDF -->
       <section class="vista" id="vista-importar" hidden>
         <div class="panel">
-          <div class="panel-head"><h3>Importar lista de materiales desde PDF</h3></div>
-          <p class="ayuda">Selecciona un PDF con la lista de materiales. El programa detectara automaticamente los elementos. Podras revisar y corregir antes de agregarlos al inventario.</p>
-          <button id="btn-elegir-pdf" class="btn-primary">📄 Elegir archivo PDF</button>
-          <span id="pdf-nombre" class="pdf-nombre"></span>
+          <div class="panel-head"><h3>Importar lista de materiales (PDF, Foto o Manuscrito con IA)</h3></div>
+          <p class="ayuda">Selecciona un PDF o escanea una foto de una lista escrita a mano (cuaderno, hoja o WhatsApp). Podras revisar y corregir antes de agregarlos al inventario o crear una orden.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+            <button id="btn-elegir-pdf" class="btn-primary">📄 Elegir archivo PDF</button>
+            <button id="btn-escanear-ia-imp" class="btn-ghost btn-ia-scan">📷 Escanear foto / lista escrita a mano (IA)</button>
+            <span id="pdf-nombre" class="pdf-nombre"></span>
+          </div>
         </div>
 
         <div class="panel sin-pad" id="panel-preview" hidden>
@@ -216,6 +220,6 @@
   <!-- Notificaciones -->
   <div id="toast" class="toast" hidden></div>
 
-  <script type="module" src="renderer.js?v=61"></script>
+  <script type="module" src="renderer.js?v=62"></script>
 </body>
 </html>

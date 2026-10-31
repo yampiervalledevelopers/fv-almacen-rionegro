@@ -125,22 +125,64 @@ SIEMPRE JSON puro. Ejemplos:
 {"accion":"agregar_inventario","items":[{"nombre":"Tomacorriente doble","cantidad":50,"unidad":"unidad","esHerramienta":false,"serial":""}],"mensaje":"Abro formulario para agregar tomacorriente doble"}
 `;
 
+// Prompt especializado para leer listas de materiales (fotos, manuscritos, texto pegado).
+const LISTA_PROMPT = `Eres un experto transcriptor de listas de materiales electricos y de telecomunicaciones para el almacen de FVIECOM S.A.S (obra en el Aeropuerto Jose Maria Cordova, Rionegro, Colombia).
+
+Recibes una FOTO (frecuentemente una hoja de cuaderno, bloc, tablero o pantallazo de WhatsApp con LETRA A MANO, a veces rapida, cursiva, torcida o con tachones) o un TEXTO pegado con una lista de materiales. Tu trabajo es transcribir CADA renglon de la lista y emparejarlo con el inventario real.
+
+=== COMO LEER LETRA A MANO ===
+- Lee renglon por renglon de arriba hacia abajo. No te saltes ninguno, aunque este tachado parcialmente o mal escrito. Si un renglon esta TOTALMENTE tachado, ignoralo.
+- La cantidad suele ir al inicio o al final del renglon ("50 mt cable 12 rojo", "cable 12 rojo x 50", "50m", "#12 - 50"). Tambien puede estar en una columna separada.
+- Distingue bien: 1/7, 4/9, 5/S, 0/O/6, 2/Z, 3/8 (fraccion de pulgada) vs 38. "1/2" "3/4" "1\\"" "1 1/4" son diametros de tuberia en pulgadas, NO cantidades.
+- Abreviaturas comunes: mt/mts/m = metro, und/un/u/und. = unidad, rll/rollo = rollo (100 m), cj = caja, pq/paq = paquete, gal = galon, lb = libra, kg = kilo, par = par, jgo = juego.
+- Simbolos: "#12" "No 12" "cal 12" = calibre 12 AWG. "x" entre numeros puede ser medida (2x4, 4x4) o multiplicacion de cantidad.
+- Comillas o rayas debajo (" / ditto / idem) = repetir lo de arriba.
+- Si hay encabezado con nombre de persona (responsable), frente de obra, contrato, fecha o proveedor, extraelo.
+
+=== JERGA ELECTRICA COLOMBIANA ===
+Cable 12/10/8 = Cable #12/#10/#8 AWG. EMT = tubo metalico. Conduit/PVC. Coraza = tubo flexible. Canaleta. Conduleta (LB, LL, LR, T, C). Caja 2x4 (5800), caja 4x4 (2400). Taco/breaker/minibreaker. Totalizador. Toma GFCI. Prensaestopa/prensacable. Bornera/regleta. Abrazadera/grapa/percha. Chazo/chazo expansivo. Riel omega/DIN. Union/curva/adaptador/terminal EMT. Buje/reductor. Cinta aislante (3M, Super 33). Amarras/correas plasticas. Tornillo, chazo, puntilla, varilla roscada, tuerca, arandela, cuerda, platina. LSHF = libre de halogeno.
+Circuito 120V = cable ROJO + BLANCO + VERDE (misma cantidad). 220V con neutro = AMARILLO + ROJO + BLANCO + VERDE. 220V sin neutro = AMARILLO + ROJO + VERDE. Si la lista dice "circuito", desglosa en cables por color.
+Herramientas (esHerramienta:true): taladro, rotomartillo, pulidora, curvador/dobladora, escalera, andamio, pesca/sonda, ponchadora, pelacables, nivel, multimetro, pinza amperimetrica, llave, alicate, destornillador, extension electrica.
+
+=== EMPAREJAR CON INVENTARIO ===
+- Para cada renglon busca en "INVENTARIO ACTUAL" el material que corresponde (aunque este escrito distinto o abreviado). Pon el nombre EXACTO del inventario en "nombreInventario". Si no existe nada parecido, deja "nombreInventario":"".
+- Cuida calibre, color, diametro y tipo: "cable 12 rojo" NO es "cable 10 rojo"; "EMT 3/4" NO es "EMT 1/2".
+- "unidad" usa la del inventario si encontraste el material.
+- "confianza": "alta" si la letra es clara y el emparejamiento seguro; "media" si dudaste en la letra o en el material; "baja" si es casi ilegible o adivinaste.
+
+=== FORMATO DE RESPUESTA (JSON PURO, sin markdown) ===
+{"accion":"lista_escaneada",
+ "tipo":"salida",
+ "items":[{"textoOriginal":"50 mt cable 12 rojo","nombre":"Cable #12 AWG Rojo","nombreInventario":"Cable #12 AWG THHN Rojo","cantidad":50,"unidad":"metro","esHerramienta":false,"confianza":"alta"}],
+ "responsables":["Pedro Gomez"],
+ "frente":"3B",
+ "proveedor":"",
+ "nota":"",
+ "mensaje":"Lei 12 renglones de la lista. 2 tienen letra dudosa, revisalos."}
+
+- "tipo": "salida" por defecto; "entrada" si parece pedido/compra/factura de proveedor/remision de llegada; "devolucion" si dice devolucion/reintegro.
+- "textoOriginal": lo que dice el papel tal cual lo leiste.
+- "cantidad": numero (convierte "medio rollo"=50, "rollo"=100, "docena"=12). Si no hay cantidad pon 1.
+- Si la imagen no contiene ninguna lista: {"accion":"lista_escaneada","items":[],"mensaje":"No encontre una lista de materiales en la imagen. Describe brevemente lo que ves."}
+`;
+
 const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
 
-exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req, res) => {
+exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSeconds: 120, memory: '512MiB' }, async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
 
   try {
-    const { texto, inventario, contratos, vistaActual, historial, imagen, mimeType } = req.body;
-    if (!texto) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
+    const { texto, inventario, contratos, vistaActual, historial, imagen, mimeType, modo } = req.body;
+    if (!texto && !imagen) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
+    const esLista = modo === 'lista';
 
-    // Construir contexto de inventario
+    // Construir contexto de inventario (en modo lista se envia completo para emparejar mejor)
     let contextoInv = '';
     if (inventario && Array.isArray(inventario)) {
-      const lista = inventario.slice(0, 200).map((m) =>
+      const lista = inventario.slice(0, esLista ? 1500 : 200).map((m) =>
         `- ${m.nombre}${m.esHerramienta ? ' [HERR]' : ''} | ${m.cantidad} ${m.unidad}${m.serial ? ' | serial:' + m.serial : ''}`
       ).join('\n');
       contextoInv = '\n\n=== INVENTARIO ACTUAL ===\n' + lista;
@@ -163,7 +205,7 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
 
     // Construir mensajes con historial conversacional
     const messages = [];
-    if (historial && Array.isArray(historial) && historial.length > 0) {
+    if (!esLista && historial && Array.isArray(historial) && historial.length > 0) {
       // Agrupar historial como turnos de conversacion
       for (const h of historial.slice(-6)) {
         if (h.rol === 'usuario') {
@@ -174,20 +216,25 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       }
     }
     // Agregar el mensaje actual del usuario
-    const userParts = [{ text: texto }];
+    const userParts = [];
     if (imagen) {
       const imgMime = mimeType || 'image/jpeg';
       userParts.push({ inlineData: { mimeType: imgMime, data: imagen } });
     }
+    userParts.push({ text: texto || 'Transcribe la lista de materiales de esta imagen.' });
     messages.push({ role: 'user', parts: userParts });
 
-    const systemText = SYSTEM_PROMPT + contextoInv + contextoContratos + contextoExtra;
+    const systemText = (esLista ? LISTA_PROMPT : SYSTEM_PROMPT) + contextoInv + contextoContratos + contextoExtra;
 
     // Obtener token
     const client = await auth.getClient();
     const token = await client.getAccessToken();
 
-    const response = await fetch(VERTEX_URL, {
+    const generationConfig = esLista
+      ? { temperature: 0.1, maxOutputTokens: 8192, responseMimeType: 'application/json', mediaResolution: 'MEDIA_RESOLUTION_HIGH' }
+      : { temperature: 0.2, maxOutputTokens: 2048 };
+
+    const llamar = (cfg) => fetch(VERTEX_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -196,9 +243,16 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemText }] },
         contents: messages,
-        generationConfig: { temperature: 0.2, maxOutputTokens: 1024 }
+        generationConfig: cfg
       })
     });
+
+    let response = await llamar(generationConfig);
+    // Si el modelo no acepta algun parametro (ej. mediaResolution), reintenta sin el.
+    if (!response.ok && response.status === 400 && generationConfig.mediaResolution) {
+      const { mediaResolution, ...resto } = generationConfig;
+      response = await llamar(resto);
+    }
 
     if (!response.ok) {
       const errText = await response.text();
@@ -208,15 +262,20 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1' }, async (req,
     }
 
     const data = await response.json();
-    const textResp = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts && data.candidates[0].content.parts[0] && data.candidates[0].content.parts[0].text) || '';
+    const partes = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+    const textResp = partes.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
 
     let json;
     try {
-      const limpio = textResp.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+      let limpio = textResp.replace(/```json\s*/gi, '').replace(/```/g, '').trim();
+      const ini = limpio.indexOf('{'); const fin = limpio.lastIndexOf('}');
+      if (ini >= 0 && fin > ini) limpio = limpio.slice(ini, fin + 1);
       json = JSON.parse(limpio);
     } catch (e) {
       console.error('Error parseando respuesta:', textResp.substring(0, 500));
-      json = { accion: 'respuesta', mensaje: 'No entendi. Repite por favor.' };
+      json = esLista
+        ? { accion: 'lista_escaneada', items: [], mensaje: 'No pude leer bien la lista. Intenta con una foto mas cerca y con buena luz.' }
+        : { accion: 'respuesta', mensaje: 'No entendi. Repite por favor.' };
     }
 
     res.status(200).json(json);

@@ -1034,6 +1034,45 @@ function inyectarExtras() {
     font-weight: 700;
     font-size: 11px;
   }
+  .btn-ia-scan {
+    background: linear-gradient(135deg, rgba(0, 200, 255, 0.14), rgba(99, 102, 241, 0.18)) !important;
+    border: 1px solid rgba(0, 200, 255, 0.45) !important;
+    color: #7dd3fc !important;
+    font-weight: 700 !important;
+    transition: all 0.2s ease !important;
+  }
+  .btn-ia-scan:hover {
+    background: linear-gradient(135deg, rgba(0, 200, 255, 0.26), rgba(99, 102, 241, 0.3)) !important;
+    border-color: #00c8ff !important;
+    color: #fff !important;
+    box-shadow: 0 4px 16px rgba(0, 200, 255, 0.25);
+  }
+  .ia-dropzone {
+    border: 2px dashed rgba(0, 200, 255, 0.38);
+    border-radius: 12px;
+    background: rgba(0, 200, 255, 0.04);
+    padding: 14px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+  .ia-dropzone:hover, .ia-dropzone.dragover {
+    border-color: #00c8ff;
+    background: rgba(0, 200, 255, 0.1);
+  }
+  .ia-conf-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .ia-conf-alta { background: rgba(16, 185, 129, 0.18); color: #6ee7b7; border: 1px solid rgba(16, 185, 129, 0.35); }
+  .ia-conf-media { background: rgba(245, 158, 11, 0.18); color: #fcd34d; border: 1px solid rgba(245, 158, 11, 0.35); }
+  .ia-conf-baja { background: rgba(244, 63, 94, 0.18); color: #fda4af; border: 1px solid rgba(244, 63, 94, 0.35); }
   `;
   const style = document.createElement('style');
   style.id = 'fviecom-extra';
@@ -1085,6 +1124,7 @@ function inyectarExtras() {
       <button class="btn-primary" data-nueva-orden="salida">📤 Nueva salida</button>
       <button class="btn-primary" data-nueva-orden="entrada">📥 Nueva entrada / pedido</button>
       <button class="btn-primary" data-nueva-orden="devolucion">🔄 Nueva devolucion</button>
+      <button class="btn-ghost btn-ia-scan" id="btn-escanear-ia-ord" title="Leer una lista escrita a mano o foto para armar la orden automáticamente">📷 Escanear lista (Foto / Letra a mano)</button>
     </div>
     <div class="mov-hint">💡 Haz <b>doble clic</b> en una orden (o clic en la ▸) para desplegar los materiales que la componen.</div>
     <div class="panel sin-pad">
@@ -2832,7 +2872,7 @@ function modalOrden(tipo, precarga) {
 
   abrirModal(tituloBase, `
     ${borrador ? `<div class="orden-aviso">📝 Recuperamos una orden sin terminar. <button type="button" id="o-nuevo" class="link-btn">Empezar de nuevo</button></div>` : ''}
-    ${precarga ? `<div class="orden-aviso">🔁 Orden copiada. Ajusta lo que necesites y genera una nueva.</div>` : ''}
+    ${precarga ? `<div class="orden-aviso">${esc(precarga.aviso || '🔁 Orden copiada. Ajusta lo que necesites y genera una nueva.')}</div>` : ''}
     <div class="form-grid">
       ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
       <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', base ? (base.frente || '') : '')}</div>
@@ -2850,7 +2890,11 @@ function modalOrden(tipo, precarga) {
       <button type="button" class="btn-ghost" id="o-cargar-kit">📦 Cargar kit</button>
     </div>` : ''}
     <div class="orden-items" id="orden-items"></div>
-    <button class="btn-ghost orden-add" id="o-add">＋ Agregar material</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn-ghost orden-add" id="o-add" style="flex:1;min-width:160px">＋ Agregar material</button>
+      <button type="button" class="btn-ghost orden-add btn-ia-scan" id="o-scan-ia" style="flex:1;min-width:200px" title="Toma o sube una foto de la lista (incluso escrita a mano) y la IA llena los renglones">📷 Escanear lista (foto / letra a mano)</button>
+    </div>
+    <div style="font-size:11px;color:var(--texto-dim);margin-top:4px;text-align:right">💡 También puedes <b>pegar (Ctrl+V)</b> o <b>arrastrar</b> una foto de la lista sobre esta ventana.</div>
     <div class="orden-total" id="o-total"></div>
     <div class="modal-acciones" style="flex-wrap:wrap">
       <button type="button" class="btn-ghost" id="o-otra-paralela" title="Estacionar esta orden en la barra inferior y abrir otra orden nueva simultáneamente" style="margin-right:auto;color:#00c8ff;border-color:rgba(0,200,255,0.3)">🗂 ＋ Otra orden paralela</button>
@@ -3034,7 +3078,92 @@ function modalOrden(tipo, precarga) {
     toast('Kit "' + kit.nombre + '" cargado', 'ok');
   });
 
+  const aplicarDatosIAEnOrden = (datosIA) => {
+    if (vActual && ventanas.activa !== vActual) {
+      restaurarVentana(vActual);
+    }
+    const nuevos = (datosIA.items || [])
+      .filter((it) => it.materialId)
+      .map((it) => {
+        const m = estado.materiales.find((x) => x.id === it.materialId);
+        return {
+          _id: Date.now() + Math.random(),
+          materialId: it.materialId,
+          cantidad: it.cantidad || 1,
+          reqDevolucion: it.reqDevolucion !== undefined ? !!it.reqDevolucion : !!(m && m.esHerramienta),
+          _filtro: ''
+        };
+      });
+    if (nuevos.length > 0) {
+      estado.itemsOrden = (estado.itemsOrden || []).filter((it) => it.materialId || (it.cantidad !== '' && it.cantidad != null));
+      estado.itemsOrden = estado.itemsOrden.concat(nuevos);
+    }
+    if (!estado.itemsOrden || estado.itemsOrden.length === 0) {
+      estado.itemsOrden = [{ _id: Date.now(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' }];
+    }
+    if (datosIA.frente && $('#o-frente') && !$('#o-frente').value) {
+      $('#o-frente').value = datosIA.frente;
+    }
+    if (datosIA.proveedor && $('#o-proveedor') && !$('#o-proveedor').value) {
+      $('#o-proveedor').value = datosIA.proveedor;
+    }
+    if (datosIA.nota && $('#o-nota') && !$('#o-nota').value) {
+      $('#o-nota').value = datosIA.nota;
+    }
+    if (Array.isArray(datosIA.responsables) && datosIA.responsables.length > 0) {
+      const vacio = responsablesOrden.length === 1 && !responsablesOrden[0].nombre.trim();
+      const nuevosResp = datosIA.responsables.filter(Boolean).map((nom, idx) => ({
+        _id: Date.now() + idx + Math.random(),
+        nombre: typeof nom === 'string' ? nom : (nom.nombre || ''),
+        whatsapp: typeof nom === 'string' ? buscarWhatsappResp(nom) : (nom.whatsapp || buscarWhatsappResp(nom.nombre || ''))
+      })).filter((r) => r.nombre);
+      if (nuevosResp.length > 0) {
+        if (vacio) responsablesOrden = nuevosResp;
+        else {
+          for (const nr of nuevosResp) {
+            if (!responsablesOrden.some((r) => normTxt(r.nombre) === normTxt(nr.nombre))) {
+              responsablesOrden.push(nr);
+            }
+          }
+        }
+        renderResponsables();
+      }
+    }
+    render();
+    persistir();
+    toast(`✨ ${nuevos.length} renglón(es) agregados desde IA a la orden`, 'ok');
+  };
+
+  if (vActual) {
+    vActual.aplicarDatosIA = aplicarDatosIAEnOrden;
+  }
+
   $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' }); render(); persistir(); });
+  if ($('#o-scan-ia')) {
+    $('#o-scan-ia').addEventListener('click', () => {
+      modalEscanearListaIA({
+        enOrdenActiva: true,
+        tipoOrden: tipo,
+        alConfirmarEnOrden: aplicarDatosIAEnOrden
+      });
+    });
+  }
+  const cuerpoModalOrd = $('#modal-body');
+  if (cuerpoModalOrd) {
+    cuerpoModalOrd.addEventListener('dragover', (ev) => { ev.preventDefault(); });
+    cuerpoModalOrd.addEventListener('drop', (ev) => {
+      const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if (f && f.type && f.type.startsWith('image/')) {
+        ev.preventDefault();
+        modalEscanearListaIA({
+          enOrdenActiva: true,
+          tipoOrden: tipo,
+          archivoInicial: f,
+          alConfirmarEnOrden: aplicarDatosIAEnOrden
+        });
+      }
+    });
+  }
   if ($('#o-otra-paralela')) $('#o-otra-paralela').addEventListener('click', () => {
     modalOrden(tipo);
     toast('Nueva orden abierta en paralelo. La anterior quedo en la barra inferior.', 'ok');
@@ -5775,6 +5904,9 @@ initReportes();
 $('#buscar-material').addEventListener('input', renderInventario);
 $('#filtro-categoria').addEventListener('change', renderInventario);
 $('#btn-nuevo-material').addEventListener('click', () => modalMaterial(null));
+if ($('#btn-escanear-ia-inv')) $('#btn-escanear-ia-inv').addEventListener('click', () => modalEscanearListaIA({ destinoInicial: 'inventario' }));
+if ($('#btn-escanear-ia-imp')) $('#btn-escanear-ia-imp').addEventListener('click', () => modalEscanearListaIA({ destinoInicial: 'inventario' }));
+if ($('#btn-escanear-ia-ord')) $('#btn-escanear-ia-ord').addEventListener('click', () => modalEscanearListaIA({ destinoInicial: 'orden', tipoOrden: 'salida' }));
 $('#buscar-mov').addEventListener('input', renderMovimientos);
 $('#filtro-tipo-mov').addEventListener('change', renderMovimientos);
 $('#btn-nuevo-mov').addEventListener('click', () => modalMovimiento(null));
@@ -5801,11 +5933,786 @@ llenarConsumo();
 
 
 /* ==================================================================
-   ASISTENTE DE VOZ - ARQUITECTURA SIMPLE CON GEMINI
-   Todo va a Gemini. El frontend solo ejecuta lo que Gemini responde.
+   INTELIGENCIA ARTIFICIAL APLICADA:
+   1. Emparejamiento difuso inteligente con el inventario
+   2. Preprocesamiento y mejora de contraste para fotos de letra a mano
+   3. Escáner interactivo de listas manuscritas / fotos / texto
+   4. Asistente fluido (Voz + Chat escrito + Fotos + Contexto en vivo)
    ================================================================== */
 const CLOUD_FUNCTION_URL = 'https://asistente-5lyachxl4a-uc.a.run.app';
 
+// Sinónimos y normalización de jerga eléctrica para emparejar manuscritos con inventario
+function normalizarJergaElectrica(str) {
+  let s = normTxt(str || '');
+  s = s
+    .replace(/\b(?:calibre|cal|no\.?|nro\.?|num\.?)\s*(\d+)\b/g, '#$1')
+    .replace(/\bcable\s+(\d+)\b/g, 'cable #$1')
+    .replace(/\b5800\b/g, '2x4')
+    .replace(/\b2400\b/g, '4x4')
+    .replace(/\btuberia\b/g, 'tubo')
+    .replace(/\bcoraza\b/g, 'flexible')
+    .replace(/\bminibreaker\b|\btaco\b|\bdisyuntor\b/g, 'breaker')
+    .replace(/\bprensa\s*estopa\b/g, 'prensacable')
+    .replace(/\bregleta\b/g, 'bornera')
+    .replace(/\bgrapa\b/g, 'abrazadera')
+    .replace(/\bsonda\b|\bpasacables\b/g, 'pesca')
+    .replace(/\bdobladora\b/g, 'curvador')
+    .replace(/\bunds?\b|\bunid(?:ades|ad)?\b|\bmts?\b|\bmetros?\b|\brollos?\b/g, ' ')
+    .replace(/[",.;:()[\]]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s;
+}
+
+// Busca el mejor material del inventario para un renglón leído por IA o voz
+function buscarMaterialInteligente(nombreBuscado, nombreInvSugerido = '') {
+  if (!estado.materiales || estado.materiales.length === 0) {
+    return { material: null, score: 0, confianza: 'baja' };
+  }
+  const candidatosTexto = [nombreInvSugerido, nombreBuscado].map((x) => (x || '').trim()).filter(Boolean);
+  if (candidatosTexto.length === 0) return { material: null, score: 0, confianza: 'baja' };
+
+  // 1. Coincidencia exacta por nombre normalizado o código
+  for (const cand of candidatosTexto) {
+    const cn = normTxt(cand);
+    const exacto = estado.materiales.find((m) => normTxt(m.nombre) === cn || (m.codigo && normTxt(m.codigo) === cn));
+    if (exacto) return { material: exacto, score: 1, confianza: 'alta' };
+  }
+
+  // 2. Puntaje difuso por tokens, calibres, medidas y colores
+  const stopWords = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'para', 'con', 'en', 'por', 'tipo', 'awg', 'thhn']);
+  const colores = ['rojo', 'blanco', 'verde', 'amarillo', 'azul', 'negro', 'gris', 'naranja', 'tierra'];
+  const qNorm = normalizarJergaElectrica(candidatosTexto.join(' '));
+  const qRaw = normTxt(candidatosTexto[0]);
+  const tokensQ = Array.from(new Set(qNorm.split(' ').filter((w) => w.length >= 2 && !stopWords.has(w))));
+
+  // Extraer especificaciones críticas (calibres #12, fracciones 3/4, medidas 2x4, colores)
+  const specsCriticas = tokensQ.filter((w) =>
+    /^#?\d+$/.test(w) || /^\d+\/\d+$/.test(w) || /^\d+x\d+$/.test(w) || colores.includes(w)
+  );
+
+  let mejorMat = null;
+  let mejorScore = 0;
+
+  for (const m of estado.materiales) {
+    const mNorm = normalizarJergaElectrica((m.nombre || '') + ' ' + (m.codigo || '') + ' ' + (m.serial || ''));
+    const mRaw = normTxt(m.nombre || '');
+    const tokensM = new Set(mNorm.split(' ').filter((w) => w.length >= 2 && !stopWords.has(w)));
+
+    let score = 0;
+    if (mRaw.includes(qRaw) || qRaw.includes(mRaw)) {
+      score += 0.45;
+    }
+
+    let coincidencias = 0;
+    for (const tk of tokensQ) {
+      if (tokensM.has(tk)) {
+        coincidencias += 1;
+      } else {
+        // Coincidencia parcial de raíz (ej. "curvadora" vs "curvador", "cajas" vs "caja")
+        const raiz = tk.replace(/(?:es|s|a|o)$/, '');
+        if (raiz.length >= 3 && Array.from(tokensM).some((tm) => tm.startsWith(raiz) || raiz.startsWith(tm.replace(/(?:es|s|a|o)$/, '')))) {
+          coincidencias += 0.8;
+        }
+      }
+    }
+
+    if (tokensQ.length > 0) {
+      score += (coincidencias / tokensQ.length) * 0.65;
+    }
+
+    // Penalizar si una especificación crítica (color, calibre, fracción) está en la búsqueda pero NO en el material
+    let penalizacionSpec = 0;
+    for (const sp of specsCriticas) {
+      const spSinHash = sp.replace(/^#/, '');
+      const tieneSpec = tokensM.has(sp) || tokensM.has('#' + spSinHash) || tokensM.has(spSinHash) || mNorm.includes(sp);
+      if (!tieneSpec) penalizacionSpec += 0.28;
+      else score += 0.12;
+    }
+    score -= penalizacionSpec;
+
+    if (score > mejorScore) {
+      mejorScore = score;
+      mejorMat = m;
+    }
+  }
+
+  if (!mejorMat || mejorScore < 0.32) {
+    return { material: null, score: mejorScore, confianza: 'baja' };
+  }
+  const confianza = mejorScore >= 0.72 ? 'alta' : mejorScore >= 0.48 ? 'media' : 'baja';
+  return { material: mejorMat, score: mejorScore, confianza };
+}
+
+// Preprocesa una imagen (File, Blob o DataURL): redimensiona a máx 1800px, aplica rotación
+// y opcionalmente mejora nitidez/contraste para que Gemini lea letra escrita a mano con máxima precisión.
+function optimizarImagenParaIA(fuente, realzarManuscrito = true, rotacionGrados = 0) {
+  return new Promise((resolve, reject) => {
+    const cargarDataUrl = (f) => new Promise((res, rej) => {
+      if (typeof f === 'string' && f.startsWith('data:')) { res(f); return; }
+      if (f instanceof Blob) {
+        const reader = new FileReader();
+        reader.onload = () => res(reader.result);
+        reader.onerror = () => rej(new Error('No se pudo leer el archivo de imagen'));
+        reader.readAsDataURL(f);
+        return;
+      }
+      rej(new Error('Formato de imagen no soportado'));
+    });
+
+    cargarDataUrl(fuente).then((dataUrlOrig) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1800;
+          let w = img.naturalWidth || img.width || 1000;
+          let h = img.naturalHeight || img.height || 1000;
+          if (w > maxDim || h > maxDim) {
+            if (w >= h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+            else { w = Math.round((w * maxDim) / h); h = maxDim; }
+          }
+          const rot = ((rotacionGrados % 360) + 360) % 360;
+          const intercambiar = rot === 90 || rot === 270;
+          const canvas = document.createElement('canvas');
+          canvas.width = intercambiar ? h : w;
+          canvas.height = intercambiar ? w : h;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          ctx.save();
+          if (realzarManuscrito) {
+            ctx.filter = 'contrast(1.28) brightness(1.04) saturate(0.85)';
+          }
+          ctx.translate(canvas.width / 2, canvas.height / 2);
+          if (rot) ctx.rotate((rot * Math.PI) / 180);
+          ctx.drawImage(img, -w / 2, -h / 2, w, h);
+          ctx.restore();
+
+          const jpegUrl = canvas.toDataURL('image/jpeg', 0.86);
+          const base64 = jpegUrl.replace(/^data:[^;]+;base64,/, '');
+          resolve({
+            base64,
+            mimeType: 'image/jpeg',
+            dataUrl: jpegUrl,
+            dataUrlOriginal: dataUrlOrig,
+            width: canvas.width,
+            height: canvas.height
+          });
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.onerror = () => reject(new Error('No se pudo decodificar la imagen'));
+      img.src = dataUrlOrig;
+    }).catch(reject);
+  });
+}
+
+// Envía una foto de lista (manuscrita o impresa) o un texto pegado a Gemini y devuelve los renglones estructurados
+async function analizarListaConIA({ base64, mimeType, textoLista, instruccionExtra, tipoOrden = 'salida' }) {
+  const inv = estado.materiales.slice(0, 800).map((m) => ({
+    nombre: m.nombre,
+    cantidad: m.cantidad,
+    unidad: m.unidad,
+    esHerramienta: !!m.esHerramienta,
+    serial: m.serial || ''
+  }));
+
+  const promptLectura = [
+    'MODO ESCANER DE LISTA MANUSCRITA / IMAGEN DE ALMACEN.',
+    'Lee con maximo cuidado TODOS los renglones de materiales o herramientas escritos en la imagen o texto (incluso letra cursiva o rapida hecha a mano en cuaderno, hoja o WhatsApp).',
+    'Reglas importantes:',
+    '1. No omitas ningun renglon legible (ignora solo lo que este completamente tachado).',
+    '2. Distingue bien las medidas del material (ej. 1/2, 3/4, 3/8, 2x4, 4x4, #12, #10, #8) de la CANTIDAD solicitada.',
+    '3. Si dice "circuito 120V" o "circuito 220V", desglosalo en sus cables individuales por color.',
+    '4. Empareja cada renglon con el nombre mas exacto posible del INVENTARIO ACTUAL.',
+    '5. Devuelve un JSON con accion:"abrir_orden" (o "lista_escaneada"), tipo:"' + (tipoOrden || 'salida') + '", responsables:[...], frente:"...", proveedor:"...", nota:"...", mensaje:"Resumen de lo leido", e items:[{ "textoOriginal":"lo que dice el papel tal cual", "nombre":"nombre del material en inventario o interpretado", "nombreInventario":"nombre exacto en inventario si existe", "cantidad":numero, "unidad":"metro|unidad|...", "esHerramienta":true/false, "confianza":"alta|media|baja" }].',
+    instruccionExtra ? ('Instruccion adicional del usuario: ' + instruccionExtra) : '',
+    textoLista ? ('Texto de la lista proporcionado:\n' + textoLista) : ''
+  ].filter(Boolean).join('\n');
+
+  const payload = {
+    texto: promptLectura,
+    modo: 'lista',
+    inventario: inv,
+    contratos: obtenerContratos(),
+    vistaActual: 'ordenes',
+    historial: []
+  };
+  if (base64) {
+    payload.imagen = base64;
+    payload.mimeType = mimeType || 'image/jpeg';
+  }
+
+  const resp = await fetch(CLOUD_FUNCTION_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!resp.ok) {
+    throw new Error('Error del servidor IA (' + resp.status + ')');
+  }
+  const json = await resp.json();
+  if (json.error) {
+    throw new Error(json.error);
+  }
+  return json;
+}
+
+// Modal interactivo para escanear listas escritas a mano (fotos, cámara, Ctrl+V o texto)
+function modalEscanearListaIA(opciones = {}) {
+  const enOrdenActiva = !!opciones.enOrdenActiva;
+  const alConfirmarEnOrden = opciones.alConfirmarEnOrden || null;
+  let tipoSeleccionado = opciones.tipoOrden || 'salida';
+  let fuenteImagenActual = opciones.archivoInicial || opciones.dataUrlInicial || null;
+  let realzarContraste = true;
+  let rotacionActual = 0;
+  let imagenProcesada = null;
+  let analizando = false;
+
+  // Renglones detectados: [{ _id, textoOriginal, nombreDetectado, materialId, cantidad, unidad, reqDevolucion, confianza, _filtro }]
+  let renglonesIA = [];
+  let metaIA = {
+    frente: '',
+    responsable: '',
+    proveedor: '',
+    nota: '',
+    mensajeIA: ''
+  };
+
+  // Si ya vienen datos pre-analizados (por ejemplo desde el botón de cámara del asistente)
+  const poblarDesdeRespuestaIA = (json) => {
+    if (!json) return;
+    if (json.tipo && TIPOS[json.tipo] && !enOrdenActiva) tipoSeleccionado = json.tipo;
+    if (json.frente) metaIA.frente = json.frente;
+    if (json.proveedor) metaIA.proveedor = json.proveedor;
+    if (json.nota) metaIA.nota = json.nota;
+    if (Array.isArray(json.responsables) && json.responsables[0]) metaIA.responsable = json.responsables[0];
+    metaIA.mensajeIA = json.mensaje || '';
+
+    const rawItems = Array.isArray(json.items) ? json.items : [];
+    renglonesIA = rawItems.map((it, idx) => {
+      const match = buscarMaterialInteligente(it.nombre || it.textoOriginal || '', it.nombreInventario || '');
+      const mat = match.material;
+      const conf = it.confianza || match.confianza || (mat ? 'alta' : 'baja');
+      const esHerr = !!(it.esHerramienta || (mat && mat.esHerramienta));
+      return {
+        _id: Date.now() + idx + Math.random(),
+        textoOriginal: it.textoOriginal || it.nombre || '',
+        nombreDetectado: it.nombre || it.nombreInventario || it.textoOriginal || 'Material sin nombre',
+        materialId: mat ? mat.id : '',
+        cantidad: Number(it.cantidad) > 0 ? Number(it.cantidad) : 1,
+        unidad: mat ? mat.unidad : (it.unidad || 'unidad'),
+        esHerramienta: esHerr,
+        reqDevolucion: !!(it.reqDevolucion || esHerr),
+        confianza: mat ? conf : 'baja',
+        _filtro: ''
+      };
+    });
+  };
+
+  if (opciones.respuestaInicial) {
+    poblarDesdeRespuestaIA(opciones.respuestaInicial);
+  }
+
+  const htmlModal = `
+    <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:14px">
+      <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="font-size:12.5px;color:#dbeafe;line-height:1.45">
+          ✨ <b>Lector IA de Listas Manuscritas y Fotos:</b> Sube o toma una foto de un cuaderno/hoja escrita a mano, <b>pégala con Ctrl+V</b> o pega una lista de WhatsApp. La IA transcribe cada renglón y lo conecta con tu inventario.
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;align-items:start">
+        <!-- Columna izquierda: Imagen / Entrada -->
+        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px">
+          <div id="ia-dropzone" class="ia-dropzone">
+            <div id="ia-preview-vacio">
+              <div style="font-size:28px;margin-bottom:4px">📷 ✍️</div>
+              <div style="font-weight:700;color:#e2e8f0;font-size:13px">Haz clic para subir/tomar foto, arrástrala aquí o presiona <kbd style="background:rgba(0,200,255,0.2);padding:2px 6px;border-radius:4px;color:#7dd3fc">Ctrl + V</kbd></div>
+              <div style="font-size:11.5px;color:var(--texto-dim);margin-top:4px">Soporta letra escrita a mano en cuaderno, hojas, tableros o capturas de WhatsApp</div>
+            </div>
+            <div id="ia-preview-img-wrap" hidden style="display:none;flex-direction:column;align-items:center;gap:8px">
+              <img id="ia-preview-img" alt="Lista escaneada" style="max-width:100%;max-height:260px;border-radius:8px;border:1px solid rgba(0,200,255,0.3);object-fit:contain;background:#0b1325" />
+            </div>
+            <input type="file" id="ia-file-input" accept="image/*" style="display:none" />
+          </div>
+
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <button type="button" class="btn-ghost" id="ia-btn-subir" style="font-size:11.5px;padding:5px 10px">📂 Elegir / Tomar foto</button>
+              <button type="button" class="btn-ghost" id="ia-btn-rotar" style="font-size:11.5px;padding:5px 10px" title="Girar foto 90° si salió volteada">↻ Girar 90°</button>
+            </div>
+            <label style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:#93c5fd;cursor:pointer" title="Aumenta la nitidez de trazos de lapicero o lápiz sobre papel">
+              <input type="checkbox" id="ia-chk-contraste" checked />
+              <span>✨ Realzar letra a mano</span>
+            </label>
+          </div>
+
+          <details style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:7px 10px">
+            <summary style="cursor:pointer;font-size:12px;color:#7dd3fc;font-weight:600">📋 ¿Tienes una lista en texto de WhatsApp? Pégala aquí</summary>
+            <textarea id="ia-texto-lista" rows="3" placeholder="Ej:\n50m cable 12 rojo\n10 cajas 2x4\n1 curvadora 3/4 para Pedro frente 3B" style="width:100%;margin-top:7px;font-size:12px;background:rgba(15,23,42,0.8);color:#fff;border:1px solid rgba(255,255,255,0.14);border-radius:6px;padding:7px"></textarea>
+          </details>
+
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" id="ia-instruccion-extra" placeholder="Pista opcional (ej: 'ignora lo tachado', 'todo es calibre 12')..." style="flex:1;font-size:12px;padding:7px 9px" />
+            <button type="button" class="btn-primary" id="ia-btn-analizar" style="white-space:nowrap;padding:7px 14px;font-size:12.5px">🧠 Leer con IA</button>
+          </div>
+
+          <div id="ia-estado-lectura" style="font-size:12px;color:#7dd3fc;min-height:20px"></div>
+
+          <!-- Datos de cabecera detectados -->
+          <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${!enOrdenActiva ? `
+            <div class="campo" style="margin:0">
+              <label style="font-size:11px">Tipo de orden</label>
+              <select id="ia-meta-tipo" class="select" style="width:100%;font-size:12px;padding:6px">
+                <option value="salida" ${tipoSeleccionado === 'salida' ? 'selected' : ''}>📤 Salida de almacén</option>
+                <option value="entrada" ${tipoSeleccionado === 'entrada' ? 'selected' : ''}>📥 Entrada / Pedido</option>
+                <option value="devolucion" ${tipoSeleccionado === 'devolucion' ? 'selected' : ''}>🔄 Devolución</option>
+              </select>
+            </div>` : ''}
+            <div class="campo" style="margin:0">
+              <label style="font-size:11px">Frente detectado</label>
+              ${frenteSelectHtml('ia-meta-frente', metaIA.frente, false)}
+            </div>
+            <div class="campo" style="margin:0">
+              <label style="font-size:11px">Responsable detectado</label>
+              <input type="text" id="ia-meta-resp" list="lista-resp-ia" value="${esc(metaIA.responsable)}" placeholder="Nombre responsable..." style="font-size:12px;padding:6px 8px" />
+              <datalist id="lista-resp-ia">${responsablesExistentes().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+            </div>
+            <div class="campo" style="margin:0">
+              <label style="font-size:11px">Nota / Observación</label>
+              <input type="text" id="ia-meta-nota" value="${esc(metaIA.nota)}" placeholder="Opcional..." style="font-size:12px;padding:6px 8px" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Columna derecha: Renglones reconocidos -->
+        <div style="background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <div>
+              <span style="font-weight:700;font-size:13.5px;color:#e2e8f0">📋 Renglones reconocidos (<span id="ia-count-items">0</span>)</span>
+              <span id="ia-resumen-match" style="font-size:11.5px;color:var(--texto-dim);margin-left:8px"></span>
+            </div>
+            <button type="button" class="btn-ghost" id="ia-btn-add-fila" style="font-size:11.5px;padding:4px 10px">＋ Agregar renglón</button>
+          </div>
+
+          <div id="ia-lista-renglones" style="max-height:380px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding-right:2px"></div>
+        </div>
+      </div>
+
+      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:4px">
+        <button type="button" class="btn-ghost" id="ia-btn-cancelar" style="margin-right:auto">Cancelar</button>
+        ${enOrdenActiva ? `
+          <button type="button" class="btn-primary" id="ia-btn-pasar-orden">✅ Pasar renglones a la orden actual</button>
+        ` : `
+          <button type="button" class="btn-ghost" id="ia-btn-importar-inv" title="Crear o sumar estos elementos directamente al catálogo de inventario">📦 Agregar al Inventario</button>
+          <button type="button" class="btn-ghost" id="ia-btn-despachar-directo" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7" title="Registrar la orden de inmediato sin pasos intermedios">⚡ Crear orden directo</button>
+          <button type="button" class="btn-primary" id="ia-btn-abrir-orden">📝 Revisar en formulario de Orden</button>
+        `}
+      </div>
+    </div>
+  `;
+
+  abrirModal('📷 Escáner IA de Listas (Letra a Mano / Fotos / Texto)', htmlModal, '980px');
+
+  const root = $('#ia-scan-root');
+  const dropzone = $('#ia-dropzone');
+  const fileInput = $('#ia-file-input');
+  const previewVacio = $('#ia-preview-vacio');
+  const previewWrap = $('#ia-preview-img-wrap');
+  const previewImg = $('#ia-preview-img');
+  const chkContraste = $('#ia-chk-contraste');
+  const txtListaEl = $('#ia-texto-lista');
+  const inpExtraEl = $('#ia-instruccion-extra');
+  const btnAnalizar = $('#ia-btn-analizar');
+  const estadoLectura = $('#ia-estado-lectura');
+  const contRenglones = $('#ia-lista-renglones');
+
+  const renderRenglonesIA = () => {
+    $('#ia-count-items').textContent = renglonesIA.length;
+    const vinculados = renglonesIA.filter((r) => r.materialId).length;
+    const sinVincular = renglonesIA.length - vinculados;
+    $('#ia-resumen-match').innerHTML = renglonesIA.length > 0
+      ? (`<span style="color:#6ee7b7">✓ ${vinculados} en inventario</span>` + (sinVincular > 0 ? ` · <span style="color:#fcd34d">⚠️ ${sinVincular} por asignar o crear</span>` : ''))
+      : '';
+
+    if (renglonesIA.length === 0) {
+      contRenglones.innerHTML = `
+        <div style="padding:36px 16px;text-align:center;color:var(--texto-dim);font-size:12.5px;border:1px dashed rgba(255,255,255,0.1);border-radius:10px">
+          Sube o pega una foto de la lista escrita a mano y pulsa <b>"🧠 Leer con IA"</b>.<br>
+          Aquí aparecerá cada renglón transcrito junto con su material del inventario.
+        </div>`;
+      return;
+    }
+
+    contRenglones.innerHTML = renglonesIA.map((r, i) => {
+      const confClase = r.confianza === 'alta' ? 'ia-conf-alta' : r.confianza === 'media' ? 'ia-conf-media' : 'ia-conf-baja';
+      const confTexto = r.confianza === 'alta' ? '🟢 Clara' : r.confianza === 'media' ? '🟡 Media' : '🟠 Revisar';
+      return `
+        <div class="ia-renglon-card" data-rid="${r._id}" style="background:rgba(15,23,42,0.65);border:1px solid ${r.materialId ? 'rgba(255,255,255,0.1)' : 'rgba(245,158,11,0.45)'};border-radius:9px;padding:8px 10px;display:flex;flex-direction:column;gap:6px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap">
+            <div style="font-size:11.5px;color:#cbd5e1;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+              <span style="color:var(--texto-dim);font-weight:700">#${i + 1}</span>
+              <span title="Texto leído por la IA en el papel">📝 Manuscrito leído: <b style="color:#7dd3fc">"${esc(r.textoOriginal || r.nombreDetectado)}"</b></span>
+              <span class="ia-conf-badge ${confClase}">${confTexto}</span>
+            </div>
+            ${!r.materialId ? `<button type="button" class="btn-ghost ia-btn-crear-mat" data-crear-mat="${r._id}" style="font-size:11px;padding:2px 8px;border-color:rgba(16,185,129,0.5);color:#6ee7b7" title="Crear este material automáticamente en el inventario y seleccionarlo">⚡ Crear "${esc((r.nombreDetectado || '').slice(0, 22))}" en inventario</button>` : ''}
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:nowrap">
+            <input type="text" class="ia-row-filtro" placeholder="🔎 Filtrar..." value="${esc(r._filtro || '')}" style="flex:0.9;min-width:0;width:0;font-size:11.5px;padding:5px 7px" title="Escribe para buscar en el inventario" />
+            <select class="ia-row-mat select" style="flex:2.2;min-width:0;width:0;font-size:12px;padding:5px 7px">
+              ${opcionesMaterialAgrupadas(r.materialId, r._filtro)}
+            </select>
+            <input type="number" step="any" min="0" class="ia-row-cant" value="${r.cantidad}" placeholder="Cant." style="flex:0.65;min-width:0;width:0;font-size:12px;padding:5px 6px;text-align:right" />
+            <label class="chk-req-dev ${r.reqDevolucion ? 'activo' : ''}" title="Marcar si requiere devolución al almacén" style="padding:4px 7px;font-size:10.5px">
+              <input type="checkbox" class="ia-row-reqdev" ${r.reqDevolucion ? 'checked' : ''} />
+              <span>Req. dev.</span>
+            </label>
+            <button type="button" class="btn-icon peligro ia-row-del" title="Quitar renglón" style="flex:none">✕</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    contRenglones.querySelectorAll('.ia-renglon-card').forEach((card) => {
+      const rid = Number(card.dataset.rid);
+      const item = renglonesIA.find((x) => x._id === rid);
+      if (!item) return;
+      const filtroEl = card.querySelector('.ia-row-filtro');
+      const selEl = card.querySelector('.ia-row-mat');
+      const cantEl = card.querySelector('.ia-row-cant');
+      const chkDev = card.querySelector('.ia-row-reqdev');
+      const lblDev = card.querySelector('.chk-req-dev');
+      const btnDel = card.querySelector('.ia-row-del');
+      const btnCrear = card.querySelector('.ia-btn-crear-mat');
+
+      filtroEl.addEventListener('input', () => {
+        item._filtro = filtroEl.value;
+        selEl.innerHTML = opcionesMaterialAgrupadas(item.materialId, item._filtro);
+      });
+      selEl.addEventListener('change', () => {
+        item.materialId = selEl.value;
+        const m = estado.materiales.find((x) => x.id === item.materialId);
+        if (m) {
+          item.unidad = m.unidad || 'unidad';
+          item.confianza = 'alta';
+          if (m.esHerramienta) {
+            item.reqDevolucion = true;
+          }
+        }
+        renderRenglonesIA();
+      });
+      cantEl.addEventListener('input', () => {
+        item.cantidad = Number(cantEl.value) || 0;
+      });
+      chkDev.addEventListener('change', () => {
+        item.reqDevolucion = chkDev.checked;
+        lblDev.classList.toggle('activo', chkDev.checked);
+      });
+      btnDel.addEventListener('click', () => {
+        renglonesIA = renglonesIA.filter((x) => x._id !== rid);
+        renderRenglonesIA();
+      });
+      if (btnCrear) {
+        btnCrear.addEventListener('click', async () => {
+          btnCrear.disabled = true;
+          btnCrear.textContent = 'Creando...';
+          try {
+            const nombreNuevo = (item.nombreDetectado || item.textoOriginal || 'Material nuevo').trim();
+            const creado = await agregarMaterial({
+              codigo: '',
+              nombre: nombreNuevo,
+              categoria: item.esHerramienta ? 'Herramientas' : 'Sin clasificar',
+              cantidad: Math.max(Number(item.cantidad) || 1, 100),
+              unidad: item.unidad || 'unidad',
+              minimo: 0,
+              ubicacion: '',
+              esHerramienta: !!item.esHerramienta,
+              serial: ''
+            });
+            item.materialId = creado.id;
+            item.confianza = 'alta';
+            toast(`Material "${nombreNuevo}" creado en inventario`, 'ok');
+            renderRenglonesIA();
+          } catch (err) {
+            toast('Error al crear material: ' + err.message, 'error');
+            btnCrear.disabled = false;
+            btnCrear.textContent = '⚡ Crear en inventario';
+          }
+        });
+      }
+    });
+  };
+
+  const ejecutarAnalisis = async () => {
+    if (analizando) return;
+    const textoLista = (txtListaEl.value || '').trim();
+    const instruccionExtra = (inpExtraEl.value || '').trim();
+    if (!imagenProcesada && !textoLista) {
+      toast('Primero sube o pega una foto de la lista (o escribe el texto)', 'error');
+      return;
+    }
+    analizando = true;
+    btnAnalizar.disabled = true;
+    btnAnalizar.textContent = '⏳ Leyendo...';
+    estadoLectura.innerHTML = '🧠 <b>Analizando trazos y emparejando con tu inventario...</b> (toma unos segundos)';
+
+    try {
+      const json = await analizarListaConIA({
+        base64: imagenProcesada ? imagenProcesada.base64 : null,
+        mimeType: imagenProcesada ? imagenProcesada.mimeType : null,
+        textoLista,
+        instruccionExtra,
+        tipoOrden: ($('#ia-meta-tipo') ? $('#ia-meta-tipo').value : tipoSeleccionado)
+      });
+      poblarDesdeRespuestaIA(json);
+      if ($('#ia-meta-tipo') && tipoSeleccionado) $('#ia-meta-tipo').value = tipoSeleccionado;
+      if ($('#ia-meta-frente') && metaIA.frente) $('#ia-meta-frente').value = metaIA.frente;
+      if ($('#ia-meta-resp') && metaIA.responsable) $('#ia-meta-resp').value = metaIA.responsable;
+      if ($('#ia-meta-nota') && metaIA.nota) $('#ia-meta-nota').value = metaIA.nota;
+
+      estadoLectura.innerHTML = `✅ <b>${esc(metaIA.mensajeIA || (`Se reconocieron ${renglonesIA.length} renglones.`))}</b>`;
+      renderRenglonesIA();
+    } catch (err) {
+      estadoLectura.innerHTML = `<span style="color:#fda4af">❌ ${esc(err.message)}</span>`;
+      toast('Error leyendo la lista: ' + err.message, 'error');
+    } finally {
+      analizando = false;
+      btnAnalizar.disabled = false;
+      btnAnalizar.textContent = '🧠 Leer con IA';
+    }
+  };
+
+  const cargarFuenteImagen = async (fuente, autoAnalizar = true) => {
+    try {
+      fuenteImagenActual = fuente;
+      estadoLectura.innerHTML = '⚙️ Optimizando nitidez de la imagen para lectura de manuscritos...';
+      imagenProcesada = await optimizarImagenParaIA(fuenteImagenActual, realzarContraste, rotacionActual);
+      previewVacio.hidden = true;
+      previewWrap.hidden = false;
+      previewWrap.style.display = 'flex';
+      previewImg.src = imagenProcesada.dataUrl;
+      if (autoAnalizar) {
+        await ejecutarAnalisis();
+      } else {
+        estadoLectura.innerHTML = 'Imagen lista. Haz clic en <b>"🧠 Leer con IA"</b> para volver a analizar.';
+      }
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+
+  // Eventos de imagen
+  dropzone.addEventListener('click', () => fileInput.click());
+  $('#ia-btn-subir').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files && fileInput.files[0]) {
+      rotacionActual = 0;
+      cargarFuenteImagen(fileInput.files[0], true);
+    }
+  });
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f && f.type.startsWith('image/')) {
+      rotacionActual = 0;
+      cargarFuenteImagen(f, true);
+    }
+  });
+
+  $('#ia-btn-rotar').addEventListener('click', () => {
+    if (!fuenteImagenActual) { toast('Primero carga una foto', 'error'); return; }
+    rotacionActual = (rotacionActual + 90) % 360;
+    cargarFuenteImagen(fuenteImagenActual, false);
+  });
+
+  chkContraste.addEventListener('change', () => {
+    realzarContraste = chkContraste.checked;
+    if (fuenteImagenActual) cargarFuenteImagen(fuenteImagenActual, false);
+  });
+
+  btnAnalizar.addEventListener('click', ejecutarAnalisis);
+
+  $('#ia-btn-add-fila').addEventListener('click', () => {
+    renglonesIA.push({
+      _id: Date.now() + Math.random(),
+      textoOriginal: 'Agregado manual',
+      nombreDetectado: '',
+      materialId: '',
+      cantidad: 1,
+      unidad: 'unidad',
+      esHerramienta: false,
+      reqDevolucion: false,
+      confianza: 'alta',
+      _filtro: ''
+    });
+    renderRenglonesIA();
+  });
+
+  // Pegar imagen con Ctrl+V mientras el modal está abierto
+  const onPasteModal = (e) => {
+    if (!document.body.contains(root)) {
+      document.removeEventListener('paste', onPasteModal);
+      return;
+    }
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const blob = it.getAsFile();
+        if (blob) {
+          rotacionActual = 0;
+          cargarFuenteImagen(blob, true);
+        }
+        return;
+      }
+    }
+  };
+  document.addEventListener('paste', onPasteModal);
+
+  const recolectarDatosConfirmados = () => {
+    const tipoFinal = $('#ia-meta-tipo') ? $('#ia-meta-tipo').value : tipoSeleccionado;
+    const frenteFinal = ($('#ia-meta-frente') ? $('#ia-meta-frente').value : metaIA.frente || '').trim();
+    const respFinal = ($('#ia-meta-resp') ? $('#ia-meta-resp').value : metaIA.responsable || '').trim();
+    const notaFinal = ($('#ia-meta-nota') ? $('#ia-meta-nota').value : metaIA.nota || '').trim();
+    return {
+      tipo: tipoFinal,
+      frente: frenteFinal,
+      responsable: respFinal,
+      responsables: respFinal ? [respFinal] : [],
+      proveedor: metaIA.proveedor || '',
+      nota: notaFinal,
+      items: renglonesIA
+    };
+  };
+
+  $('#ia-btn-cancelar').addEventListener('click', () => {
+    document.removeEventListener('paste', onPasteModal);
+    cerrarModal();
+  });
+
+  if ($('#ia-btn-pasar-orden')) {
+    $('#ia-btn-pasar-orden').addEventListener('click', () => {
+      const d = recolectarDatosConfirmados();
+      const conMat = d.items.filter((x) => x.materialId && Number(x.cantidad) > 0);
+      if (conMat.length === 0) {
+        toast('Selecciona o crea al menos un material del inventario en los renglones', 'error');
+        return;
+      }
+      document.removeEventListener('paste', onPasteModal);
+      cerrarModal({ sinRestaurar: true });
+      if (alConfirmarEnOrden) alConfirmarEnOrden({ ...d, items: conMat });
+    });
+  }
+
+  if ($('#ia-btn-abrir-orden')) {
+    $('#ia-btn-abrir-orden').addEventListener('click', () => {
+      const d = recolectarDatosConfirmados();
+      const conMat = d.items.filter((x) => x.materialId && Number(x.cantidad) > 0);
+      if (conMat.length === 0) {
+        toast('Asigna o crea al menos un material del inventario antes de continuar', 'error');
+        return;
+      }
+      document.removeEventListener('paste', onPasteModal);
+      cerrarModal({ sinRestaurar: true });
+      const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
+      if (vistaActual !== 'ordenes') {
+        const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
+        if (btnOrd) btnOrd.click();
+      }
+      modalOrden(d.tipo, {
+        aviso: `✨ Lista escaneada con IA (${conMat.length} renglones cargados). Verifica y pulsa "Generar e imprimir".`,
+        frente: d.frente,
+        proveedor: d.proveedor,
+        responsable: d.responsable,
+        responsables: d.responsables.map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+        nota: d.nota,
+        items: conMat.map((it) => ({
+          materialId: it.materialId,
+          cantidad: it.cantidad,
+          reqDevolucion: !!it.reqDevolucion
+        }))
+      });
+    });
+  }
+
+  if ($('#ia-btn-despachar-directo')) {
+    $('#ia-btn-despachar-directo').addEventListener('click', async () => {
+      const d = recolectarDatosConfirmados();
+      const conMat = d.items.filter((x) => x.materialId && Number(x.cantidad) > 0);
+      if (conMat.length === 0) {
+        toast('Asigna al menos un material con cantidad válida', 'error');
+        return;
+      }
+      document.removeEventListener('paste', onPasteModal);
+      cerrarModal();
+      await ejecutarOrden({
+        tipo: d.tipo,
+        frente: d.frente,
+        responsables: d.responsables,
+        nota: d.nota,
+        items: conMat.map((it) => {
+          const m = estado.materiales.find((x) => x.id === it.materialId);
+          return {
+            materialId: it.materialId,
+            nombre: m ? m.nombre : it.nombreDetectado,
+            cantidad: it.cantidad,
+            unidad: m ? m.unidad : it.unidad,
+            reqDevolucion: !!it.reqDevolucion
+          };
+        }),
+        mensaje: `Orden generada desde lista escaneada (${conMat.length} materiales).`
+      });
+    });
+  }
+
+  if ($('#ia-btn-importar-inv')) {
+    $('#ia-btn-importar-inv').addEventListener('click', async () => {
+      if (renglonesIA.length === 0) {
+        toast('Primero escanea una lista con materiales', 'error');
+        return;
+      }
+      const btn = $('#ia-btn-importar-inv');
+      btn.disabled = true;
+      btn.textContent = 'Importando...';
+      try {
+        const listaImp = renglonesIA.map((r) => {
+          const m = r.materialId ? estado.materiales.find((x) => x.id === r.materialId) : null;
+          return {
+            codigo: m ? m.codigo : '',
+            nombre: m ? m.nombre : (r.nombreDetectado || r.textoOriginal || '').trim(),
+            categoria: m ? m.categoria : (r.esHerramienta ? 'Herramientas' : 'Sin clasificar'),
+            cantidad: Number(r.cantidad) || 0,
+            unidad: m ? m.unidad : (r.unidad || 'unidad')
+          };
+        }).filter((x) => x.nombre);
+        const res = await importarMateriales(listaImp, estado.materiales);
+        document.removeEventListener('paste', onPasteModal);
+        cerrarModal();
+        toast(`Inventario actualizado: ${res.creados} nuevos, ${res.actualizados} sumados`, 'ok');
+      } catch (err) {
+        toast('Error al importar: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.textContent = '📦 Agregar al Inventario';
+      }
+    });
+  }
+
+  renderRenglonesIA();
+  if (fuenteImagenActual) {
+    cargarFuenteImagen(fuenteImagenActual, !opciones.respuestaInicial);
+  }
+}
+
+/* ==================================================================
+   ASISTENTE FLUIDO MULTIMODAL (VOZ + TEXTO + FOTOS + CONTEXTO)
+   ================================================================== */
 const asistente = {
   recognition: null,
   escuchando: false,
@@ -5833,15 +6740,12 @@ const ALIAS_VISTAS = {
 };
 
 let _reactivarTimer = null;
+let _autoSendVoiceTimer = null;
 
-// --- TTS (desactivado) ---
-async function hablarAgente(texto) {
-  // TTS desactivado para evitar que el microfono capture el audio del parlante (eco)
-  // La respuesta se muestra en el panel de chat
+async function hablarAgente(_texto) {
   return;
 }
 
-// --- Reactivar microfono (300ms debounce) ---
 function reactivarMicrofono() {
   if (!asistente.escuchando || !asistente.recognition || asistente.hablando) return;
   if (_reactivarTimer) return;
@@ -5857,16 +6761,19 @@ function reactivarMicrofono() {
   }, 300);
 }
 
-// --- Historial y panel ---
 function agregarAlHistorial(rol, texto) {
   asistente.historial.push({ rol, texto, ts: Date.now() });
-  if (asistente.historial.length > 10) asistente.historial.shift();
+  if (asistente.historial.length > 16) asistente.historial.shift();
 }
 
 function actualizarPanel() {
   const body = $('.ai-panel-body');
   if (!body) return;
-  const ultimos = asistente.historial.slice(-10);
+  const ultimos = asistente.historial.slice(-14);
+  if (ultimos.length === 0) {
+    body.innerHTML = `<div class="ai-bubble ai-bubble-agent">👋 ¡Hola! Puedes hablarme con 🎤, escribirme abajo o enviarme una 📷 <b>foto de una lista escrita a mano</b> para armar la orden automáticamente.</div>`;
+    return;
+  }
   body.innerHTML = ultimos.map((m) => {
     const isUser = m.rol === 'usuario';
     return `<div class="ai-bubble ${isUser ? 'ai-bubble-user' : 'ai-bubble-agent'}">${esc(m.texto)}</div>`;
@@ -5879,18 +6786,17 @@ function actualizarEstado(txt) {
   if (!el) return;
   if (txt) { el.innerHTML = `<span class="ai-status-text">${esc(txt)}</span>`; return; }
   if (asistente.procesando) {
-    el.innerHTML = '<span class="ai-status-thinking"><span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span> Pensando</span>';
+    el.innerHTML = '<span class="ai-status-thinking"><span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span> Procesando con IA...</span>';
     return;
   }
   if (asistente.escuchando && asistente.grabando) {
-    el.innerHTML = '<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> Escuchando</span>';
+    el.innerHTML = '<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> Escuchando (se envía solo al pausar)</span>';
     return;
   }
-  if (asistente.escuchando) { el.innerHTML = '<span class="ai-status-text">Activo</span>'; return; }
-  el.innerHTML = '<span class="ai-status-text">Toca el mic para activar</span>';
+  if (asistente.escuchando) { el.innerHTML = '<span class="ai-status-text">Micrófono activo</span>'; return; }
+  el.innerHTML = '<span class="ai-status-text">Escribe abajo, pega una foto (Ctrl+V) o usa 🎤</span>';
 }
 
-// --- Navegacion local instantanea ---
 function intentarNavLocal(texto) {
   const t = normTxt(texto).replace(/[.,;:!?]+/g, '').trim();
   const regexNav = /^(?:abre|abrir|ve a|ve al|muestra|muestrame|ir a|ir al|vamos a|llevame a|abreme)\s+(.+)$/;
@@ -5902,32 +6808,28 @@ function intentarNavLocal(texto) {
   if (!btn) return false;
   btn.click();
   agregarAlHistorial('usuario', texto);
-  agregarAlHistorial('agente', `Abri ${TITULOS[vista] || vista}.`);
+  agregarAlHistorial('agente', `Abrí ${TITULOS[vista] || vista}.`);
   actualizarPanel();
-  hablarAgente(`Listo, abri ${TITULOS[vista] || vista}.`);
   return true;
 }
 
-// --- Mostrar/ocultar boton Enviar del buffer ---
 function mostrarBtnEnviar(visible) {
   const btn = document.getElementById('ai-btn-send');
   if (!btn) return;
   btn.hidden = !visible;
 }
 
-// --- Enviar buffer acumulado ---
 function enviarBuffer() {
+  if (_autoSendVoiceTimer) { clearTimeout(_autoSendVoiceTimer); _autoSendVoiceTimer = null; }
   const texto = asistente.buffer.trim();
   asistente.buffer = '';
   mostrarBtnEnviar(false);
   actualizarEstado();
   if (!texto) return;
-  // Navegacion local primero
   if (intentarNavLocal(texto)) return;
   enviarAGemini(texto);
 }
 
-// --- Enviar a Gemini ---
 async function enviarAGemini(texto) {
   if (asistente.procesando) return;
   asistente.procesando = true;
@@ -5937,11 +6839,11 @@ async function enviarAGemini(texto) {
 
   try {
     const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
-    const inv = estado.materiales.slice(0, 200).map((m) => ({
+    const inv = estado.materiales.slice(0, 500).map((m) => ({
       nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
       esHerramienta: !!m.esHerramienta, serial: m.serial || ''
     }));
-    const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
+    const histCtx = asistente.historial.slice(-8).map((h) => ({ rol: h.rol, texto: h.texto }));
 
     const resp = await fetch(CLOUD_FUNCTION_URL, {
       method: 'POST',
@@ -5952,18 +6854,16 @@ async function enviarAGemini(texto) {
     if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
     const json = await resp.json();
     await ejecutarRespuesta(json);
-  } catch (err) {
-    const msg = 'Error de comunicacion. Intenta de nuevo.';
+  } catch (_err) {
+    const msg = 'Error de comunicación con IA. Intenta de nuevo.';
     agregarAlHistorial('agente', msg);
     actualizarPanel();
-    await hablarAgente(msg);
   } finally {
     asistente.procesando = false;
     actualizarEstado();
   }
 }
 
-// --- Ejecutar respuesta de Gemini ---
 async function ejecutarRespuesta(json) {
   const accion = json.accion;
   const mensaje = json.mensaje || '';
@@ -5972,20 +6872,71 @@ async function ejecutarRespuesta(json) {
     const dest = ALIAS_VISTAS[normTxt(json.destino || '')] || normTxt(json.destino || '');
     const btn = document.querySelector(`.menu-item[data-vista="${dest}"]`);
     if (btn) btn.click();
-    agregarAlHistorial('agente', mensaje || `Abri ${TITULOS[dest] || dest}.`);
+    agregarAlHistorial('agente', mensaje || `Abrí ${TITULOS[dest] || dest}.`);
     actualizarPanel();
-    await hablarAgente(mensaje || `Listo, abri ${TITULOS[dest] || dest}.`);
+
+  } else if (accion === 'lista_escaneada') {
+    agregarAlHistorial('agente', mensaje || 'Lista escaneada. Revisa los renglones en pantalla.');
+    actualizarPanel();
+    const vAct = ventanas.activa;
+    modalEscanearListaIA({
+      enOrdenActiva: !!(vAct && vAct.aplicarDatosIA),
+      tipoOrden: (vAct && vAct.ordenTipo) || json.tipo || 'salida',
+      alConfirmarEnOrden: (vAct && vAct.aplicarDatosIA) || null,
+      respuestaInicial: json
+    });
 
   } else if (accion === 'ejecutar_orden') {
+    // Si el usuario tiene una ventana de orden abierta en este momento, cargar ahí o ejecutar
+    const vAct = ventanas.activa;
+    if (vAct && vAct.aplicarDatosIA && (!json.frente || !json.responsables || json.responsables.length === 0)) {
+      const itemsResueltos = (json.items || []).map((it) => {
+        const { material } = buscarMaterialInteligente(it.nombre, it.nombreInventario);
+        return {
+          materialId: material ? material.id : '',
+          cantidad: Number(it.cantidad) || 1,
+          reqDevolucion: !!(it.reqDevolucion || (material && material.esHerramienta))
+        };
+      }).filter((x) => x.materialId);
+      if (itemsResueltos.length > 0) {
+        vAct.aplicarDatosIA({
+          frente: json.frente,
+          responsables: json.responsables,
+          nota: json.nota,
+          items: itemsResueltos
+        });
+        agregarAlHistorial('agente', mensaje || `Agregué ${itemsResueltos.length} material(es) a la orden que tienes abierta.`);
+        actualizarPanel();
+        return;
+      }
+    }
     await ejecutarOrden(json);
 
   } else if (accion === 'abrir_orden') {
     const tipo = json.tipo || 'salida';
     const items = (json.items || []).map((it) => {
-      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
-      return { materialId: mat ? mat.id : '', cantidad: it.cantidad || 1 };
+      const { material } = buscarMaterialInteligente(it.nombre, it.nombreInventario);
+      return {
+        materialId: material ? material.id : '',
+        cantidad: it.cantidad || 1,
+        reqDevolucion: !!(it.reqDevolucion || (material && material.esHerramienta))
+      };
     });
+    // Si ya hay una orden abierta, inyectar los renglones ahí mismo
+    const vAct = ventanas.activa;
+    if (vAct && vAct.aplicarDatosIA) {
+      vAct.aplicarDatosIA({
+        frente: json.frente,
+        responsables: json.responsables,
+        nota: json.nota,
+        items: items.filter((x) => x.materialId)
+      });
+      agregarAlHistorial('agente', mensaje || 'Agregué los materiales a la orden que tienes en pantalla.');
+      actualizarPanel();
+      return;
+    }
     const precarga = {
+      aviso: '✨ Orden preparada por el Asistente IA. Revisa y confirma.',
       frente: json.frente || '',
       responsable: (json.responsables && json.responsables[0]) || '',
       responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
@@ -5998,19 +6949,12 @@ async function ejecutarRespuesta(json) {
       if (btnOrd) btnOrd.click();
     }
     modalOrden(tipo, precarga);
-    agregarAlHistorial('agente', mensaje || 'Abri la orden para que la revises.');
+    agregarAlHistorial('agente', mensaje || 'Abrí la orden con los materiales reconocidos para que la revises.');
     actualizarPanel();
-    await hablarAgente(mensaje || 'Te abro la orden para que la revises.');
 
-  } else if (accion === 'consulta') {
+  } else if (accion === 'consulta' || accion === 'respuesta') {
     agregarAlHistorial('agente', mensaje);
     actualizarPanel();
-    await hablarAgente(mensaje);
-
-  } else if (accion === 'respuesta') {
-    agregarAlHistorial('agente', mensaje);
-    actualizarPanel();
-    await hablarAgente(mensaje);
 
   } else if (accion === 'agregar_inventario') {
     const it = (json.items && json.items[0]) || {};
@@ -6020,47 +6964,41 @@ async function ejecutarRespuesta(json) {
       serial: it.serial || ''
     };
     modalMaterial(null, prefill);
-    agregarAlHistorial('agente', mensaje || 'Abri formulario de material.');
+    agregarAlHistorial('agente', mensaje || 'Abrí formulario de material.');
     actualizarPanel();
-    await hablarAgente(mensaje || 'Abri formulario de material. Revisa y confirma.');
 
-  } else {
-    if (mensaje) {
-      agregarAlHistorial('agente', mensaje);
-      actualizarPanel();
-      await hablarAgente(mensaje);
-    }
+  } else if (mensaje) {
+    agregarAlHistorial('agente', mensaje);
+    actualizarPanel();
   }
 }
 
-// --- Ejecutar orden directo ---
 async function ejecutarOrden(json) {
   const tipo = json.tipo || 'salida';
   const mensaje = json.mensaje || '';
   try {
     const items = (json.items || []).map((it) => {
-      const mat = estado.materiales.find((m) => normTxt(m.nombre).includes(normTxt(it.nombre)));
+      const mat = it.materialId
+        ? estado.materiales.find((m) => m.id === it.materialId)
+        : buscarMaterialInteligente(it.nombre, it.nombreInventario).material;
       return {
         materialId: mat ? mat.id : '',
         materialNombre: mat ? mat.nombre : it.nombre,
         cantidad: Number(it.cantidad) || 1,
-        unidad: mat ? mat.unidad : (it.unidad || 'unidad')
+        unidad: mat ? mat.unidad : (it.unidad || 'unidad'),
+        reqDevolucion: !!(it.reqDevolucion || (mat && mat.esHerramienta)),
+        devuelto: false
       };
     }).filter((it) => it.materialId);
 
     if (items.length === 0) {
-      const precarga = {
-        frente: json.frente || '',
-        responsable: (json.responsables && json.responsables[0]) || '',
-        responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
-        nota: json.nota || '',
-        items: [{ materialId: '', cantidad: '' }]
-      };
-      modalOrden(tipo, precarga);
-      const msg = 'No pude resolver los materiales. Abri el formulario para que completes.';
+      modalEscanearListaIA({
+        tipoOrden: tipo,
+        respuestaInicial: json
+      });
+      const msg = 'Algunos materiales no coincidieron exacto con el inventario. Te abrí el verificador IA para asignarlos.';
       agregarAlHistorial('agente', msg);
       actualizarPanel();
-      await hablarAgente(msg);
       return;
     }
 
@@ -6068,11 +7006,18 @@ async function ejecutarOrden(json) {
       for (const it of items) {
         const mat = estado.materiales.find((m) => m.id === it.materialId);
         if (mat && it.cantidad > (Number(mat.cantidad) || 0)) {
-          const msg = `Stock insuficiente de "${mat.nombre}". Disponible: ${fmtNum(mat.cantidad)} ${mat.unidad}.`;
+          const msg = `Stock insuficiente de "${mat.nombre}". Disponible: ${fmtNum(mat.cantidad)} ${mat.unidad}. Te abro la orden para ajustar.`;
           agregarAlHistorial('agente', msg);
           actualizarPanel();
           toast(msg, 'error');
-          await hablarAgente(msg);
+          modalOrden(tipo, {
+            aviso: `⚠️ Ajusta las cantidades con stock insuficiente antes de generar.`,
+            frente: json.frente || '',
+            responsable: (json.responsables && json.responsables[0]) || '',
+            responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
+            nota: json.nota || '',
+            items
+          });
           return;
         }
       }
@@ -6109,123 +7054,60 @@ async function ejecutarOrden(json) {
     toast(msg, 'ok');
     agregarAlHistorial('agente', msg);
     actualizarPanel();
-    await hablarAgente(msg);
   } catch (e) {
     const msg = 'Error al ejecutar: ' + e.message;
     toast(msg, 'error');
     agregarAlHistorial('agente', msg);
     actualizarPanel();
-    await hablarAgente(msg);
   }
 }
 
-// --- Enviar imagen a Gemini ---
-const MAX_IMAGE_SIZE_BYTES = 4 * 1024 * 1024; // 4 MB limit
-
-async function enviarImagenAGemini(base64Data, mimeType) {
-  if (asistente.procesando) return;
-
-  // Check approximate original file size (base64 inflates by ~33%)
-  const approxBytes = Math.ceil(base64Data.length * 3 / 4);
-  if (approxBytes > MAX_IMAGE_SIZE_BYTES) {
-    const msg = 'La imagen es demasiado grande (max 4 MB). Intenta con una imagen mas pequena o de menor resolucion.';
-    agregarAlHistorial('agente', msg);
-    actualizarPanel();
-    await hablarAgente(msg);
-    return;
-  }
-
-  asistente.procesando = true;
-  const texto = 'Analiza esta imagen';
-  agregarAlHistorial('usuario', '[Imagen enviada] ' + texto);
-  actualizarPanel();
-  actualizarEstado();
-
-  try {
-    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
-    const inv = estado.materiales.slice(0, 200).map((m) => ({
-      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
-      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
-    }));
-    const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
-
-    const resp = await fetch(CLOUD_FUNCTION_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, imagen: base64Data, mimeType: mimeType || 'image/jpeg', inventario: inv, contratos: obtenerContratos(), vistaActual, historial: histCtx })
-    });
-
-    if (!resp.ok) {
-      const msg = 'Para usar la camara necesitas actualizar la Cloud Function. Ejecuta en CMD: firebase deploy --only functions --project almacen-rio-jmc';
-      agregarAlHistorial('agente', msg);
-      actualizarPanel();
-      await hablarAgente('Necesitas actualizar la Cloud Function para usar la camara.');
-      return;
-    }
-    const json = await resp.json();
-    if (json.error) {
-      const msg = 'Error del servidor: ' + json.error;
-      agregarAlHistorial('agente', msg);
-      actualizarPanel();
-      await hablarAgente(msg);
-      return;
-    }
-    await ejecutarRespuesta(json);
-  } catch (err) {
-    const msg = 'Error de comunicacion. Intenta de nuevo.';
-    agregarAlHistorial('agente', msg);
-    actualizarPanel();
-    await hablarAgente(msg);
-  } finally {
-    asistente.procesando = false;
-    actualizarEstado();
-  }
+// Enviar archivo/foto desde el botón de cámara del asistente o al pegar en el chat
+async function procesarImagenEnAsistente(fileOrDataUrl) {
+  const vAct = ventanas.activa;
+  modalEscanearListaIA({
+    enOrdenActiva: !!(vAct && vAct.aplicarDatosIA),
+    tipoOrden: (vAct && vAct.ordenTipo) || 'salida',
+    alConfirmarEnOrden: (vAct && vAct.aplicarDatosIA) || null,
+    archivoInicial: fileOrDataUrl
+  });
 }
 
-// --- Inicializacion ---
 function initAsistente() {
-  // --- Inject spectacular CSS ---
   const style = document.createElement('style');
   style.textContent = `
-    /* === AI Widget Container === */
     .ai-widget { position:fixed; bottom:24px; right:24px; z-index:9999; user-select:none; }
-
-    /* === FAB Group === */
     .ai-fab-group { display:flex; flex-direction:column-reverse; align-items:center; gap:10px; }
-    .ai-fab-main { width:60px; height:60px; border-radius:50%; border:2px solid rgba(0,200,255,0.3); background:rgba(4,18,43,0.9); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); color:#00c8ff; font-size:26px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 20px rgba(0,200,255,0.3), inset 0 0 20px rgba(0,200,255,0.05); transition:all 0.3s ease; position:relative; }
+    .ai-fab-main { width:60px; height:60px; border-radius:50%; border:2px solid rgba(0,200,255,0.35); background:rgba(4,18,43,0.92); backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px); color:#00c8ff; font-size:26px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 4px 20px rgba(0,200,255,0.3), inset 0 0 20px rgba(0,200,255,0.05); transition:all 0.25s ease; position:relative; }
     .ai-fab-main:hover { transform:scale(1.08); box-shadow:0 6px 30px rgba(0,200,255,0.5), inset 0 0 30px rgba(0,200,255,0.08); }
     .ai-fab-main.activo { animation:ai-breathe 2s ease-in-out infinite; }
-    .ai-fab-mic, .ai-fab-cam { width:46px; height:46px; border-radius:50%; border:1.5px solid rgba(0,200,255,0.2); background:rgba(4,18,43,0.85); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); color:#e8edf5; font-size:20px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,0.4); transition:all 0.3s ease; opacity:0; transform:scale(0.5) translateY(10px); pointer-events:none; }
+    .ai-fab-mic, .ai-fab-cam { width:46px; height:46px; border-radius:50%; border:1.5px solid rgba(0,200,255,0.25); background:rgba(4,18,43,0.88); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); color:#e8edf5; font-size:20px; display:flex; align-items:center; justify-content:center; cursor:pointer; box-shadow:0 3px 14px rgba(0,0,0,0.4); transition:all 0.25s ease; opacity:0; transform:scale(0.5) translateY(10px); pointer-events:none; }
     .ai-fab-group.expanded .ai-fab-mic, .ai-fab-group.expanded .ai-fab-cam { opacity:1; transform:scale(1) translateY(0); pointer-events:auto; }
-    .ai-fab-mic { transition-delay:0.05s; }
-    .ai-fab-cam { transition-delay:0.1s; }
-    .ai-fab-mic:hover, .ai-fab-cam:hover { transform:scale(1.1) translateY(0); border-color:rgba(0,200,255,0.5); }
+    .ai-fab-mic:hover, .ai-fab-cam:hover { transform:scale(1.1) translateY(0); border-color:rgba(0,200,255,0.6); }
     .ai-fab-mic.grabando { background:rgba(255,84,112,0.25); border-color:rgba(255,84,112,0.6); color:#ff5470; animation:ai-ripple-red 1.2s ease-in-out infinite; }
 
-    /* === AI Panel === */
-    .ai-panel { position:fixed; bottom:100px; right:24px; z-index:9998; width:380px; max-width:calc(100vw - 48px); background:rgba(4,18,43,0.85); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px); border:1px solid rgba(0,200,255,0.2); border-radius:18px; box-shadow:0 12px 50px rgba(0,0,0,0.6), 0 0 30px rgba(0,200,255,0.08); display:none; flex-direction:column; overflow:hidden; transition:all 0.3s ease; }
+    .ai-panel { position:fixed; bottom:100px; right:24px; z-index:9998; width:400px; max-width:calc(100vw - 32px); background:rgba(4,18,43,0.92); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); border:1px solid rgba(0,200,255,0.28); border-radius:18px; box-shadow:0 12px 50px rgba(0,0,0,0.65), 0 0 30px rgba(0,200,255,0.1); display:none; flex-direction:column; overflow:hidden; transition:all 0.25s ease; }
     .ai-panel.visible { display:flex; }
-    .ai-panel.minimized .ai-panel-body, .ai-panel.minimized .ai-panel-status { display:none; }
-    .ai-panel-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:linear-gradient(135deg, rgba(0,200,255,0.08), rgba(13,110,253,0.06)); border-bottom:1px solid rgba(0,200,255,0.12); cursor:move; }
+    .ai-panel.minimized .ai-panel-body, .ai-panel.minimized .ai-panel-chips, .ai-panel.minimized .ai-panel-status, .ai-panel.minimized .ai-panel-inputbar { display:none; }
+    .ai-panel-header { display:flex; align-items:center; justify-content:space-between; padding:11px 15px; background:linear-gradient(135deg, rgba(0,200,255,0.12), rgba(13,110,253,0.08)); border-bottom:1px solid rgba(0,200,255,0.14); cursor:move; }
     .ai-panel-title { font-size:13px; font-weight:700; color:#00c8ff; display:flex; align-items:center; gap:6px; }
     .ai-panel-btns { display:flex; gap:4px; }
     .ai-panel-btn { width:26px; height:26px; border-radius:8px; border:none; background:rgba(255,255,255,0.06); color:#7a8ba5; font-size:13px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s ease; }
-    .ai-panel-btn:hover { background:rgba(255,255,255,0.12); color:#e8edf5; }
-    .ai-panel-body { flex:1; max-height:260px; overflow-y:auto; padding:12px 14px; display:flex; flex-direction:column; gap:8px; scroll-behavior:smooth; }
-    .ai-panel-body::-webkit-scrollbar { width:4px; }
-    .ai-panel-body::-webkit-scrollbar-thumb { background:rgba(0,200,255,0.2); border-radius:4px; }
-    .ai-panel-status { padding:8px 14px; border-top:1px solid rgba(0,200,255,0.1); font-size:12px; color:#7a8ba5; min-height:32px; display:flex; align-items:center; }
-
-    /* === Send Buffer Button === */
-    .ai-btn-send { margin:8px 14px; padding:8px 16px; border:none; border-radius:20px; background:linear-gradient(135deg, #00c8ff, #0d6efd); color:#fff; font-size:13px; font-weight:600; cursor:pointer; transition:all 0.3s ease; box-shadow:0 3px 12px rgba(0,200,255,0.3); }
-    .ai-btn-send:hover { transform:scale(1.04); box-shadow:0 4px 16px rgba(0,200,255,0.5); }
-
-    /* === Chat Bubbles === */
-    .ai-bubble { max-width:85%; padding:8px 12px; border-radius:12px; font-size:12.5px; line-height:1.5; word-break:break-word; animation:ai-bubble-in 0.2s ease; }
-    .ai-bubble-user { align-self:flex-end; background:rgba(0,200,255,0.15); color:#c8efff; border-bottom-right-radius:4px; }
-    .ai-bubble-agent { align-self:flex-start; background:rgba(255,255,255,0.06); color:#e8edf5; border-bottom-left-radius:4px; }
-
-    /* === Status Indicators === */
+    .ai-panel-btn:hover { background:rgba(255,255,255,0.14); color:#e8edf5; }
+    .ai-panel-chips { display:flex; gap:6px; padding:8px 12px; border-bottom:1px solid rgba(255,255,255,0.06); overflow-x:auto; }
+    .ai-chip { border:1px solid rgba(0,200,255,0.3); background:rgba(0,200,255,0.08); color:#bae6fd; border-radius:999px; padding:4px 10px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all 0.15s ease; }
+    .ai-chip:hover { background:rgba(0,200,255,0.2); color:#fff; }
+    .ai-panel-body { flex:1; max-height:250px; overflow-y:auto; padding:12px 14px; display:flex; flex-direction:column; gap:8px; scroll-behavior:smooth; }
+    .ai-panel-status { padding:6px 14px; border-top:1px solid rgba(0,200,255,0.1); font-size:11.5px; color:#7a8ba5; min-height:28px; display:flex; align-items:center; }
+    .ai-panel-inputbar { display:flex; gap:6px; padding:8px 12px 10px; border-top:1px solid rgba(255,255,255,0.07); background:rgba(2,10,26,0.6); align-items:center; }
+    .ai-panel-inputbar input { flex:1; min-width:0; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); border-radius:10px; padding:7px 10px; color:#fff; font-size:12.5px; outline:none; }
+    .ai-panel-inputbar input:focus { border-color:#00c8ff; }
+    .ai-panel-iconbtn { width:34px; height:34px; border-radius:10px; border:1px solid rgba(0,200,255,0.3); background:rgba(0,200,255,0.1); color:#7dd3fc; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; flex:none; }
+    .ai-panel-iconbtn:hover { background:rgba(0,200,255,0.24); color:#fff; }
+    .ai-btn-send { margin:6px 14px 0; padding:7px 14px; border:none; border-radius:20px; background:linear-gradient(135deg, #00c8ff, #0d6efd); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer; }
+    .ai-bubble { max-width:86%; padding:8px 12px; border-radius:12px; font-size:12.5px; line-height:1.45; word-break:break-word; }
+    .ai-bubble-user { align-self:flex-end; background:rgba(0,200,255,0.16); color:#c8efff; border-bottom-right-radius:4px; }
+    .ai-bubble-agent { align-self:flex-start; background:rgba(255,255,255,0.07); color:#e8edf5; border-bottom-left-radius:4px; }
     .ai-status-thinking { display:flex; align-items:center; gap:4px; }
     .ai-dot { width:6px; height:6px; border-radius:50%; background:#00c8ff; animation:ai-dots 1.4s ease-in-out infinite; }
     .ai-dot:nth-child(2) { animation-delay:0.2s; }
@@ -6236,38 +7118,24 @@ function initAsistente() {
     .ai-bar:nth-child(3) { animation-delay:0.2s; }
     .ai-bar:nth-child(4) { animation-delay:0.3s; }
     .ai-bar:nth-child(5) { animation-delay:0.4s; }
-    .ai-status-text { color:#7a8ba5; }
-
-    /* === Keyframes === */
-    @keyframes ai-breathe { 0%,100%{ box-shadow:0 4px 20px rgba(0,200,255,0.3), inset 0 0 20px rgba(0,200,255,0.05); } 50%{ box-shadow:0 6px 35px rgba(0,200,255,0.55), inset 0 0 30px rgba(0,200,255,0.1); } }
+    @keyframes ai-breathe { 0%,100%{ box-shadow:0 4px 20px rgba(0,200,255,0.3); } 50%{ box-shadow:0 6px 35px rgba(0,200,255,0.55); } }
     @keyframes ai-ripple-red { 0%{ box-shadow:0 0 0 0 rgba(255,84,112,0.5); } 70%{ box-shadow:0 0 0 12px rgba(255,84,112,0); } 100%{ box-shadow:0 0 0 0 rgba(255,84,112,0); } }
     @keyframes ai-dots { 0%,80%,100%{ transform:scale(0.6); opacity:0.4; } 40%{ transform:scale(1); opacity:1; } }
     @keyframes ai-bars { 0%,100%{ height:4px; opacity:0.4; } 50%{ height:14px; opacity:1; } }
-    @keyframes ai-bubble-in { from{ opacity:0; transform:translateY(6px); } to{ opacity:1; transform:translateY(0); } }
-
-    /* === Drag states === */
-    .ai-widget.dragging, .ai-panel.dragging { opacity:0.9; }
-    .ai-widget.dragging * { cursor:grabbing !important; }
-
-    /* === Responsive === */
     @media (max-width:600px) {
       .ai-widget { bottom:16px; right:16px; }
-      .ai-fab-main { width:50px; height:50px; font-size:22px; }
-      .ai-fab-mic, .ai-fab-cam { width:40px; height:40px; font-size:17px; }
       .ai-panel { bottom:80px; right:12px; width:calc(100vw - 24px); max-width:calc(100vw - 24px); }
-      .ai-panel-body { max-height:200px; }
     }
   `;
   document.head.appendChild(style);
 
-  // --- Create widget DOM ---
   const widget = document.createElement('div');
   widget.className = 'ai-widget';
   widget.innerHTML = `
-    <div class="ai-fab-group">
-      <div class="ai-fab-main" title="Asistente IA FVIECOM">🧠</div>
-      <div class="ai-fab-mic" title="Microfono">🎤</div>
-      <div class="ai-fab-cam" title="Camara / Imagen">📷</div>
+    <div class="ai-fab-group expanded">
+      <div class="ai-fab-main" title="Abrir Asistente IA FVIECOM">🧠</div>
+      <div class="ai-fab-mic" title="Hablar por micrófono">🎤</div>
+      <div class="ai-fab-cam" title="Escanear lista escrita a mano / foto">📷</div>
     </div>`;
   document.body.appendChild(widget);
 
@@ -6275,78 +7143,110 @@ function initAsistente() {
   panel.className = 'ai-panel';
   panel.innerHTML = `
     <div class="ai-panel-header">
-      <div class="ai-panel-title">🤖 Agente FVIECOM</div>
+      <div class="ai-panel-title">🤖 Agente IA FVIECOM</div>
       <div class="ai-panel-btns">
         <button class="ai-panel-btn ai-btn-min" title="Minimizar">▬</button>
         <button class="ai-panel-btn ai-btn-close" title="Cerrar">✕</button>
       </div>
     </div>
+    <div class="ai-panel-chips">
+      <button type="button" class="ai-chip" data-ai-chip="scan">📷 Escanear lista a mano</button>
+      <button type="button" class="ai-chip" data-ai-chip="salida">📤 Nueva salida</button>
+      <button type="button" class="ai-chip" data-ai-chip="stock">🔎 Consultar stock</button>
+    </div>
     <div class="ai-panel-body"></div>
-    <div class="ai-panel-status"><span class="ai-status-text">Toca el mic para activar</span></div>
-    <button class="ai-btn-send" id="ai-btn-send" hidden>\u2708\uFE0F Enviar</button>`;
+    <button class="ai-btn-send" id="ai-btn-send" hidden>✈️ Enviar comando de voz</button>
+    <div class="ai-panel-status"><span class="ai-status-text">Escribe abajo, pega una foto (Ctrl+V) o usa 🎤</span></div>
+    <div class="ai-panel-inputbar">
+      <button type="button" class="ai-panel-iconbtn" id="ai-chat-cam" title="Escanear foto o lista escrita a mano">📷</button>
+      <input type="text" id="ai-chat-input" placeholder="Escribe un comando o pega foto (Ctrl+V)..." />
+      <button type="button" class="ai-panel-iconbtn" id="ai-chat-send" title="Enviar">➤</button>
+    </div>`;
   document.body.appendChild(panel);
+  actualizarPanel();
 
-  // --- Elements ---
   const fabMain = widget.querySelector('.ai-fab-main');
   const fabGroup = widget.querySelector('.ai-fab-group');
   const fabMic = widget.querySelector('.ai-fab-mic');
   const fabCam = widget.querySelector('.ai-fab-cam');
   const btnMin = panel.querySelector('.ai-btn-min');
   const btnClose = panel.querySelector('.ai-btn-close');
+  const chatInput = panel.querySelector('#ai-chat-input');
+  const chatSend = panel.querySelector('#ai-chat-send');
+  const chatCam = panel.querySelector('#ai-chat-cam');
 
-  // --- FAB expand/collapse ---
-  let fabExpanded = false;
-  let clickTimer = null;
+  // Un solo clic en el botón principal abre/cierra el panel de IA de inmediato
   fabMain.addEventListener('click', () => {
-    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; return; }
-    clickTimer = setTimeout(() => {
-      clickTimer = null;
-      fabExpanded = !fabExpanded;
-      fabGroup.classList.toggle('expanded', fabExpanded);
-    }, 250);
+    const visible = panel.classList.toggle('visible');
+    asistente.panelVisible = visible;
+    fabGroup.classList.add('expanded');
+    if (visible && chatInput) setTimeout(() => chatInput.focus(), 80);
   });
 
-  // --- Double click main FAB to show/hide panel ---
-  fabMain.addEventListener('dblclick', () => {
-    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-    if (panel.classList.contains('visible')) {
-      panel.classList.remove('visible');
-      asistente.panelVisible = false;
-    } else {
-      panel.classList.add('visible');
-      asistente.panelVisible = true;
-    }
-  });
-
-  // --- Panel minimize ---
-  btnMin.addEventListener('click', () => {
-    panel.classList.toggle('minimized');
-  });
-
-  // --- Panel close ---
+  btnMin.addEventListener('click', () => panel.classList.toggle('minimized'));
   btnClose.addEventListener('click', () => {
     panel.classList.remove('visible');
     asistente.panelVisible = false;
   });
 
-  // --- Send buffer button ---
+  // Chips de acción rápida
+  panel.querySelectorAll('[data-ai-chip]').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const tipo = chip.dataset.aiChip;
+      if (tipo === 'scan') {
+        procesarImagenEnAsistente(null);
+      } else if (tipo === 'salida') {
+        modalOrden('salida');
+      } else if (tipo === 'stock' && chatInput) {
+        chatInput.value = '¿Cuánto stock tenemos de ';
+        chatInput.focus();
+      }
+    });
+  });
+
+  // Envío por texto escrito en la barra del panel
+  const enviarTextoChat = () => {
+    const txt = (chatInput.value || '').trim();
+    if (!txt) return;
+    chatInput.value = '';
+    if (intentarNavLocal(txt)) return;
+    enviarAGemini(txt);
+  };
+  chatSend.addEventListener('click', enviarTextoChat);
+  chatInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      enviarTextoChat();
+    }
+  });
+  chatInput.addEventListener('paste', (e) => {
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const f = it.getAsFile();
+        if (f) procesarImagenEnAsistente(f);
+        return;
+      }
+    }
+  });
+
+  chatCam.addEventListener('click', () => procesarImagenEnAsistente(null));
+
   const btnSend = panel.querySelector('#ai-btn-send');
   btnSend.addEventListener('click', (e) => {
     e.stopPropagation();
     enviarBuffer();
   });
 
-  // --- Drag widget (FAB group) ---
+  // Hacer arrastrable el widget y el panel
   function makeDraggable(el, handleSelector) {
     let isDragging = false;
     let startX, startY, origX, origY;
     let moved = false;
-
     const handle = handleSelector ? el.querySelector(handleSelector) : el;
-
     const onStart = (e) => {
-      // Ignore if clicking buttons inside
-      if (e.target.closest('.ai-fab-mic') || e.target.closest('.ai-fab-cam') || e.target.closest('.ai-panel-btn')) return;
+      if (e.target.closest('.ai-fab-mic') || e.target.closest('.ai-fab-cam') || e.target.closest('.ai-panel-btn') || e.target.closest('input') || e.target.closest('button')) return;
       isDragging = true;
       moved = false;
       const touch = e.touches ? e.touches[0] : e;
@@ -6357,29 +7257,24 @@ function initAsistente() {
       origY = rect.top;
       el.classList.add('dragging');
     };
-
     const onMove = (e) => {
       if (!isDragging) return;
       const touch = e.touches ? e.touches[0] : e;
       const dx = touch.clientX - startX;
       const dy = touch.clientY - startY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) moved = true;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
       if (!moved) return;
       e.preventDefault();
-      const newX = origX + dx;
-      const newY = origY + dy;
       el.style.position = 'fixed';
-      el.style.left = newX + 'px';
-      el.style.top = newY + 'px';
+      el.style.left = (origX + dx) + 'px';
+      el.style.top = (origY + dy) + 'px';
       el.style.right = 'auto';
       el.style.bottom = 'auto';
     };
-
     const onEnd = () => {
       isDragging = false;
       el.classList.remove('dragging');
     };
-
     handle.addEventListener('mousedown', onStart);
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onEnd);
@@ -6391,7 +7286,13 @@ function initAsistente() {
   makeDraggable(widget, null);
   makeDraggable(panel, '.ai-panel-header');
 
-  // --- Speech Recognition setup ---
+  // Botón de cámara flotante: abre el escáner inteligente de listas manuscritas
+  fabCam.addEventListener('click', (e) => {
+    e.stopPropagation();
+    procesarImagenEnAsistente(null);
+  });
+
+  // Reconocimiento de voz con auto-envío fluido al pausar
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
     fabMic.style.opacity = '0.4';
@@ -6409,28 +7310,25 @@ function initAsistente() {
     let interim = '';
     let finalText = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        finalText += event.results[i][0].transcript;
-      } else {
-        interim += event.results[i][0].transcript;
-      }
+      if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
+      else interim += event.results[i][0].transcript;
     }
-    // Mostrar texto interim + buffer acumulado en el estado
-    if (interim) actualizarEstado('\uD83C\uDFA4 ' + (asistente.buffer ? asistente.buffer + ' ' : '') + interim);
+    if (interim) {
+      if (_autoSendVoiceTimer) { clearTimeout(_autoSendVoiceTimer); _autoSendVoiceTimer = null; }
+      actualizarEstado('🎤 ' + (asistente.buffer ? asistente.buffer + ' ' : '') + interim);
+    }
     if (!finalText) return;
     const texto = finalText.trim();
     if (!texto) return;
 
-    // Deduplicacion: ignorar si es el mismo texto en menos de 2s
     const ahora = Date.now();
     if (texto === asistente.lastText && (ahora - asistente.lastTextTime) < 2000) return;
     asistente.lastText = texto;
     asistente.lastTextTime = ahora;
 
-    // Stop words
     const t = normTxt(texto);
     if (['detente', 'silencio', 'deja de escuchar', 'apaga el asistente'].includes(t)) {
-      try { recognition.stop(); } catch (e) { /* ok */ }
+      try { recognition.stop(); } catch (_e) {}
       asistente.escuchando = false;
       asistente.grabando = false;
       asistente.buffer = '';
@@ -6438,36 +7336,38 @@ function initAsistente() {
       fabMic.classList.remove('grabando');
       fabMain.classList.remove('activo');
       agregarAlHistorial('usuario', texto);
-      agregarAlHistorial('agente', 'Entendido, me detengo.');
+      agregarAlHistorial('agente', 'Entendido, micrófono desactivado.');
       actualizarPanel();
       actualizarEstado();
-      hablarAgente('Entendido, me detengo.');
       return;
     }
 
-    // Navegacion local instantanea (sin buffer, se ejecuta ya)
     if (intentarNavLocal(texto)) return;
 
-    // Detectar palabras de envio: "listo", "enviar", "eso es todo"
-    const tNorm = normTxt(texto);
     const envioTriggers = ['listo', 'enviar', 'eso es todo'];
-    const esTriggerEnvio = envioTriggers.some((tr) => tNorm === tr || tNorm.endsWith(' ' + tr) || tNorm.startsWith(tr + ' '));
+    const esTriggerEnvio = envioTriggers.some((tr) => t === tr || t.endsWith(' ' + tr) || t.startsWith(tr + ' '));
     if (esTriggerEnvio) {
-      // Quitar la palabra trigger del texto antes de agregar al buffer
       let textoLimpio = texto;
       for (const tr of envioTriggers) {
-        const regex = new RegExp('\\b' + tr + '\\b', 'gi');
-        textoLimpio = textoLimpio.replace(regex, '').trim();
+        textoLimpio = textoLimpio.replace(new RegExp('\\b' + tr + '\\b', 'gi'), '').trim();
       }
       if (textoLimpio) asistente.buffer += (asistente.buffer ? ' ' : '') + textoLimpio;
       enviarBuffer();
       return;
     }
 
-    // Acumular en buffer
     asistente.buffer += (asistente.buffer ? ' ' : '') + texto;
     mostrarBtnEnviar(true);
-    actualizarEstado('\uD83C\uDFA4 ' + asistente.buffer);
+    actualizarEstado('🎤 ' + asistente.buffer);
+
+    // Envío automático tras 2.4 segundos de pausa para que la conversación sea fluida
+    if (_autoSendVoiceTimer) clearTimeout(_autoSendVoiceTimer);
+    _autoSendVoiceTimer = setTimeout(() => {
+      _autoSendVoiceTimer = null;
+      if (asistente.buffer.trim() && !asistente.procesando) {
+        enviarBuffer();
+      }
+    }, 2400);
   };
 
   recognition.onend = () => {
@@ -6479,7 +7379,7 @@ function initAsistente() {
   recognition.onerror = (e) => {
     asistente.grabando = false;
     if (e.error === 'not-allowed') {
-      actualizarEstado('Permiso de microfono denegado.');
+      actualizarEstado('Permiso de micrófono denegado.');
       asistente.escuchando = false;
       fabMic.classList.remove('grabando');
       fabMain.classList.remove('activo');
@@ -6488,7 +7388,6 @@ function initAsistente() {
     }
   };
 
-  // --- Mic button: toggle voice ---
   fabMic.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!panel.classList.contains('visible')) {
@@ -6496,17 +7395,12 @@ function initAsistente() {
       asistente.panelVisible = true;
     }
     if (asistente.escuchando) {
-      // Si hay buffer acumulado, enviarlo antes de parar
-      if (asistente.buffer.trim()) {
-        enviarBuffer();
-      }
+      if (asistente.buffer.trim()) enviarBuffer();
       asistente.escuchando = false;
       asistente.grabando = false;
-      asistente.hablando = false;
       fabMic.classList.remove('grabando');
       fabMain.classList.remove('activo');
-      try { recognition.stop(); } catch (e2) { /* ok */ }
-      window.speechSynthesis.cancel();
+      try { recognition.stop(); } catch (_e2) {}
       actualizarEstado();
     } else {
       asistente.escuchando = true;
@@ -6516,46 +7410,10 @@ function initAsistente() {
       fabMic.classList.add('grabando');
       fabMain.classList.add('activo');
       actualizarEstado();
-      try { recognition.start(); } catch (e2) { /* ok */ }
+      try { recognition.start(); } catch (_e2) {}
     }
   });
-
-  // --- Camera button: image capture ---
-  fabCam.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!panel.classList.contains('visible')) {
-      panel.classList.add('visible');
-      asistente.panelVisible = true;
-    }
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.capture = 'camera';
-    input.style.display = 'none';
-    document.body.appendChild(input);
-    input.addEventListener('change', () => {
-      const file = input.files[0];
-      if (!file) { input.remove(); return; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const match = reader.result.match(/^data:([^;]+);base64,/);
-        const mimeType = match ? match[1] : 'image/jpeg';
-        const base64 = reader.result.replace(/^data:[^;]+;base64,/, '');
-        enviarImagenAGemini(base64, mimeType);
-        input.remove();
-      };
-      reader.onerror = () => { input.remove(); };
-      reader.readAsDataURL(file);
-    });
-    input.addEventListener('cancel', () => { input.remove(); });
-    input.click();
-  });
-
-  // --- Speech synthesis init ---
-  if (window.speechSynthesis) {
-    window.speechSynthesis.getVoices();
-    window.speechSynthesis.onvoiceschanged = () => { window.speechSynthesis.getVoices(); };
-  }
 }
 
 initAsistente();
+
