@@ -3817,9 +3817,10 @@ function opcionesMaterialAgrupadas(sel, filtro, sinPlaceholder) {
   return html;
 }
 
-function modalOrden(tipo, precarga) {
+function modalOrden(tipoInicial, precarga) {
   if (estado.materiales.length === 0) { toast('Primero agrega materiales al inventario', 'error'); return; }
-  const t = TIPOS[tipo] || TIPOS.salida;
+  let tipo = TIPOS[tipoInicial] ? tipoInicial : 'salida';
+  let t = TIPOS[tipo] || TIPOS.salida;
   const esProveedor = t.campo === 'proveedor';
   const iconoOrden = tipo === 'entrada' ? '📥' : tipo === 'devolucion' ? '🔄' : '📤';
 
@@ -3856,13 +3857,25 @@ function modalOrden(tipo, precarga) {
 
   const numAbiertasMismoTipo = ventanas.lista.filter((w) => w.multitarea && w.ordenTipo === tipo).length + 1;
   const sufijoNum = numAbiertasMismoTipo > 1 ? ` #${numAbiertasMismoTipo}` : '';
-  const tituloBase = `Orden ${t.label}${sufijoNum}`;
+  let tituloBase = `Orden ${t.label}${sufijoNum}`;
+  const tieneEscanerPrevio = !!(estado.ultimoEscaneoIA && Array.isArray(estado.ultimoEscaneoIA.renglonesIA) && estado.ultimoEscaneoIA.renglonesIA.length > 0);
 
   abrirModal(tituloBase, `
     ${borrador ? `<div class="orden-aviso">📝 Recuperamos una orden sin terminar. <button type="button" id="o-nuevo" class="link-btn">Empezar de nuevo</button></div>` : ''}
-    ${precarga ? `<div class="orden-aviso">${esc(precarga.aviso || '🔁 Orden copiada. Ajusta lo que necesites y genera una nueva.')}</div>` : ''}
+    ${precarga ? `<div class="orden-aviso" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <span>${esc(precarga.aviso || '🔁 Orden copiada. Ajusta lo que necesites y genera una nueva.')}</span>
+      ${(precarga.desdeEscanerIA || tieneEscanerPrevio) ? `<button type="button" class="btn-ghost" id="o-regresar-ia-top" style="padding:4px 10px;font-size:12px;border-color:rgba(0,200,255,0.45);color:#7dd3fc">⬅️ Regresar al Lector IA (con lista precargada)</button>` : ''}
+    </div>` : ''}
     <div class="form-grid">
-      ${esProveedor ? `<div class="campo"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>` : ''}
+      <div class="campo">
+        <label style="font-weight:700;color:#7dd3fc">Tipo de Orden</label>
+        <select id="o-tipo-orden" style="font-weight:700;border-color:rgba(0,200,255,0.4)">
+          <option value="salida" ${tipo === 'salida' ? 'selected' : ''}>📤 Salida de almacén</option>
+          <option value="entrada" ${tipo === 'entrada' ? 'selected' : ''}>📥 Entrada / Pedido</option>
+          <option value="devolucion" ${tipo === 'devolucion' ? 'selected' : ''}>🔄 Devolución</option>
+        </select>
+      </div>
+      <div class="campo" id="o-proveedor-wrap" style="${esProveedor ? '' : 'display:none'}"><label>Proveedor</label><input id="o-proveedor" placeholder="Nombre del proveedor" /></div>
       <div class="campo"><label>Frente de obra (opcional)</label>${frenteSelectHtml('o-frente', base ? (base.frente || '') : '')}</div>
       <div class="campo full"><label style="font-weight:600">Responsable(s)</label>
         <div id="o-responsables-list"></div>
@@ -3886,6 +3899,7 @@ function modalOrden(tipo, precarga) {
     <div class="orden-total" id="o-total"></div>
     <div class="modal-acciones" style="flex-wrap:wrap">
       <button type="button" class="btn-ghost" id="o-otra-paralela" title="Estacionar esta orden en la barra inferior y abrir otra orden nueva simultáneamente" style="margin-right:auto;color:#00c8ff;border-color:rgba(0,200,255,0.3)">🗂 ＋ Otra orden paralela</button>
+      ${(precarga && precarga.desdeEscanerIA) || tieneEscanerPrevio ? `<button type="button" class="btn-ghost" id="o-regresar-ia" title="Volver al Lector IA con la misma lista precargada sin volver a leer" style="border-color:rgba(0,200,255,0.45);color:#7dd3fc">⬅️ Regresar al Lector IA</button>` : ''}
       <button class="btn-ghost" id="o-minimizar" title="Minimizar en la barra inferior">▬ Minimizar</button>
       <button class="btn-ghost" id="o-cancelar">Cancelar</button>
       <button class="btn-primary" id="o-guardar">Generar e imprimir</button>
@@ -4039,6 +4053,31 @@ function modalOrden(tipo, precarga) {
   };
   render();
 
+  const cambiarTipoOrdenInterno = (nuevoTipo) => {
+    if (!TIPOS[nuevoTipo] || nuevoTipo === tipo) return;
+    tipo = nuevoTipo;
+    t = TIPOS[tipo] || TIPOS.salida;
+    tituloBase = `Orden ${t.label}${sufijoNum}`;
+    const provWrap = $('#o-proveedor-wrap');
+    if (provWrap) provWrap.style.display = (t.campo === 'proveedor') ? '' : 'none';
+    if (vActual) {
+      vActual.ordenTipo = tipo;
+      vActual.icono = tipo === 'entrada' ? '📥' : tipo === 'devolucion' ? '🔄' : '📤';
+    }
+    if ($('#o-tipo-orden') && $('#o-tipo-orden').value !== tipo) {
+      $('#o-tipo-orden').value = tipo;
+    }
+    render();
+    persistir();
+  };
+
+  if ($('#o-tipo-orden')) {
+    $('#o-tipo-orden').addEventListener('change', (ev) => {
+      cambiarTipoOrdenInterno(ev.target.value);
+      toast(`Tipo de orden cambiado a: ${(TIPOS[tipo] || {}).label || tipo}`, 'ok');
+    });
+  }
+
   // Guardar el borrador cuando cambian los campos de cabecera.
   ['o-frente', 'o-proveedor', 'o-nota'].forEach((cid) => {
     const el = $('#' + cid);
@@ -4069,6 +4108,9 @@ function modalOrden(tipo, precarga) {
   const aplicarDatosIAEnOrden = (datosIA) => {
     if (vActual && ventanas.activa !== vActual) {
       restaurarVentana(vActual);
+    }
+    if (datosIA.tipo && TIPOS[datosIA.tipo] && datosIA.tipo !== tipo) {
+      cambiarTipoOrdenInterno(datosIA.tipo);
     }
     const nuevos = (datosIA.items || [])
       .filter((it) => it.materialId)
@@ -4126,6 +4168,84 @@ function modalOrden(tipo, precarga) {
     vActual.aplicarDatosIA = aplicarDatosIAEnOrden;
   }
 
+  const regresarAlLectorIA = () => {
+    const frenteActual = (($('#o-frente') || {}).value || '').trim();
+    const provActual = (($('#o-proveedor') || {}).value || '').trim();
+    const notaActual = (($('#o-nota') || {}).value || '').trim();
+    const respActual = responsablesOrden.map((r) => (r.nombre || '').trim()).filter(Boolean).join(', ');
+    const itemsActuales = (estado.itemsOrden || []).filter((it) => it.materialId);
+
+    let estadoPrev = estado.ultimoEscaneoIA ? { ...estado.ultimoEscaneoIA } : null;
+    if (!estadoPrev) {
+      estadoPrev = {
+        tipoSeleccionado: tipo,
+        metaIA: { frente: frenteActual, proveedor: provActual, responsable: respActual, nota: notaActual, mensajeIA: '' },
+        renglonesIA: itemsActuales.map((it, idx) => {
+          const m = estado.materiales.find((x) => x.id === it.materialId);
+          return {
+            _id: Date.now() + idx + Math.random(),
+            codigo: m ? (m.codigo || '') : '',
+            textoOriginal: m ? m.nombre : 'Renglón de orden',
+            nombreDetectado: m ? m.nombre : '',
+            categoria: m ? (m.categoria || 'Sin clasificar') : 'Sin clasificar',
+            clase: m ? (m.clase || '') : '',
+            materialId: it.materialId,
+            cantidad: Number(it.cantidad) > 0 ? Number(it.cantidad) : 1,
+            unidad: m ? (m.unidad || 'unidad') : 'unidad',
+            esHerramienta: !!(m && m.esHerramienta),
+            reqDevolucion: !!it.reqDevolucion,
+            confianza: 'alta',
+            _filtro: '',
+            _editado: false
+          };
+        })
+      };
+    } else {
+      estadoPrev.tipoSeleccionado = tipo;
+      estadoPrev.metaIA = {
+        ...(estadoPrev.metaIA || {}),
+        frente: frenteActual || (estadoPrev.metaIA && estadoPrev.metaIA.frente) || '',
+        proveedor: provActual || (estadoPrev.metaIA && estadoPrev.metaIA.proveedor) || '',
+        responsable: respActual || (estadoPrev.metaIA && estadoPrev.metaIA.responsable) || '',
+        nota: notaActual || (estadoPrev.metaIA && estadoPrev.metaIA.nota) || ''
+      };
+      if (itemsActuales.length > 0) {
+        const prevRenglones = Array.isArray(estadoPrev.renglonesIA) ? estadoPrev.renglonesIA : [];
+        estadoPrev.renglonesIA = itemsActuales.map((it, idx) => {
+          const m = estado.materiales.find((x) => x.id === it.materialId);
+          const existente = prevRenglones.find((r) => r.materialId === it.materialId) || prevRenglones[idx] || null;
+          return {
+            _id: (existente && existente._id) || (Date.now() + idx + Math.random()),
+            codigo: m ? (m.codigo || '') : ((existente && existente.codigo) || ''),
+            textoOriginal: (existente && existente.textoOriginal) || (m ? m.nombre : 'Renglón de orden'),
+            nombreDetectado: m ? m.nombre : ((existente && existente.nombreDetectado) || ''),
+            categoria: m ? (m.categoria || 'Sin clasificar') : ((existente && existente.categoria) || 'Sin clasificar'),
+            clase: m ? (m.clase || '') : ((existente && existente.clase) || ''),
+            materialId: it.materialId,
+            cantidad: Number(it.cantidad) > 0 ? Number(it.cantidad) : 1,
+            unidad: m ? (m.unidad || 'unidad') : ((existente && existente.unidad) || 'unidad'),
+            esHerramienta: !!(m && m.esHerramienta),
+            reqDevolucion: !!it.reqDevolucion,
+            confianza: (existente && existente.confianza) || 'alta',
+            _filtro: '',
+            _editado: false
+          };
+        });
+      }
+    }
+    estado.ultimoEscaneoIA = estadoPrev;
+    limpiarBorradorClave(clavePropia);
+    cerrarVentana(vActual);
+    modalEscanearListaIA({
+      tipoOrden: tipo,
+      estadoPrecargado: estadoPrev,
+      ordenGeneradaPrevia: (precarga && precarga.ordenGeneradaPrevia) || null
+    });
+  };
+
+  if ($('#o-regresar-ia')) $('#o-regresar-ia').addEventListener('click', regresarAlLectorIA);
+  if ($('#o-regresar-ia-top')) $('#o-regresar-ia-top').addEventListener('click', regresarAlLectorIA);
+
   $('#o-add').addEventListener('click', () => { estado.itemsOrden.push({ _id: Date.now() + Math.random(), materialId: '', cantidad: '', reqDevolucion: false, _filtro: '' }); render(); persistir(); });
   if ($('#o-scan-ia')) {
     $('#o-scan-ia').addEventListener('click', () => {
@@ -4178,7 +4298,14 @@ function modalOrden(tipo, precarga) {
     if (tipo === 'salida') {
       for (const it of items) {
         const m = estado.materiales.find((x) => x.id === it.materialId);
-        if (m && it.cantidad > (Number(m.cantidad) || 0)) { toast(`Stock insuficiente de "${m.nombre}" (disp: ${fmtNum(m.cantidad)})`, 'error'); return; }
+        // Si venimos de editar una orden de salida previa, considerar el stock ya descontado por esa orden
+        let cantPreviaEnOrden = 0;
+        if (precarga && precarga.ordenGeneradaPrevia && precarga.ordenGeneradaPrevia.tipo === 'salida') {
+          const itemPrev = (precarga.ordenGeneradaPrevia.items || []).find((x) => x.materialId === it.materialId);
+          if (itemPrev) cantPreviaEnOrden = Number(itemPrev.cantidad) || 0;
+        }
+        const stockDisponibleReal = (Number(m ? m.cantidad : 0) || 0) + cantPreviaEnOrden;
+        if (m && it.cantidad > stockDisponibleReal) { toast(`Stock insuficiente de "${m.nombre}" (disp: ${fmtNum(stockDisponibleReal)})`, 'error'); return; }
       }
     }
     const raizDom = (vActual && vActual.nodo) ? vActual.nodo : document;
@@ -4197,6 +4324,16 @@ function modalOrden(tipo, precarga) {
     const responsablesArr = respFinales.map((r) => ({ nombre: r.nombre.trim(), whatsapp: r.whatsapp.trim() }));
     const btn = qDom('#o-guardar'); if (btn) { btn.disabled = true; btn.textContent = 'Generando...'; }
     try {
+      // Si el usuario regresó desde "Documento generado" y vuelve a pulsar "Generar e imprimir",
+      // revertimos primero la orden anterior para no duplicar órdenes ni movimientos de inventario.
+      if (precarga && precarga.ordenGeneradaPrevia && precarga.ordenGeneradaPrevia.id) {
+        const ordPrev = estado.ordenes.find((x) => x.id === precarga.ordenGeneradaPrevia.id) || precarga.ordenGeneradaPrevia;
+        const ligadosPrev = estado.movimientos.filter((m) => m.ordenId === ordPrev.id);
+        const idsExistentes = estado.materiales.map((m) => m.id);
+        try {
+          await eliminarOrden(ordPrev, ligadosPrev, idsExistentes);
+        } catch (_errPrev) { /* ignore if already removed */ }
+      }
       const orden = await registrarOrden({
         tipo,
         frente: frenteVal,
@@ -4221,7 +4358,29 @@ function modalOrden(tipo, precarga) {
       guardarDirectorioResp(responsablesOrden);
       cerrarVentana(vActual);
       toast(tipo === 'entrada' ? ('Pedido generado (pendiente de recibir): ' + orden.numero) : ('Orden generada: ' + orden.numero), 'ok');
-      imprimir(docOrden(orden, orden.usuario || nombreUsuario()), (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero);
+      const datosParaRegresar = {
+        tipo,
+        precarga: {
+          aviso: `✏️ Editando la orden ${orden.numero}. Ajusta lo que necesites y vuelve a pulsar "Generar e imprimir" para actualizarla.`,
+          frente: frenteVal,
+          proveedor: proveedorVal,
+          responsable: responsablePrincipal,
+          responsables: responsablesArr,
+          nota: notaVal,
+          items: items.map((it) => ({
+            materialId: it.materialId,
+            cantidad: it.cantidad,
+            reqDevolucion: !!it.reqDevolucion
+          })),
+          desdeEscanerIA: !!(precarga && precarga.desdeEscanerIA),
+          ordenGeneradaPrevia: orden
+        }
+      };
+      imprimir(
+        docOrden(orden, orden.usuario || nombreUsuario()),
+        (tipo === 'entrada' ? 'Pedido_' : 'Orden_') + orden.numero,
+        { regresarAOrden: datosParaRegresar, orden }
+      );
     } catch (e) { toast('Error: ' + e.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Generar e imprimir'; } }
   });
 }
@@ -5094,11 +5253,42 @@ function imprimirConsumo() {
 let docNombreActual = 'Documento_FVIECOM';
 
 // Muestra el documento y ofrece: Imprimir, Guardar como PDF, Compartir por Gmail, WhatsApp (en foto tipo factura).
-function imprimir(html, nombre) {
+function imprimir(html, nombre, opciones = {}) {
   const area = $('#print-area');
   if (!area) return;
   area.innerHTML = html;
   docNombreActual = String(nombre || 'Documento_FVIECOM').replace(/[^\w\-]+/g, '_');
+
+  let datosRegreso = opciones.regresarAOrden || null;
+  if (!datosRegreso) {
+    const numMatch = docNombreActual.match(/(?:Orden|Pedido)_(.+)$/i);
+    if (numMatch) {
+      const ordEncontrada = (estado.ordenes || []).find((o) => String(o.numero || '').replace(/[^\w\-]+/g, '_') === numMatch[1]);
+      if (ordEncontrada) {
+        datosRegreso = {
+          tipo: ordEncontrada.tipo || 'salida',
+          precarga: {
+            aviso: `✏️ Editando la orden ${ordEncontrada.numero}. Ajusta lo que necesites y pulsa "Generar e imprimir" para actualizarla.`,
+            frente: ordEncontrada.frente || '',
+            proveedor: ordEncontrada.proveedor || '',
+            responsable: ordEncontrada.responsable || '',
+            responsables: Array.isArray(ordEncontrada.responsables) && ordEncontrada.responsables.length
+              ? ordEncontrada.responsables
+              : (ordEncontrada.responsable ? [{ nombre: ordEncontrada.responsable, whatsapp: buscarWhatsappResp(ordEncontrada.responsable) }] : []),
+            nota: ordEncontrada.nota || '',
+            items: (ordEncontrada.items || []).map((it) => ({
+              materialId: it.materialId,
+              cantidad: it.cantidad,
+              reqDevolucion: !!it.reqDevolucion
+            })),
+            desdeEscanerIA: !!(estado.ultimoEscaneoIA && Array.isArray(estado.ultimoEscaneoIA.renglonesIA) && estado.ultimoEscaneoIA.renglonesIA.length > 0),
+            ordenGeneradaPrevia: ordEncontrada
+          }
+        };
+      }
+    }
+  }
+
   abrirModal('Documento generado', `
     <p style="color:var(--texto-dim);margin-bottom:16px;line-height:1.5">El documento está listo. Elige qué deseas hacer:</p>
     <div style="display:flex;flex-direction:column;gap:10px">
@@ -5112,12 +5302,21 @@ function imprimir(html, nombre) {
       💡 <b>Guardar como PDF</b>: se abre la ventana de impresión; en <b>Destino</b> elige <b>"Guardar como PDF"</b>.<br>
       💡 <b>Compartir</b>: se abre Gmail con el destinatario ya puesto (${esc(CORREO_COMPARTIR)}); adjunta el PDF y lo envías tú.
     </p>
-    <div class="modal-acciones"><button class="btn-ghost" id="doc-cerrar">Cerrar</button></div>
+    <div class="modal-acciones" style="flex-wrap:wrap;gap:8px">
+      ${datosRegreso ? `<button class="btn-ghost" id="doc-regresar-orden">⬅️ Regresar al formulario de orden</button>` : ''}
+      <button class="btn-ghost" id="doc-cerrar">Cerrar</button>
+    </div>
   `);
   $('#doc-imprimir').addEventListener('click', () => window.print());
   $('#doc-guardar').addEventListener('click', () => { toast('En "Destino" elige "Guardar como PDF"', 'ok'); setTimeout(() => window.print(), 500); });
   $('#doc-compartir').addEventListener('click', compartirPorGmail);
   $('#doc-whatsapp').addEventListener('click', () => compartirPorWhatsApp());
+  if ($('#doc-regresar-orden') && datosRegreso) {
+    $('#doc-regresar-orden').addEventListener('click', () => {
+      cerrarModal({ sinRestaurar: true });
+      modalOrden(datosRegreso.tipo, datosRegreso.precarga);
+    });
+  }
   $('#doc-cerrar').addEventListener('click', cerrarModal);
 }
 
@@ -7320,27 +7519,35 @@ function modalEscanearListaIA(opciones = {}) {
   iniciarVentanaTrabajo('📷');
   const enOrdenActiva = !!opciones.enOrdenActiva;
   const alConfirmarEnOrden = opciones.alConfirmarEnOrden || null;
-  let tipoSeleccionado = opciones.tipoOrden || 'salida';
-  let fuenteImagenActual = opciones.archivoInicial || opciones.dataUrlInicial || null;
-  let realzarContraste = false;
-  let rotacionActual = 0;
-  let imagenProcesada = null;
+  const estadoPrecargado = opciones.estadoPrecargado || (opciones.usarUltimoEscaneo ? estado.ultimoEscaneoIA : null) || null;
+  let tipoSeleccionado = (estadoPrecargado && estadoPrecargado.tipoSeleccionado) || opciones.tipoOrden || 'salida';
+  let tipoElegidoManualmente = !!(estadoPrecargado && estadoPrecargado.tipoSeleccionado);
+  let fuenteImagenActual = (estadoPrecargado && estadoPrecargado.fuenteImagenActual) || opciones.archivoInicial || opciones.dataUrlInicial || null;
+  let realzarContraste = !!(estadoPrecargado && estadoPrecargado.realzarContraste);
+  let rotacionActual = (estadoPrecargado && Number(estadoPrecargado.rotacionActual)) || 0;
+  let imagenProcesada = (estadoPrecargado && estadoPrecargado.imagenProcesada) || null;
   let analizando = false;
 
   // Renglones detectados: [{ _id, codigo, textoOriginal, nombreDetectado, categoria, clase, materialId, cantidad, unidad, reqDevolucion, confianza, _filtro, _editado }]
-  let renglonesIA = [];
-  let metaIA = {
-    frente: '',
-    responsable: '',
-    proveedor: '',
-    nota: '',
-    mensajeIA: ''
-  };
+  let renglonesIA = (estadoPrecargado && Array.isArray(estadoPrecargado.renglonesIA))
+    ? estadoPrecargado.renglonesIA.map((r) => ({ ...r }))
+    : [];
+  let metaIA = (estadoPrecargado && estadoPrecargado.metaIA)
+    ? { ...estadoPrecargado.metaIA }
+    : {
+      frente: '',
+      responsable: '',
+      proveedor: '',
+      nota: '',
+      mensajeIA: ''
+    };
 
   const poblarDesdeRespuestaIA = (json) => {
     if (!json) return;
-    if (json.tipo && TIPOS[json.tipo] && !enOrdenActiva) tipoSeleccionado = json.tipo;
-    if (json.proveedor && !enOrdenActiva && !json.tipo) tipoSeleccionado = 'entrada';
+    if (!tipoElegidoManualmente) {
+      if (json.tipo && TIPOS[json.tipo] && !enOrdenActiva) tipoSeleccionado = json.tipo;
+      if (json.proveedor && !enOrdenActiva && !json.tipo) tipoSeleccionado = 'entrada';
+    }
     if (json.frente) {
       metaIA.frente = String(json.frente).replace(/^(?:frente|intervenci[oó]n)\s+/i, '').trim().toUpperCase();
     }
@@ -7386,15 +7593,32 @@ function modalEscanearListaIA(opciones = {}) {
     });
   };
 
-  if (opciones.respuestaInicial) {
+  if (opciones.respuestaInicial && !estadoPrecargado) {
     poblarDesdeRespuestaIA(opciones.respuestaInicial);
   }
+
+  const estiloBtnTipoIA = (tKey) => {
+    const activo = tipoSeleccionado === tKey;
+    if (tKey === 'entrada') {
+      return activo
+        ? 'background:linear-gradient(135deg,#10b981,#059669);color:#fff;border:1px solid #34d399;font-weight:700;box-shadow:0 0 12px rgba(16,185,129,0.35)'
+        : 'background:rgba(15,23,42,0.7);color:#94a3b8;border:1px solid rgba(255,255,255,0.14);font-weight:600';
+    }
+    if (tKey === 'devolucion') {
+      return activo
+        ? 'background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;border:1px solid #fbbf24;font-weight:700;box-shadow:0 0 12px rgba(245,158,11,0.35)'
+        : 'background:rgba(15,23,42,0.7);color:#94a3b8;border:1px solid rgba(255,255,255,0.14);font-weight:600';
+    }
+    return activo
+      ? 'background:linear-gradient(135deg,#0284c7,#2563eb);color:#fff;border:1px solid #38bdf8;font-weight:700;box-shadow:0 0 12px rgba(56,189,248,0.35)'
+      : 'background:rgba(15,23,42,0.7);color:#94a3b8;border:1px solid rgba(255,255,255,0.14);font-weight:600';
+  };
 
   const htmlModal = `
     <div id="ia-scan-root" style="display:flex;flex-direction:column;gap:14px">
       <div style="background:linear-gradient(135deg,rgba(0,200,255,0.09),rgba(99,102,241,0.09));border:1px solid rgba(0,200,255,0.25);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
         <div style="font-size:12.5px;color:#dbeafe;line-height:1.45">
-          ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Antes de agregar los materiales puedes editar libremente su <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b>, <b>Clase</b> y <b>Unidad</b>. Puedes estirar esta ventana desde cualquier borde o esquina, o pulsar <b>🗖</b> arriba.
+          ✨ <b>Escáner IA de Facturas de Proveedor, Remisiones y Listas Escritas a Mano:</b> Antes de agregar los materiales puedes elegir si es <b>Orden de Entrada</b> o <b>Orden de Salida</b> y editar libremente su <b>Código</b>, <b>Nombre</b>, <b>Tipo (categoría)</b>, <b>Clase</b> y <b>Unidad</b>.
         </div>
       </div>
 
@@ -7422,18 +7646,18 @@ function modalEscanearListaIA(opciones = {}) {
               <button type="button" class="btn-ghost" id="ia-btn-rotar" style="font-size:11.5px;padding:5px 10px" title="Girar foto 90° si salió volteada">↻ Girar 90°</button>
             </div>
             <label style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:#93c5fd;cursor:pointer" title="Actívalo cuando sea letra a lápiz o lapicero tenue sobre cuaderno">
-              <input type="checkbox" id="ia-chk-contraste" />
+              <input type="checkbox" id="ia-chk-contraste" ${realzarContraste ? 'checked' : ''} />
               <span>✨ Realzar trazo de lápiz</span>
             </label>
           </div>
 
           <details style="background:rgba(0,0,0,0.2);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:7px 10px">
             <summary style="cursor:pointer;font-size:12px;color:#7dd3fc;font-weight:600">📋 ¿Tienes una lista en texto de WhatsApp? Pégala aquí</summary>
-            <textarea id="ia-texto-lista" rows="3" placeholder="Ej:\n50m cable 12 rojo\n10 cajas 2x4\n1 curvadora 3/4 para Pedro frente 3B" style="width:100%;margin-top:7px;font-size:12px;background:rgba(15,23,42,0.8);color:#fff;border:1px solid rgba(255,255,255,0.14);border-radius:6px;padding:7px"></textarea>
+            <textarea id="ia-texto-lista" rows="3" placeholder="Ej:\n50m cable 12 rojo\n10 cajas 2x4\n1 curvadora 3/4 para Pedro frente 3B" style="width:100%;margin-top:7px;font-size:12px;background:rgba(15,23,42,0.8);color:#fff;border:1px solid rgba(255,255,255,0.14);border-radius:6px;padding:7px">${esc((estadoPrecargado && estadoPrecargado.textoLista) || '')}</textarea>
           </details>
 
           <div style="display:flex;gap:6px;align-items:center">
-            <input type="text" id="ia-instruccion-extra" placeholder="Pista opcional (ej: 'ignora lo tachado', 'todo es calibre 12')..." style="flex:1;font-size:12px;padding:7px 9px" />
+            <input type="text" id="ia-instruccion-extra" value="${esc((estadoPrecargado && estadoPrecargado.instruccionExtra) || '')}" placeholder="Pista opcional (ej: 'ignora lo tachado', 'todo es calibre 12')..." style="flex:1;font-size:12px;padding:7px 9px" />
             <button type="button" class="btn-primary" id="ia-btn-analizar" style="white-space:nowrap;padding:7px 14px;font-size:12.5px">🧠 Leer con IA</button>
           </div>
 
@@ -7441,15 +7665,14 @@ function modalEscanearListaIA(opciones = {}) {
 
           <!-- Datos de cabecera detectados -->
           <div style="border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            ${!enOrdenActiva ? `
             <div class="campo" style="margin:0">
-              <label style="font-size:11px">Tipo de orden</label>
-              <select id="ia-meta-tipo" class="select" style="width:100%;font-size:12px;padding:6px">
+              <label style="font-size:11px;font-weight:700;color:#7dd3fc">Tipo de orden</label>
+              <select id="ia-meta-tipo" class="select" style="width:100%;font-size:12px;padding:6px;font-weight:700;border-color:rgba(0,200,255,0.45)">
                 <option value="salida" ${tipoSeleccionado === 'salida' ? 'selected' : ''}>📤 Salida de almacén</option>
                 <option value="entrada" ${tipoSeleccionado === 'entrada' ? 'selected' : ''}>📥 Entrada / Factura Proveedor</option>
                 <option value="devolucion" ${tipoSeleccionado === 'devolucion' ? 'selected' : ''}>🔄 Devolución</option>
               </select>
-            </div>` : ''}
+            </div>
             <div class="campo" style="margin:0">
               <label style="font-size:11px">Proveedor (si es factura/entrada)</label>
               <input type="text" id="ia-meta-prov" value="${esc(metaIA.proveedor)}" placeholder="Ej: FRANCISCO MURILLO S.A.S." style="font-size:12px;padding:6px 8px" />
@@ -7496,7 +7719,20 @@ function modalEscanearListaIA(opciones = {}) {
         </div>
       </div>
 
-      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:8px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.08)">
+      <!-- Barra destacada para elegir si la orden leída con IA es de Entrada, Salida o Devolución antes de pasar al formulario -->
+      <div style="background:rgba(0,200,255,0.07);border:1px solid rgba(0,200,255,0.28);border-radius:10px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:12.5px;font-weight:700;color:#e2e8f0">📌 ¿Qué tipo de orden es esta lista?</span>
+          <span style="font-size:11.5px;color:#93c5fd">(Elígelo antes de revisar o crear la orden)</span>
+        </div>
+        <div id="ia-tipo-orden-bar" style="display:flex;gap:8px;flex-wrap:wrap">
+          <button type="button" class="btn-tipo-ia" data-ia-tipo="entrada" style="padding:7px 14px;border-radius:8px;font-size:12.5px;cursor:pointer;transition:all 0.15s;${estiloBtnTipoIA('entrada')}">📥 Orden de Entrada (Llegó al almacén)</button>
+          <button type="button" class="btn-tipo-ia" data-ia-tipo="salida" style="padding:7px 14px;border-radius:8px;font-size:12.5px;cursor:pointer;transition:all 0.15s;${estiloBtnTipoIA('salida')}">📤 Orden de Salida (Despacho a obra)</button>
+          <button type="button" class="btn-tipo-ia" data-ia-tipo="devolucion" style="padding:7px 14px;border-radius:8px;font-size:12.5px;cursor:pointer;transition:all 0.15s;${estiloBtnTipoIA('devolucion')}">🔄 Devolución</button>
+        </div>
+      </div>
+
+      <div class="modal-acciones" style="flex-wrap:wrap;gap:8px;margin-top:4px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.08)">
         <button type="button" class="btn-ghost" id="ia-btn-cancelar" style="margin-right:auto">Cancelar</button>
         ${enOrdenActiva ? `
           <button type="button" class="btn-primary" id="ia-btn-pasar-orden">✅ Pasar renglones a la orden actual</button>
@@ -7917,6 +8153,54 @@ function modalEscanearListaIA(opciones = {}) {
     });
   }
 
+  const sincronizarSelectorTipoOrden = (nuevoTipo, marcadoManual = false) => {
+    if (!nuevoTipo || !TIPOS[nuevoTipo]) return;
+    tipoSeleccionado = nuevoTipo;
+    if (marcadoManual) tipoElegidoManualmente = true;
+    const selTipo = $('#ia-meta-tipo');
+    if (selTipo && selTipo.value !== nuevoTipo) selTipo.value = nuevoTipo;
+    root.querySelectorAll('.btn-tipo-ia[data-ia-tipo]').forEach((btn) => {
+      const k = btn.dataset.iaTipo;
+      btn.setAttribute('style', `padding:7px 14px;border-radius:8px;font-size:12.5px;cursor:pointer;transition:all 0.15s;${estiloBtnTipoIA(k)}`);
+    });
+  };
+
+  if ($('#ia-meta-tipo')) {
+    $('#ia-meta-tipo').addEventListener('change', (ev) => {
+      sincronizarSelectorTipoOrden(ev.target.value, true);
+    });
+  }
+  root.querySelectorAll('.btn-tipo-ia[data-ia-tipo]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      sincronizarSelectorTipoOrden(btn.dataset.iaTipo, true);
+    });
+  });
+
+  const guardarEstadoActualEnMemoria = () => {
+    const tipoFinal = $('#ia-meta-tipo') ? $('#ia-meta-tipo').value : tipoSeleccionado;
+    const provFinal = ($('#ia-meta-prov') ? $('#ia-meta-prov').value : metaIA.proveedor || '').trim();
+    const frenteFinal = ($('#ia-meta-frente') ? $('#ia-meta-frente').value : metaIA.frente || '').trim();
+    const respFinal = ($('#ia-meta-resp') ? $('#ia-meta-resp').value : metaIA.responsable || '').trim();
+    const notaFinal = ($('#ia-meta-nota') ? $('#ia-meta-nota').value : metaIA.nota || '').trim();
+    estado.ultimoEscaneoIA = {
+      tipoSeleccionado: tipoFinal,
+      fuenteImagenActual,
+      realzarContraste,
+      rotacionActual,
+      imagenProcesada,
+      textoLista: txtListaEl ? txtListaEl.value : '',
+      instruccionExtra: inpExtraEl ? inpExtraEl.value : '',
+      metaIA: {
+        ...metaIA,
+        frente: frenteFinal,
+        proveedor: provFinal,
+        responsable: respFinal,
+        nota: notaFinal
+      },
+      renglonesIA: renglonesIA.map((r) => ({ ...r }))
+    };
+  };
+
   const ejecutarAnalisis = async () => {
     if (analizando) return;
     const textoLista = (txtListaEl.value || '').trim();
@@ -7939,18 +8223,19 @@ function modalEscanearListaIA(opciones = {}) {
         tipoOrden: ($('#ia-meta-tipo') ? $('#ia-meta-tipo').value : tipoSeleccionado)
       });
       poblarDesdeRespuestaIA(json);
-      if ($('#ia-meta-tipo') && tipoSeleccionado) $('#ia-meta-tipo').value = tipoSeleccionado;
+      sincronizarSelectorTipoOrden(tipoSeleccionado, false);
       if ($('#ia-meta-prov') && metaIA.proveedor) $('#ia-meta-prov').value = metaIA.proveedor;
       if ($('#ia-meta-frente') && metaIA.frente) $('#ia-meta-frente').value = metaIA.frente;
       if ($('#ia-meta-resp') && metaIA.responsable) $('#ia-meta-resp').value = metaIA.responsable;
       if ($('#ia-meta-nota') && metaIA.nota) $('#ia-meta-nota').value = metaIA.nota;
 
       if (renglonesIA.length > 0) {
-        estadoLectura.innerHTML = `✅ <b>Se reconocieron ${renglonesIA.length} renglón(es)${metaIA.proveedor ? (' de ' + esc(metaIA.proveedor)) : ''}.</b> Puedes ajustar Código, Nombre, Tipo y Clase antes de agregarlos.`;
+        estadoLectura.innerHTML = `✅ <b>Se reconocieron ${renglonesIA.length} renglón(es)${metaIA.proveedor ? (' de ' + esc(metaIA.proveedor)) : ''}.</b> Elige abajo si es <b>Orden de Entrada</b> o <b>Salida</b> y ajusta Código, Nombre, Tipo o Clase si lo necesitas.`;
       } else {
         estadoLectura.innerHTML = `<span style="color:#fcd34d">⚠️ ${esc(metaIA.mensajeIA || 'No se detectaron renglones. Intenta girar la imagen o darle una pista.')}</span>`;
       }
       renderRenglonesIA();
+      guardarEstadoActualEnMemoria();
     } catch (err) {
       estadoLectura.innerHTML = `<span style="color:#fda4af">❌ ${esc(err.message)}</span>`;
       toast('Error leyendo la lista: ' + err.message, 'error');
@@ -8032,6 +8317,7 @@ function modalEscanearListaIA(opciones = {}) {
       _editado: false
     });
     renderRenglonesIA();
+    guardarEstadoActualEnMemoria();
   });
 
   // Pegar imagen con Ctrl+V mientras el modal está abierto
@@ -8092,6 +8378,7 @@ function modalEscanearListaIA(opciones = {}) {
       btn.textContent = '⏳ Procesando...';
       try {
         await asegurarMaterialesCreados(false);
+        guardarEstadoActualEnMemoria();
         const d = recolectarDatosConfirmados();
         const conMat = d.items.filter((x) => x.materialId && Number(x.cantidad) > 0);
         document.removeEventListener('paste', onPasteModal);
@@ -8116,6 +8403,7 @@ function modalEscanearListaIA(opciones = {}) {
       btn.textContent = '⏳ Preparando orden...';
       try {
         await asegurarMaterialesCreados(false);
+        guardarEstadoActualEnMemoria();
         const d = recolectarDatosConfirmados();
         const conMat = d.items.filter((x) => x.materialId && Number(x.cantidad) > 0);
         document.removeEventListener('paste', onPasteModal);
@@ -8136,7 +8424,9 @@ function modalEscanearListaIA(opciones = {}) {
             materialId: it.materialId,
             cantidad: it.cantidad,
             reqDevolucion: !!it.reqDevolucion
-          }))
+          })),
+          desdeEscanerIA: true,
+          ordenGeneradaPrevia: opciones.ordenGeneradaPrevia || null
         });
       } catch (err) {
         toast('Error preparando orden: ' + err.message, 'error');
@@ -8157,6 +8447,7 @@ function modalEscanearListaIA(opciones = {}) {
       btn.textContent = '⏳ Creando orden...';
       try {
         await asegurarMaterialesCreados(false);
+        guardarEstadoActualEnMemoria();
         const d = recolectarDatosConfirmados();
         const conMat = d.items.filter((x) => x.materialId && Number(x.cantidad) > 0);
         document.removeEventListener('paste', onPasteModal);
@@ -8221,7 +8512,20 @@ function modalEscanearListaIA(opciones = {}) {
   }
 
   renderRenglonesIA();
-  if (fuenteImagenActual) {
+  if (estadoPrecargado) {
+    if (imagenProcesada && imagenProcesada.dataUrl) {
+      previewVacio.hidden = true;
+      previewWrap.hidden = false;
+      previewWrap.style.display = 'flex';
+      previewImg.src = imagenProcesada.dataUrl;
+    } else if (fuenteImagenActual) {
+      cargarFuenteImagen(fuenteImagenActual, false);
+    }
+    if (renglonesIA.length > 0) {
+      estadoLectura.innerHTML = `✅ <b>Lista precargada (${renglonesIA.length} renglones).</b> Puedes cambiar el tipo de orden o editar cualquier material sin volver a leer con IA.`;
+    }
+    guardarEstadoActualEnMemoria();
+  } else if (fuenteImagenActual) {
     cargarFuenteImagen(fuenteImagenActual, !opciones.respuestaInicial);
   }
 }
