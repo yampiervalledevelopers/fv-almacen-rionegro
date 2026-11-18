@@ -8536,6 +8536,12 @@ function modalEscanearListaIA(opciones = {}) {
    ================================================================== */
 const asistente = {
   recognition: null,
+  mediaRecorder: null,
+  mediaStream: null,
+  audioChunks: [],
+  timerSegundos: null,
+  segundosGrabados: 0,
+  cancelarGrabacionActual: false,
   escuchando: false,
   grabando: false,
   hablando: false,
@@ -8576,7 +8582,7 @@ function sincronizarBotonesMic(activoGrabando) {
   if (fabMain) fabMain.classList.toggle('activo', !!asistente.escuchando);
 }
 
-// --- Reactivar microfono (300ms debounce) ---
+// --- Reactivar microfono Web Speech (si el navegador lo soporta) ---
 function reactivarMicrofono() {
   if (!asistente.escuchando || !asistente.recognition || asistente.hablando) return;
   if (_reactivarTimer) return;
@@ -8585,8 +8591,6 @@ function reactivarMicrofono() {
     if (!asistente.escuchando || asistente.hablando) return;
     try {
       asistente.recognition.start();
-      asistente.grabando = true;
-      sincronizarBotonesMic(true);
     } catch (_e) { /* ya corriendo */ }
   }, 300);
 }
@@ -8600,6 +8604,10 @@ function actualizarPanel() {
   const body = $('.ai-panel-body');
   if (!body) return;
   const ultimos = asistente.historial.slice(-10);
+  if (ultimos.length === 0) {
+    body.innerHTML = `<div class="ai-bubble ai-bubble-agent">👋 ¡Hola! Pulsa el micrófono 🎤 para hablar y luego toca <b>"✈️ Enviar audio"</b>, o escribe abajo tu comando.</div>`;
+    return;
+  }
   body.innerHTML = ultimos.map((m) => {
     const isUser = m.rol === 'usuario';
     return `<div class="ai-bubble ${isUser ? 'ai-bubble-user' : 'ai-bubble-agent'}">${esc(m.texto)}</div>`;
@@ -8612,15 +8620,20 @@ function actualizarEstado(txt) {
   if (!el) return;
   if (txt) { el.innerHTML = `<span class="ai-status-text">${esc(txt)}</span>`; return; }
   if (asistente.procesando) {
-    el.innerHTML = '<span class="ai-status-thinking"><span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span> Pensando</span>';
+    el.innerHTML = '<span class="ai-status-thinking"><span class="ai-dot"></span><span class="ai-dot"></span><span class="ai-dot"></span> Procesando con IA...</span>';
     return;
   }
-  if (asistente.escuchando && asistente.grabando) {
-    el.innerHTML = '<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> Escuchando (di "listo" o pulsa Enviar al terminar)</span>';
+  if (asistente.escuchando) {
+    const m = Math.floor(asistente.segundosGrabados / 60);
+    const s = String(asistente.segundosGrabados % 60).padStart(2, '0');
+    const txtVoz = (asistente.buffer.trim() || asistente.ultimoInterim.trim());
+    const detalle = txtVoz
+      ? `🎤 "${esc(txtVoz)}"`
+      : `🔴 Grabando tu voz (${m}:${s})... Habla tranquilo y pulsa "✈️ Enviar audio"`;
+    el.innerHTML = `<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> <span style="margin-left:6px;color:#e2e8f0">${detalle}</span></span>`;
     return;
   }
-  if (asistente.escuchando) { el.innerHTML = '<span class="ai-status-text">Activo</span>'; return; }
-  el.innerHTML = '<span class="ai-status-text">Toca el mic 🎤 para activar</span>';
+  el.innerHTML = '<span class="ai-status-text">Toca el micrófono 🎤 para hablar o escribe abajo</span>';
 }
 
 // --- Navegacion local instantanea ---
@@ -8640,40 +8653,114 @@ function intentarNavLocal(texto) {
   return true;
 }
 
-// --- Mostrar/ocultar boton Enviar del buffer ---
+// --- Mostrar/ocultar barra de botones de Enviar / Cancelar audio ---
 function mostrarBtnEnviar(visible) {
+  const wrap = document.getElementById('ai-voice-actions');
   const btn = document.getElementById('ai-btn-send');
-  if (!btn) return;
-  btn.hidden = !visible;
+  if (wrap) {
+    wrap.hidden = !visible;
+    wrap.style.display = visible ? 'flex' : 'none';
+  }
+  if (btn) btn.hidden = !visible;
+}
+
+// --- Paso 1: Transcribe el audio grabado con Gemini y luego llama a enviarAGemini(texto) (Paso 2) ---
+async function transcribirYEnviarAudio(base64Audio, mimeTypeAudio) {
+  if (asistente.procesando || !base64Audio) return;
+  asistente.procesando = true;
+  mostrarBtnEnviar(false);
+  actualizarEstado('🧠 Escuchando tu audio...');
+
+  try {
+    const nombresMuestra = estado.materiales.slice(0, 120).map((m) => m.nombre).join(', ');
+    const responsablesMuestra = responsablesExistentes().slice(0, 40).join(', ');
+    const promptTranscripcion = [
+      'MODO TRANSCRIPTOR DE VOZ EXACTO (ESPAÑOL COLOMBIA):',
+      'El archivo adjunto es un AUDIO DE VOZ hablado por el almacenista de FVIECOM S.A.S.',
+      'Tu UNICA tarea en este paso es transcribir PALABRA POR PALABRA lo que dice el almacenista en el audio.',
+      'Pon especial cuidado con nombres de materiales eléctricos (cables #12, #10, #8, circuito/cto rojo/blanco/verde/amarillo/azul, tubería EMT, cajas 2x4 y 4x4, breakers, grapas, herramientas), cantidades (metros, unidades, rollos), frentes de obra (3, 3A, 3B, 3C, 4, 5, 5B, 11, A) y nombres de responsables.',
+      nombresMuestra ? ('Materiales conocidos en inventario: ' + nombresMuestra) : '',
+      responsablesMuestra ? ('Responsables conocidos: ' + responsablesMuestra) : '',
+      'Devuelve UNICAMENTE este JSON puro sin markdown:',
+      '{"transcripcion":"texto exacto que dijo el usuario"}',
+      'Si el audio solo contiene silencio o ruido sin ninguna palabra hablada, devuelve:',
+      '{"transcripcion":""}'
+    ].filter(Boolean).join('\n');
+
+    const resp = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imagen: base64Audio,
+        mimeType: mimeTypeAudio || 'audio/webm',
+        texto: promptTranscripcion,
+        inventario: [],
+        contratos: obtenerContratos(),
+        vistaActual: 'ordenes',
+        historial: []
+      })
+    });
+
+    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+    const json = await resp.json();
+    let textoTranscrito = String(json.transcripcion || '').trim();
+    // Si el modelo devolvió el texto en 'mensaje' y no en 'transcripcion'
+    if (!textoTranscrito && json.mensaje && !/no pude leer|no entendi|lista leida/i.test(json.mensaje)) {
+      textoTranscrito = String(json.mensaje).trim();
+    }
+    // Limpiar palabras de cierre al final si el usuario dijo "listo" o "enviar"
+    textoTranscrito = textoTranscrito.replace(/\s+\b(?:listo|enviar|eso es todo)\b[.!]*$/i, '').trim();
+
+    asistente.procesando = false;
+    if (!textoTranscrito) {
+      actualizarEstado('⚠️ No se escuchó voz en el audio. Verifica tu micrófono e intenta de nuevo.');
+      toast('No se escuchó voz en la grabación', 'error');
+      return;
+    }
+
+    if (intentarNavLocal(textoTranscrito)) {
+      actualizarEstado();
+      return;
+    }
+    // Paso 2: Enviar el texto transcrito al flujo original enviarAGemini (que usa SYSTEM_PROMPT + historial)
+    await enviarAGemini(textoTranscrito);
+  } catch (_err) {
+    asistente.procesando = false;
+    const msg = 'Error procesando el audio. Intenta de nuevo.';
+    agregarAlHistorial('agente', msg);
+    actualizarPanel();
+    actualizarEstado();
+  }
 }
 
 // --- Enviar buffer acumulado ---
 function enviarBuffer() {
-  const texto = (asistente.buffer.trim() || asistente.ultimoInterim.trim());
+  const texto = [asistente.buffer.trim(), asistente.ultimoInterim.trim()].filter(Boolean).join(' ').trim();
   asistente.buffer = '';
   asistente.ultimoInterim = '';
   mostrarBtnEnviar(false);
   actualizarEstado();
-  if (!texto) return;
-  if (intentarNavLocal(texto)) return;
+  if (!texto) return false;
+  if (intentarNavLocal(texto)) return true;
   enviarAGemini(texto);
+  return true;
 }
 
-// --- Enviar a Gemini ---
+// --- Enviar a Gemini (Flujo original de texto con SYSTEM_PROMPT + historial) ---
 async function enviarAGemini(texto) {
   if (asistente.procesando) return;
   asistente.procesando = true;
+  const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
   agregarAlHistorial('usuario', texto);
   actualizarPanel();
   actualizarEstado('🧠 Procesando...');
 
   try {
     const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
-    const inv = estado.materiales.slice(0, 200).map((m) => ({
+    const inv = estado.materiales.slice(0, 250).map((m) => ({
       nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
       esHerramienta: !!m.esHerramienta, serial: m.serial || ''
     }));
-    const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
 
     const resp = await fetch(CLOUD_FUNCTION_URL, {
       method: 'POST',
@@ -8965,8 +9052,11 @@ function initAsistente() {
       </div>
     </div>
     <div class="ai-panel-body"></div>
-    <div class="ai-panel-status"><span class="ai-status-text">Toca el mic 🎤 para activar</span></div>
-    <button class="ai-btn-send" id="ai-btn-send" hidden>✈️ Enviar</button>
+    <div class="ai-panel-status"><span class="ai-status-text">Toca el micrófono 🎤 para hablar o escribe abajo</span></div>
+    <div id="ai-voice-actions" hidden style="display:none;gap:8px;padding:8px 14px 4px;align-items:center">
+      <button type="button" class="ai-btn-send" id="ai-btn-send" style="flex:1;margin:0">✈️ Enviar audio</button>
+      <button type="button" class="btn-ghost" id="ai-btn-cancel-voice" style="padding:8px 12px;border-radius:20px;font-size:12px">✖ Cancelar</button>
+    </div>
     <div class="ai-panel-inputbar">
       <button type="button" class="ai-panel-iconbtn" id="ai-chat-cam" title="Escanear foto o lista escrita a mano">📷</button>
       <button type="button" class="ai-panel-iconbtn" id="ai-chat-mic" title="Hablar por micrófono">🎤</button>
@@ -8974,6 +9064,7 @@ function initAsistente() {
       <button type="button" class="ai-panel-iconbtn" id="ai-chat-send" title="Enviar">➤</button>
     </div>`;
   document.body.appendChild(panel);
+  actualizarPanel();
 
   const fabMain = widget.querySelector('.ai-fab-main');
   const fabGroup = widget.querySelector('.ai-fab-group');
@@ -8985,6 +9076,8 @@ function initAsistente() {
   const chatSend = panel.querySelector('#ai-chat-send');
   const chatCam = panel.querySelector('#ai-chat-cam');
   const chatMic = panel.querySelector('#ai-chat-mic');
+  const btnSend = panel.querySelector('#ai-btn-send');
+  const btnCancelVoice = panel.querySelector('#ai-btn-cancel-voice');
 
   fabMain.addEventListener('click', () => {
     const visible = panel.classList.toggle('visible');
@@ -8999,6 +9092,10 @@ function initAsistente() {
   });
 
   const enviarTextoChat = () => {
+    if (asistente.escuchando) {
+      detenerYEnviarAudio(true);
+      return;
+    }
     const txt = (chatInput.value || '').trim();
     if (!txt) return;
     chatInput.value = '';
@@ -9014,12 +9111,6 @@ function initAsistente() {
   });
 
   chatCam.addEventListener('click', () => procesarImagenEnAsistente(null));
-
-  const btnSend = panel.querySelector('#ai-btn-send');
-  btnSend.addEventListener('click', (e) => {
-    e.stopPropagation();
-    enviarBuffer();
-  });
 
   function makeDraggable(el, handleSelector) {
     let isDragging = false;
@@ -9072,104 +9163,154 @@ function initAsistente() {
     procesarImagenEnAsistente(null);
   });
 
-  // --- Speech Recognition setup (idéntico al original que escuchaba perfecto) ---
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    fabMic.style.opacity = '0.4';
-    fabMic.title = 'Navegador no soporta reconocimiento de voz';
-    return;
-  }
-
-  const recognition = new SpeechRecognition();
-  recognition.lang = 'es-CO';
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  asistente.recognition = recognition;
-
-  recognition.onresult = (event) => {
-    let interim = '';
-    let finalText = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        finalText += event.results[i][0].transcript;
-      } else {
-        interim += event.results[i][0].transcript;
-      }
+  // =========================================================================
+  // GRABACIÓN DE VOZ DIRECTA CON BOTÓN "✈️ Enviar audio" SIEMPRE VISIBLE
+  // =========================================================================
+  const limpiarTimerGrabacion = () => {
+    if (asistente.timerSegundos) {
+      clearInterval(asistente.timerSegundos);
+      asistente.timerSegundos = null;
     }
-    asistente.ultimoInterim = interim.trim();
-    // Mostrar texto interim + buffer acumulado en el estado
-    if (interim) {
-      mostrarBtnEnviar(true);
-      actualizarEstado('🎤 ' + (asistente.buffer ? asistente.buffer + ' ' : '') + interim);
+  };
+
+  const iniciarGrabacionVoz = async () => {
+    if (asistente.procesando) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      toast('Tu navegador no permite grabar audio de micrófono', 'error');
+      actualizarEstado('⚠️ Este navegador no soporta grabación de micrófono.');
+      return;
     }
-    if (!finalText) return;
-    asistente.ultimoInterim = '';
-    const texto = finalText.trim();
-    if (!texto) return;
 
-    // Deduplicacion: ignorar si es el mismo texto en menos de 2s
-    const ahora = Date.now();
-    if (texto === asistente.lastText && (ahora - asistente.lastTextTime) < 2000) return;
-    asistente.lastText = texto;
-    asistente.lastTextTime = ahora;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
 
-    // Stop words
-    const t = normTxt(texto);
-    if (['detente', 'silencio', 'deja de escuchar', 'apaga el asistente'].includes(t)) {
-      try { recognition.stop(); } catch (_e) { /* ok */ }
-      asistente.escuchando = false;
-      asistente.grabando = false;
+      asistente.mediaStream = stream;
+      asistente.audioChunks = [];
+      asistente.cancelarGrabacionActual = false;
+      asistente.escuchando = true;
+      asistente.grabando = true;
+      asistente.segundosGrabados = 0;
       asistente.buffer = '';
       asistente.ultimoInterim = '';
-      mostrarBtnEnviar(false);
-      sincronizarBotonesMic(false);
-      agregarAlHistorial('usuario', texto);
-      agregarAlHistorial('agente', 'Entendido, me detengo.');
-      actualizarPanel();
+
+      const tiposMime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+      const mimeElegido = tiposMime.find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+      const recorder = mimeElegido ? new MediaRecorder(stream, { mimeType: mimeElegido }) : new MediaRecorder(stream);
+      asistente.mediaRecorder = recorder;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          asistente.audioChunks.push(ev.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        limpiarTimerGrabacion();
+        const mimeFinal = (recorder.mimeType || mimeElegido || 'audio/webm').split(';')[0];
+        const chunks = asistente.audioChunks.slice();
+        asistente.audioChunks = [];
+        if (asistente.mediaStream) {
+          try { asistente.mediaStream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+          asistente.mediaStream = null;
+        }
+        if (asistente.cancelarGrabacionActual) {
+          asistente.cancelarGrabacionActual = false;
+          actualizarEstado();
+          return;
+        }
+        if (chunks.length === 0) {
+          actualizarEstado('⚠️ No se capturó audio. Intenta de nuevo.');
+          return;
+        }
+        const blob = new Blob(chunks, { type: mimeFinal });
+        if (blob.size < 400) {
+          actualizarEstado('⚠️ Grabación demasiado corta. Habla un poco más largo.');
+          return;
+        }
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = String(reader.result || '');
+          const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : '';
+          if (base64) {
+            transcribirYEnviarAudio(base64, mimeFinal);
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.start(200);
+      sincronizarBotonesMic(true);
+      // Mostrar INMEDIATAMENTE el botón "✈️ Enviar audio" y "✖ Cancelar"
+      mostrarBtnEnviar(true);
       actualizarEstado();
-      return;
-    }
 
-    // Navegacion local instantanea (sin buffer, se ejecuta ya)
-    if (intentarNavLocal(texto)) return;
-
-    // Detectar palabras de envio: "listo", "enviar", "eso es todo"
-    const tNorm = normTxt(texto);
-    const envioTriggers = ['listo', 'enviar', 'eso es todo'];
-    const esTriggerEnvio = envioTriggers.some((tr) => tNorm === tr || tNorm.endsWith(' ' + tr) || tNorm.startsWith(tr + ' '));
-    if (esTriggerEnvio) {
-      let textoLimpio = texto;
-      for (const tr of envioTriggers) {
-        const regex = new RegExp('\\b' + tr + '\\b', 'gi');
-        textoLimpio = textoLimpio.replace(regex, '').trim();
+      limpiarTimerGrabacion();
+      asistente.timerSegundos = setInterval(() => {
+        if (!asistente.escuchando) {
+          limpiarTimerGrabacion();
+          return;
+        }
+        asistente.segundosGrabados += 1;
+        actualizarEstado();
+      }, 1000);
+    } catch (err) {
+      asistente.escuchando = false;
+      asistente.grabando = false;
+      sincronizarBotonesMic(false);
+      mostrarBtnEnviar(false);
+      if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+        actualizarEstado('⚠️ Permiso de micrófono bloqueado. Actívalo en el icono del candado arriba.');
+        toast('Permiso de micrófono denegado en el navegador', 'error');
+      } else {
+        actualizarEstado('⚠️ No se pudo acceder al micrófono: ' + (err.message || 'verifica que esté conectado'));
+        toast('No se detectó micrófono disponible', 'error');
       }
-      if (textoLimpio) asistente.buffer += (asistente.buffer ? ' ' : '') + textoLimpio;
-      enviarBuffer();
-      return;
     }
-
-    // Acumular en buffer sin cortar al usuario
-    asistente.buffer += (asistente.buffer ? ' ' : '') + texto;
-    mostrarBtnEnviar(true);
-    actualizarEstado('🎤 ' + asistente.buffer);
   };
 
-  recognition.onend = () => {
+  const detenerYEnviarAudio = (enviar = true) => {
+    limpiarTimerGrabacion();
+    asistente.cancelarGrabacionActual = !enviar;
+    asistente.escuchando = false;
     asistente.grabando = false;
     sincronizarBotonesMic(false);
-    if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
-  };
+    mostrarBtnEnviar(false);
 
-  recognition.onerror = (e) => {
-    asistente.grabando = false;
-    if (e.error === 'not-allowed') {
-      actualizarEstado('Permiso de micrófono denegado.');
-      asistente.escuchando = false;
-      sincronizarBotonesMic(false);
-    } else if (e.error === 'no-speech' || e.error === 'network' || e.error === 'aborted') {
-      if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
+    if (asistente.mediaRecorder && asistente.mediaRecorder.state !== 'inactive') {
+      try {
+        asistente.mediaRecorder.stop();
+      } catch (_e) {}
+    } else {
+      if (asistente.mediaStream) {
+        try { asistente.mediaStream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+        asistente.mediaStream = null;
+      }
+      if (enviar && (asistente.buffer.trim() || asistente.ultimoInterim.trim())) {
+        enviarBuffer();
+      } else {
+        actualizarEstado();
+      }
     }
   };
+
+  btnSend.addEventListener('click', (e) => {
+    e.stopPropagation();
+    detenerYEnviarAudio(true);
+  });
+
+  if (btnCancelVoice) {
+    btnCancelVoice.addEventListener('click', (e) => {
+      e.stopPropagation();
+      detenerYEnviarAudio(false);
+      toast('Grabación de voz cancelada', 'ok');
+    });
+  }
 
   const toggleMic = (e) => {
     e.stopPropagation();
@@ -9179,26 +9320,9 @@ function initAsistente() {
       asistente.panelVisible = true;
     }
     if (asistente.escuchando) {
-      // Si hay buffer acumulado (o frase recién dicha), enviarlo antes de parar
-      if (asistente.buffer.trim() || asistente.ultimoInterim.trim()) {
-        enviarBuffer();
-      }
-      asistente.escuchando = false;
-      asistente.grabando = false;
-      asistente.hablando = false;
-      sincronizarBotonesMic(false);
-      try { recognition.stop(); } catch (_e2) { /* ok */ }
-      if (window.speechSynthesis) window.speechSynthesis.cancel();
-      actualizarEstado();
+      detenerYEnviarAudio(true);
     } else {
-      asistente.escuchando = true;
-      asistente.grabando = true;
-      asistente.buffer = '';
-      asistente.ultimoInterim = '';
-      mostrarBtnEnviar(false);
-      sincronizarBotonesMic(true);
-      actualizarEstado();
-      try { recognition.start(); } catch (_e2) { /* ok */ }
+      iniciarGrabacionVoz();
     }
   };
 

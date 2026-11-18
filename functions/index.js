@@ -175,12 +175,13 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSecond
   try {
     const { texto, inventario, contratos, vistaActual, historial, imagen, mimeType, modo } = req.body;
     if (!texto && !imagen) { res.status(400).json({ error: 'Falta el campo "texto"' }); return; }
-    const esLista = modo === 'lista' || !!imagen;
+    const esAudio = modo === 'audio' || (typeof mimeType === 'string' && mimeType.startsWith('audio/'));
+    const esLista = !esAudio && (modo === 'lista' || !!imagen);
 
     // Construir contexto de inventario (en modo lista se envia completo para emparejar mejor)
     let contextoInv = '';
     if (inventario && Array.isArray(inventario) && inventario.length > 0) {
-      const lista = inventario.slice(0, esLista ? 1500 : 200).map((m) =>
+      const lista = inventario.slice(0, esLista ? 1500 : 300).map((m) =>
         `- ${m.nombre}${m.esHerramienta ? ' [HERR]' : ''} | ${m.cantidad} ${m.unidad}${m.serial ? ' | serial:' + m.serial : ''}`
       ).join('\n');
       contextoInv = '\n\n=== INVENTARIO ACTUAL ===\n' + lista;
@@ -218,7 +219,13 @@ exports.asistente = onRequest({ cors: true, region: 'us-central1', timeoutSecond
       const imgMime = mimeType || 'image/jpeg';
       userParts.push({ inlineData: { mimeType: imgMime, data: imagen } });
     }
-    userParts.push({ text: texto || 'Transcribe la lista de materiales de esta imagen.' });
+    if (esAudio) {
+      userParts.push({
+        text: 'Escucha con atencion este audio del almacenista. 1) Incluye en el campo "transcripcion" del JSON exactamente lo que dijo el almacenista palabra por palabra (si el audio solo tiene silencio o ruido sin voz, devuelve {"accion":"respuesta","transcripcion":"","mensaje":""}). 2) Devuelve la accion JSON correspondiente (ejecutar_orden, abrir_orden, consulta, navegar, agregar_inventario o respuesta) siguiendo todas las reglas del SYSTEM_PROMPT.'
+      });
+    } else {
+      userParts.push({ text: texto || 'Transcribe la lista de materiales de esta imagen.' });
+    }
     messages.push({ role: 'user', parts: userParts });
 
     const systemText = (esLista ? LISTA_PROMPT : SYSTEM_PROMPT) + contextoInv + contextoContratos + contextoExtra;
