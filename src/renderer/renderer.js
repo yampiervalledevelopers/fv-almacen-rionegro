@@ -8535,6 +8535,14 @@ function modalEscanearListaIA(opciones = {}) {
    ================================================================== */
 const asistente = {
   recognition: null,
+  mediaRecorder: null,
+  mediaStream: null,
+  audioChunks: [],
+  audioCtx: null,
+  vadTimer: null,
+  haHabladoAudio: false,
+  usarSoloAudioIA: false,
+  descartarAudioActual: false,
   escuchando: false,
   grabando: false,
   hablando: false,
@@ -8542,6 +8550,7 @@ const asistente = {
   panelVisible: false,
   historial: [],
   buffer: '',
+  ultimoInterim: '',
   lastText: '',
   lastTextTime: 0
 };
@@ -8566,19 +8575,27 @@ async function hablarAgente(_texto) {
   return;
 }
 
+function sincronizarBotonesMic(activoGrabando) {
+  const fabMic = $('.ai-fab-mic');
+  const chatMic = document.getElementById('ai-chat-mic');
+  const fabMain = $('.ai-fab-main');
+  if (fabMic) fabMic.classList.toggle('grabando', !!activoGrabando);
+  if (chatMic) chatMic.classList.toggle('grabando', !!activoGrabando);
+  if (fabMain) fabMain.classList.toggle('activo', !!asistente.escuchando);
+}
+
 function reactivarMicrofono() {
-  if (!asistente.escuchando || !asistente.recognition || asistente.hablando) return;
+  if (!asistente.escuchando || !asistente.recognition || asistente.hablando || asistente.procesando || asistente.usarSoloAudioIA) return;
   if (_reactivarTimer) return;
   _reactivarTimer = setTimeout(() => {
     _reactivarTimer = null;
-    if (!asistente.escuchando || asistente.hablando) return;
+    if (!asistente.escuchando || asistente.hablando || asistente.procesando || asistente.usarSoloAudioIA) return;
     try {
       asistente.recognition.start();
       asistente.grabando = true;
-      const btn = $('.ai-fab-mic');
-      if (btn) btn.classList.add('grabando');
-    } catch (e) { /* ya corriendo */ }
-  }, 300);
+      sincronizarBotonesMic(true);
+    } catch (_e) { /* ya corriendo */ }
+  }, 280);
 }
 
 function agregarAlHistorial(rol, texto) {
@@ -8610,11 +8627,11 @@ function actualizarEstado(txt) {
     return;
   }
   if (asistente.escuchando && asistente.grabando) {
-    el.innerHTML = '<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> Escuchando (se envía solo al pausar)</span>';
+    el.innerHTML = '<span class="ai-status-listening"><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span><span class="ai-bar"></span> 🎤 Escuchando... habla y haz una pausa (o pulsa 🎤 para enviar)</span>';
     return;
   }
-  if (asistente.escuchando) { el.innerHTML = '<span class="ai-status-text">Micrófono activo</span>'; return; }
-  el.innerHTML = '<span class="ai-status-text">Escribe abajo, pega una foto (Ctrl+V) o usa 🎤</span>';
+  if (asistente.escuchando) { el.innerHTML = '<span class="ai-status-text">🎤 Micrófono activo — habla ahora</span>'; return; }
+  el.innerHTML = '<span class="ai-status-text">Escribe abajo, pega una foto (Ctrl+V) o pulsa 🎤 para hablar</span>';
 }
 
 function intentarNavLocal(texto) {
@@ -8639,20 +8656,51 @@ function mostrarBtnEnviar(visible) {
   btn.hidden = !visible;
 }
 
+function detenerGrabacionRespaldo(descartar = true) {
+  asistente.descartarAudioActual = descartar;
+  if (asistente.vadTimer) {
+    clearInterval(asistente.vadTimer);
+    asistente.vadTimer = null;
+  }
+  if (asistente.audioCtx) {
+    try { asistente.audioCtx.close(); } catch (_e) {}
+    asistente.audioCtx = null;
+  }
+  if (asistente.mediaRecorder && asistente.mediaRecorder.state !== 'inactive') {
+    try { asistente.mediaRecorder.stop(); } catch (_e) {}
+  } else if (asistente.mediaStream) {
+    try { asistente.mediaStream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+    asistente.mediaStream = null;
+  }
+}
+
 function enviarBuffer() {
   if (_autoSendVoiceTimer) { clearTimeout(_autoSendVoiceTimer); _autoSendVoiceTimer = null; }
-  const texto = asistente.buffer.trim();
+  const textoCombinado = [asistente.buffer.trim(), asistente.ultimoInterim.trim()].filter(Boolean).join(' ').trim();
   asistente.buffer = '';
+  asistente.ultimoInterim = '';
+  const chatInput = document.getElementById('ai-chat-input');
+  if (chatInput && chatInput.dataset.vozEnVivo === '1') {
+    chatInput.value = '';
+    chatInput.dataset.vozEnVivo = '0';
+  }
   mostrarBtnEnviar(false);
   actualizarEstado();
-  if (!texto) return;
-  if (intentarNavLocal(texto)) return;
-  enviarAGemini(texto);
+  if (!textoCombinado) return false;
+  // Si ya tenemos texto reconocido por voz, descartamos el audio de respaldo para no enviarlo dos veces
+  detenerGrabacionRespaldo(true);
+  if (intentarNavLocal(textoCombinado)) return true;
+  enviarAGemini(textoCombinado);
+  return true;
 }
 
 async function enviarAGemini(texto) {
   if (asistente.procesando) return;
   asistente.procesando = true;
+  if (asistente.recognition && asistente.grabando) {
+    try { asistente.recognition.stop(); } catch (_e) {}
+  }
+  const histCtx = asistente.historial.slice(-8).map((h) => ({ rol: h.rol, texto: h.texto }));
   agregarAlHistorial('usuario', texto);
   actualizarPanel();
   actualizarEstado('🧠 Procesando...');
@@ -8663,7 +8711,6 @@ async function enviarAGemini(texto) {
       nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
       esHerramienta: !!m.esHerramienta, serial: m.serial || ''
     }));
-    const histCtx = asistente.historial.slice(-8).map((h) => ({ rol: h.rol, texto: h.texto }));
 
     const resp = await fetch(CLOUD_FUNCTION_URL, {
       method: 'POST',
@@ -8677,6 +8724,73 @@ async function enviarAGemini(texto) {
   } catch (_err) {
     const msg = 'Error de comunicación con IA. Intenta de nuevo.';
     agregarAlHistorial('agente', msg);
+    actualizarPanel();
+  } finally {
+    asistente.procesando = false;
+    actualizarEstado();
+    if (asistente.escuchando && !asistente.usarSoloAudioIA) {
+      reactivarMicrofono();
+    }
+  }
+}
+
+async function enviarAudioAGemini(base64Audio, mimeTypeAudio) {
+  if (asistente.procesando || !base64Audio) return;
+  asistente.procesando = true;
+  mostrarBtnEnviar(false);
+  actualizarEstado('🧠 Escuchando y procesando tu voz con IA...');
+
+  try {
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
+    const inv = estado.materiales.slice(0, 500).map((m) => ({
+      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+    }));
+    const histCtx = asistente.historial.slice(-6).map((h) => `${h.rol === 'usuario' ? 'Usuario' : 'Agente'}: ${h.texto}`).join('\n');
+
+    const promptVoz = [
+      'MODO COMANDO DE VOZ (AUDIO): El archivo adjunto es un AUDIO DE VOZ hablado por el almacenista de FVIECOM.',
+      '1. Transcribe exactamente lo que dijo el almacenista en el campo "transcripcion" (si solo hay silencio o ruido sin palabras, pon "transcripcion": "").',
+      '2. Interpreta lo que pide el almacenista y devuelve UNA sola accion JSON (SIN markdown):',
+      '- Si pide consultar stock o disponibilidad -> {"accion":"consulta","transcripcion":"...","mensaje":"..."}',
+      '- Si pide ir o abrir una seccion (dashboard, inventario, movimientos, ordenes, responsables, consumo, kits, herramientas, importar, reportes, acerca) -> {"accion":"navegar","destino":"...","transcripcion":"...","mensaje":"..."}',
+      '- Si da un comando completo de orden (material, cantidad, responsable, frente) -> {"accion":"ejecutar_orden","tipo":"salida","items":[{"nombre":"...","cantidad":1,"unidad":"..."}],"responsables":["..."],"frente":"...","nota":"","transcripcion":"...","mensaje":"..."}',
+      '- Si da datos parciales para preparar/revisar una orden -> {"accion":"abrir_orden","tipo":"salida","items":[{"nombre":"...","cantidad":1,"unidad":"..."}],"responsables":[],"frente":"","nota":"","transcripcion":"...","mensaje":"..."}',
+      '- Si quiere agregar un material nuevo al inventario -> {"accion":"agregar_inventario","items":[{"nombre":"...","cantidad":1,"unidad":"unidad","esHerramienta":false,"serial":""}],"transcripcion":"...","mensaje":"..."}',
+      '- Si le falta informacion, saluda o hace una pregunta -> {"accion":"respuesta","transcripcion":"...","mensaje":"..."}',
+      'Recuerda: Si menciona un circuito ("cto" o "circuito"), desglosalo en sus 3 cables (Fase del color indicado + Blanco + Verde).',
+      histCtx ? ('Historial reciente:\n' + histCtx) : ''
+    ].filter(Boolean).join('\n');
+
+    const resp = await fetch(CLOUD_FUNCTION_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imagen: base64Audio,
+        mimeType: mimeTypeAudio || 'audio/webm',
+        texto: promptVoz,
+        inventario: inv,
+        contratos: obtenerContratos(),
+        vistaActual,
+        historial: []
+      })
+    });
+
+    if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
+    const json = await resp.json();
+    const transcripcion = String(json.transcripcion || '').trim();
+    if (!transcripcion && (!Array.isArray(json.items) || json.items.length === 0) && json.accion !== 'navegar') {
+      actualizarEstado('🎤 No se alcanzó a escuchar claro. Pulsa 🎤 y habla cerca del micrófono.');
+      return;
+    }
+    if (transcripcion) {
+      if (intentarNavLocal(transcripcion)) return;
+      agregarAlHistorial('usuario', '🎤 ' + transcripcion);
+      actualizarPanel();
+    }
+    await ejecutarRespuesta(json);
+  } catch (_err) {
+    agregarAlHistorial('agente', 'Error procesando el audio con IA. Intenta de nuevo.');
     actualizarPanel();
   } finally {
     asistente.procesando = false;
@@ -8925,8 +9039,9 @@ function initAsistente() {
     .ai-panel-inputbar { display:flex; gap:6px; padding:8px 12px 10px; border-top:1px solid rgba(255,255,255,0.07); background:rgba(2,10,26,0.6); align-items:center; }
     .ai-panel-inputbar input { flex:1; min-width:0; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); border-radius:10px; padding:7px 10px; color:#fff; font-size:12.5px; outline:none; }
     .ai-panel-inputbar input:focus { border-color:#00c8ff; }
-    .ai-panel-iconbtn { width:34px; height:34px; border-radius:10px; border:1px solid rgba(0,200,255,0.3); background:rgba(0,200,255,0.1); color:#7dd3fc; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; flex:none; }
+    .ai-panel-iconbtn { width:34px; height:34px; border-radius:10px; border:1px solid rgba(0,200,255,0.3); background:rgba(0,200,255,0.1); color:#7dd3fc; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:15px; flex:none; transition:all 0.2s ease; }
     .ai-panel-iconbtn:hover { background:rgba(0,200,255,0.24); color:#fff; }
+    .ai-panel-iconbtn.grabando { background:rgba(255,84,112,0.28); border-color:rgba(255,84,112,0.75); color:#ff5470; animation:ai-ripple-red 1.2s ease-in-out infinite; }
     .ai-btn-send { margin:6px 14px 0; padding:7px 14px; border:none; border-radius:20px; background:linear-gradient(135deg, #00c8ff, #0d6efd); color:#fff; font-size:12.5px; font-weight:600; cursor:pointer; }
     .ai-bubble { max-width:86%; padding:8px 12px; border-radius:12px; font-size:12.5px; line-height:1.45; word-break:break-word; }
     .ai-bubble-user { align-self:flex-end; background:rgba(0,200,255,0.16); color:#c8efff; border-bottom-right-radius:4px; }
@@ -8979,10 +9094,11 @@ function initAsistente() {
     </div>
     <div class="ai-panel-body"></div>
     <button class="ai-btn-send" id="ai-btn-send" hidden>✈️ Enviar comando de voz</button>
-    <div class="ai-panel-status"><span class="ai-status-text">Escribe abajo, pega una foto (Ctrl+V) o usa 🎤</span></div>
+    <div class="ai-panel-status"><span class="ai-status-text">Escribe abajo, pega una foto (Ctrl+V) o pulsa 🎤 para hablar</span></div>
     <div class="ai-panel-inputbar">
       <button type="button" class="ai-panel-iconbtn" id="ai-chat-cam" title="Escanear foto o lista escrita a mano">📷</button>
-      <input type="text" id="ai-chat-input" placeholder="Escribe un comando o pega foto (Ctrl+V)..." />
+      <button type="button" class="ai-panel-iconbtn" id="ai-chat-mic" title="Hablar por micrófono al Agente IA">🎤</button>
+      <input type="text" id="ai-chat-input" placeholder="Escribe un comando, habla con 🎤 o pega foto (Ctrl+V)..." />
       <button type="button" class="ai-panel-iconbtn" id="ai-chat-send" title="Enviar">➤</button>
     </div>`;
   document.body.appendChild(panel);
@@ -8997,6 +9113,7 @@ function initAsistente() {
   const chatInput = panel.querySelector('#ai-chat-input');
   const chatSend = panel.querySelector('#ai-chat-send');
   const chatCam = panel.querySelector('#ai-chat-cam');
+  const chatMic = panel.querySelector('#ai-chat-mic');
 
   // Un solo clic en el botón principal abre/cierra el panel de IA de inmediato
   fabMain.addEventListener('click', () => {
@@ -9029,9 +9146,14 @@ function initAsistente() {
 
   // Envío por texto escrito en la barra del panel
   const enviarTextoChat = () => {
+    if (asistente.escuchando && (asistente.buffer.trim() || asistente.ultimoInterim.trim())) {
+      apagarMicrofonoYEnviar(true);
+      return;
+    }
     const txt = (chatInput.value || '').trim();
     if (!txt) return;
     chatInput.value = '';
+    chatInput.dataset.vozEnVivo = '0';
     if (intentarNavLocal(txt)) return;
     enviarAGemini(txt);
   };
@@ -9062,7 +9184,7 @@ function initAsistente() {
   const btnSend = panel.querySelector('#ai-btn-send');
   btnSend.addEventListener('click', (e) => {
     e.stopPropagation();
-    enviarBuffer();
+    apagarMicrofonoYEnviar(true);
   });
 
   // Hacer arrastrable el widget y el panel
@@ -9118,127 +9240,303 @@ function initAsistente() {
     procesarImagenEnAsistente(null);
   });
 
-  // Reconocimiento de voz con auto-envío fluido al pausar
+  // =========================================================================
+  // MOTOR HÍBRIDO DE RECONOCIMIENTO DE VOZ (Web Speech API + Respaldo Gemini Audio IA)
+  // =========================================================================
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    fabMic.style.opacity = '0.4';
-    fabMic.title = 'Navegador no soporta reconocimiento de voz';
-    return;
+
+  // Inicia grabación de audio en paralelo/respaldo con MediaRecorder + detector de voz/silencio.
+  // Si Web Speech API funciona y transcribe texto, este audio se descarta sin enviarse.
+  // Si Web Speech API falla (ej. en Electron, Brave, error 'network' o no devuelve texto),
+  // este audio se envía automáticamente a Gemini para que siempre reconozca la voz.
+  const iniciarGrabacionAudioRespaldo = async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+      return false;
+    }
+    try {
+      detenerGrabacionRespaldo(true);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      asistente.mediaStream = stream;
+      asistente.audioChunks = [];
+      asistente.haHabladoAudio = false;
+      asistente.descartarAudioActual = false;
+
+      const tiposMime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+      const mimeElegido = tiposMime.find((t) => MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+      const recorder = mimeElegido ? new MediaRecorder(stream, { mimeType: mimeElegido }) : new MediaRecorder(stream);
+      asistente.mediaRecorder = recorder;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) asistente.audioChunks.push(ev.data);
+      };
+
+      recorder.onstop = () => {
+        const mimeFinal = (recorder.mimeType || mimeElegido || 'audio/webm').split(';')[0];
+        const chunks = asistente.audioChunks.slice();
+        asistente.audioChunks = [];
+        if (asistente.mediaStream) {
+          try { asistente.mediaStream.getTracks().forEach((t) => t.stop()); } catch (_e) {}
+          asistente.mediaStream = null;
+        }
+        const tieneTextoWebSpeech = !!(asistente.buffer.trim() || asistente.ultimoInterim.trim());
+        if (asistente.descartarAudioActual || tieneTextoWebSpeech || chunks.length === 0) {
+          return;
+        }
+        const blob = new Blob(chunks, { type: mimeFinal });
+        if (blob.size < 600) return;
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = String(reader.result || '');
+          const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : '';
+          if (base64 && !asistente.procesando) {
+            enviarAudioAGemini(base64, mimeFinal);
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+
+      recorder.start(250);
+
+      // Detector de actividad de voz (VAD) para auto-enviar tras 1.9s de silencio cuando se usa audio directo
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const audioCtx = new AudioCtx();
+        asistente.audioCtx = audioCtx;
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const dataArr = new Uint8Array(analyser.frequencyBinCount);
+        let ultimoSonidoTs = Date.now();
+        const inicioTs = Date.now();
+
+        asistente.vadTimer = setInterval(() => {
+          if (!asistente.escuchando || recorder.state !== 'recording') return;
+          analyser.getByteFrequencyData(dataArr);
+          let suma = 0;
+          for (let i = 0; i < dataArr.length; i++) suma += dataArr[i];
+          const promedio = suma / dataArr.length;
+          if (promedio > 16) {
+            asistente.haHabladoAudio = true;
+            ultimoSonidoTs = Date.now();
+            mostrarBtnEnviar(true);
+            if (asistente.usarSoloAudioIA && !asistente.buffer && !asistente.ultimoInterim) {
+              actualizarEstado('🎤 Escuchando tu voz... (haz una pausa o pulsa 🎤 para enviar)');
+            }
+          } else if (
+            asistente.haHabladoAudio
+            && (Date.now() - ultimoSonidoTs > 1900)
+            && (Date.now() - inicioTs > 2200)
+          ) {
+            const hayTextoWeb = !!(asistente.buffer.trim() || asistente.ultimoInterim.trim());
+            if (!hayTextoWeb) {
+              // Web Speech no produjo texto pero el micrófono sí captó voz del usuario: enviamos el audio a Gemini
+              apagarMicrofonoYEnviar(true);
+            }
+          }
+        }, 140);
+      }
+      return true;
+    } catch (err) {
+      if (err && (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError')) {
+        actualizarEstado('⚠️ Permiso de micrófono denegado. Habilítalo en el candado de la barra de direcciones.');
+        toast('Permiso de micrófono denegado en el navegador', 'error');
+      } else {
+        actualizarEstado('⚠️ No se detectó un micrófono disponible en este equipo.');
+      }
+      return false;
+    }
+  };
+
+  if (SpeechRecognition) {
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'es-CO';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+    asistente.recognition = recognition;
+
+    const programarAutoEnvioVoz = () => {
+      if (_autoSendVoiceTimer) clearTimeout(_autoSendVoiceTimer);
+      _autoSendVoiceTimer = setTimeout(() => {
+        _autoSendVoiceTimer = null;
+        if ((asistente.buffer.trim() || asistente.ultimoInterim.trim()) && !asistente.procesando) {
+          apagarMicrofonoYEnviar(true);
+        }
+      }, 1850);
+    };
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      let finalText = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const tr = event.results[i][0].transcript || '';
+        if (event.results[i].isFinal) finalText += tr + ' ';
+        else interim += tr;
+      }
+
+      asistente.ultimoInterim = interim.trim();
+
+      if (finalText.trim()) {
+        const texto = finalText.trim();
+        const ahora = Date.now();
+        if (!(texto === asistente.lastText && (ahora - asistente.lastTextTime) < 1800)) {
+          asistente.lastText = texto;
+          asistente.lastTextTime = ahora;
+
+          const t = normTxt(texto);
+          if (['detente', 'silencio', 'deja de escuchar', 'apaga el asistente'].includes(t)) {
+            asistente.buffer = '';
+            asistente.ultimoInterim = '';
+            apagarMicrofonoYEnviar(false);
+            agregarAlHistorial('usuario', texto);
+            agregarAlHistorial('agente', 'Entendido, micrófono desactivado.');
+            actualizarPanel();
+            actualizarEstado();
+            return;
+          }
+
+          const envioTriggers = ['listo', 'enviar', 'eso es todo'];
+          const esTriggerEnvio = envioTriggers.some((tr) => t === tr || t.endsWith(' ' + tr) || t.startsWith(tr + ' '));
+          if (esTriggerEnvio) {
+            let textoLimpio = texto;
+            for (const tr of envioTriggers) {
+              textoLimpio = textoLimpio.replace(new RegExp('\\b' + tr + '\\b', 'gi'), '').trim();
+            }
+            if (textoLimpio) asistente.buffer += (asistente.buffer ? ' ' : '') + textoLimpio;
+            asistente.ultimoInterim = '';
+            apagarMicrofonoYEnviar(true);
+            return;
+          }
+
+          asistente.buffer += (asistente.buffer ? ' ' : '') + texto;
+        }
+      }
+
+      const vistaPreviaVoz = [asistente.buffer.trim(), asistente.ultimoInterim].filter(Boolean).join(' ').trim();
+      if (vistaPreviaVoz) {
+        mostrarBtnEnviar(true);
+        actualizarEstado('🎤 ' + vistaPreviaVoz);
+        if (chatInput) {
+          chatInput.value = vistaPreviaVoz;
+          chatInput.dataset.vozEnVivo = '1';
+        }
+        programarAutoEnvioVoz();
+      }
+    };
+
+    recognition.onend = () => {
+      asistente.grabando = false;
+      // Si el usuario estaba hablando y el navegador cerró la sesión antes de marcar isFinal,
+      // promovemos ultimoInterim al buffer para no perder ni una palabra.
+      if (asistente.ultimoInterim.trim()) {
+        asistente.buffer = [asistente.buffer.trim(), asistente.ultimoInterim.trim()].filter(Boolean).join(' ');
+        asistente.ultimoInterim = '';
+      }
+      if (asistente.escuchando && !asistente.hablando && !asistente.procesando && !asistente.usarSoloAudioIA) {
+        reactivarMicrofono();
+      } else if (!asistente.escuchando) {
+        sincronizarBotonesMic(false);
+      }
+    };
+
+    recognition.onerror = (e) => {
+      asistente.grabando = false;
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        if (e.error === 'not-allowed') {
+          actualizarEstado('⚠️ Permiso de micrófono denegado. Habilítalo en el navegador.');
+          toast('Permiso de micrófono denegado', 'error');
+          asistente.escuchando = false;
+          sincronizarBotonesMic(false);
+          detenerGrabacionRespaldo(true);
+          return;
+        }
+        // service-not-allowed (ej. Electron / navegador sin servicio de voz de Google): usar grabación de audio directa a Gemini
+        asistente.usarSoloAudioIA = true;
+        return;
+      }
+      if (e.error === 'audio-capture') {
+        actualizarEstado('⚠️ No se detectó micrófono. Verifica que esté conectado.');
+        toast('No se detectó micrófono activo', 'error');
+        asistente.escuchando = false;
+        sincronizarBotonesMic(false);
+        detenerGrabacionRespaldo(true);
+        return;
+      }
+      if (e.error === 'network') {
+        // El motor Web Speech del navegador falló por red (común en Electron/Brave); pasamos a grabación directa con Gemini IA
+        asistente.usarSoloAudioIA = true;
+        actualizarEstado('🎤 Escuchando con IA directa... habla y haz una pausa (o pulsa 🎤 para enviar)');
+        return;
+      }
+      if (e.error === 'no-speech' || e.error === 'aborted') {
+        if (asistente.escuchando && !asistente.hablando && !asistente.usarSoloAudioIA) {
+          reactivarMicrofono();
+        }
+      }
+    };
+  } else {
+    asistente.usarSoloAudioIA = true;
   }
 
-  const recognition = new SpeechRecognition();
-  recognition.lang = 'es-CO';
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  asistente.recognition = recognition;
-
-  recognition.onresult = (event) => {
-    let interim = '';
-    let finalText = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) finalText += event.results[i][0].transcript;
-      else interim += event.results[i][0].transcript;
+  function apagarMicrofonoYEnviar(debeEnviar = true) {
+    if (_autoSendVoiceTimer) { clearTimeout(_autoSendVoiceTimer); _autoSendVoiceTimer = null; }
+    if (_reactivarTimer) { clearTimeout(_reactivarTimer); _reactivarTimer = null; }
+    asistente.escuchando = false;
+    asistente.grabando = false;
+    sincronizarBotonesMic(false);
+    if (asistente.recognition) {
+      try { asistente.recognition.stop(); } catch (_e) {}
     }
-    if (interim) {
-      if (_autoSendVoiceTimer) { clearTimeout(_autoSendVoiceTimer); _autoSendVoiceTimer = null; }
-      actualizarEstado('🎤 ' + (asistente.buffer ? asistente.buffer + ' ' : '') + interim);
-    }
-    if (!finalText) return;
-    const texto = finalText.trim();
-    if (!texto) return;
 
-    const ahora = Date.now();
-    if (texto === asistente.lastText && (ahora - asistente.lastTextTime) < 2000) return;
-    asistente.lastText = texto;
-    asistente.lastTextTime = ahora;
-
-    const t = normTxt(texto);
-    if (['detente', 'silencio', 'deja de escuchar', 'apaga el asistente'].includes(t)) {
-      try { recognition.stop(); } catch (_e) {}
-      asistente.escuchando = false;
-      asistente.grabando = false;
+    if (!debeEnviar) {
       asistente.buffer = '';
+      asistente.ultimoInterim = '';
       mostrarBtnEnviar(false);
-      fabMic.classList.remove('grabando');
-      fabMain.classList.remove('activo');
-      agregarAlHistorial('usuario', texto);
-      agregarAlHistorial('agente', 'Entendido, micrófono desactivado.');
-      actualizarPanel();
+      detenerGrabacionRespaldo(true);
       actualizarEstado();
       return;
     }
 
-    if (intentarNavLocal(texto)) return;
-
-    const envioTriggers = ['listo', 'enviar', 'eso es todo'];
-    const esTriggerEnvio = envioTriggers.some((tr) => t === tr || t.endsWith(' ' + tr) || t.startsWith(tr + ' '));
-    if (esTriggerEnvio) {
-      let textoLimpio = texto;
-      for (const tr of envioTriggers) {
-        textoLimpio = textoLimpio.replace(new RegExp('\\b' + tr + '\\b', 'gi'), '').trim();
-      }
-      if (textoLimpio) asistente.buffer += (asistente.buffer ? ' ' : '') + textoLimpio;
-      enviarBuffer();
-      return;
+    const envioTextoExitoso = enviarBuffer();
+    if (!envioTextoExitoso) {
+      // Si Web Speech no capturó texto, detenemos MediaRecorder con descartar=false para que envíe el audio grabado a Gemini
+      detenerGrabacionRespaldo(false);
     }
+  }
 
-    asistente.buffer += (asistente.buffer ? ' ' : '') + texto;
-    mostrarBtnEnviar(true);
-    actualizarEstado('🎤 ' + asistente.buffer);
-
-    // Envío automático tras 2.4 segundos de pausa para que la conversación sea fluida
-    if (_autoSendVoiceTimer) clearTimeout(_autoSendVoiceTimer);
-    _autoSendVoiceTimer = setTimeout(() => {
-      _autoSendVoiceTimer = null;
-      if (asistente.buffer.trim() && !asistente.procesando) {
-        enviarBuffer();
-      }
-    }, 2400);
-  };
-
-  recognition.onend = () => {
-    asistente.grabando = false;
-    fabMic.classList.remove('grabando');
-    if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
-  };
-
-  recognition.onerror = (e) => {
-    asistente.grabando = false;
-    if (e.error === 'not-allowed') {
-      actualizarEstado('Permiso de micrófono denegado.');
-      asistente.escuchando = false;
-      fabMic.classList.remove('grabando');
-      fabMain.classList.remove('activo');
-    } else if (e.error === 'no-speech' || e.error === 'network' || e.error === 'aborted') {
-      if (asistente.escuchando && !asistente.hablando) reactivarMicrofono();
-    }
-  };
-
-  fabMic.addEventListener('click', (e) => {
-    e.stopPropagation();
+  async function alternarMicrofono(e) {
+    if (e) e.stopPropagation();
     if (!panel.classList.contains('visible')) {
       panel.classList.add('visible');
+      panel.classList.remove('minimized');
       asistente.panelVisible = true;
     }
     if (asistente.escuchando) {
-      if (asistente.buffer.trim()) enviarBuffer();
-      asistente.escuchando = false;
-      asistente.grabando = false;
-      fabMic.classList.remove('grabando');
-      fabMain.classList.remove('activo');
-      try { recognition.stop(); } catch (_e2) {}
-      actualizarEstado();
-    } else {
-      asistente.escuchando = true;
-      asistente.grabando = true;
-      asistente.buffer = '';
-      mostrarBtnEnviar(false);
-      fabMic.classList.add('grabando');
-      fabMain.classList.add('activo');
-      actualizarEstado();
-      try { recognition.start(); } catch (_e2) {}
+      apagarMicrofonoYEnviar(true);
+      return;
     }
-  });
+
+    asistente.escuchando = true;
+    asistente.grabando = true;
+    asistente.buffer = '';
+    asistente.ultimoInterim = '';
+    mostrarBtnEnviar(false);
+    sincronizarBotonesMic(true);
+    actualizarEstado('🎤 Escuchando... habla ahora (se envía al hacer una pausa o al pulsar 🎤)');
+
+    // Iniciamos grabación de respaldo con MediaRecorder para garantizar que la voz siempre se capture
+    iniciarGrabacionAudioRespaldo();
+
+    if (asistente.recognition && !asistente.usarSoloAudioIA) {
+      try {
+        asistente.recognition.start();
+      } catch (_e2) { /* ya iniciado */ }
+    }
+  }
+
+  fabMic.addEventListener('click', alternarMicrofono);
+  if (chatMic) chatMic.addEventListener('click', alternarMicrofono);
 }
 
 initAsistente();
