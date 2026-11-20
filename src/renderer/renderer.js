@@ -8597,7 +8597,147 @@ function reactivarMicrofono() {
 
 function agregarAlHistorial(rol, texto) {
   asistente.historial.push({ rol, texto, ts: Date.now() });
-  if (asistente.historial.length > 12) asistente.historial.shift();
+  while (asistente.historial.length > 14) asistente.historial.shift();
+}
+
+// Construye un historial limpio y estrictamente alternado (usuario -> agente -> usuario -> agente)
+// eliminando mensajes de error para que Vertex AI nunca falle con HTTP 400 ni contamine turnos siguientes.
+function construirHistorialLimpioParaIA() {
+  const esError = (txt) => /error de comunicaci[oó]n|error procesando|no entend[ií]|intenta de nuevo/i.test(String(txt || ''));
+  const limpios = [];
+  for (const h of asistente.historial) {
+    if (!h || !h.texto || esError(h.texto)) continue;
+    const rolNorm = h.rol === 'usuario' ? 'usuario' : 'agente';
+    const textoCorto = String(h.texto).length > 320 ? (String(h.texto).slice(0, 320) + '...') : String(h.texto);
+    if (limpios.length === 0) {
+      if (rolNorm === 'usuario') limpios.push({ rol: 'usuario', texto: textoCorto });
+    } else {
+      const prev = limpios[limpios.length - 1];
+      if (prev.rol === rolNorm) {
+        // Si hay dos seguidos del mismo rol (ej. un turno anterior falló sin respuesta), reemplazamos por el más reciente
+        prev.texto = textoCorto;
+      } else {
+        limpios.push({ rol: rolNorm, texto: textoCorto });
+      }
+    }
+  }
+  // El último elemento del historial previo DEBE ser 'agente', porque el backend agregará el mensaje actual como 'user'
+  if (limpios.length > 0 && limpios[limpios.length - 1].rol === 'usuario') {
+    limpios.pop();
+  }
+  return limpios.slice(-4);
+}
+
+// Filtra los materiales del inventario más relevantes para el texto del usuario,
+// reduciendo el tamaño del prompt para que Gemini responda en 2-3 segundos sin agotar tokens.
+function seleccionarInventarioParaAsistente(textoUsuario) {
+  const todos = estado.materiales || [];
+  if (todos.length <= 75) {
+    return todos.map((m) => ({
+      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+    }));
+  }
+  const contextoBusqueda = normTxt(
+    [textoUsuario, ...asistente.historial.slice(-2).map((h) => h.texto || '')].join(' ')
+  );
+  const palabras = Array.from(new Set(
+    normalizarJergaElectrica(contextoBusqueda)
+      .split(/\s+/)
+      .filter((w) => w.length >= 2 && !['para', 'con', 'del', 'los', 'las', 'una', 'uno', 'dos', 'tres', 'por', 'que', 'orden', 'salida', 'entrada'].includes(w))
+  ));
+
+  const puntuados = todos.map((m, idx) => {
+    const mNorm = normalizarJergaElectrica(`${m.nombre || ''} ${m.codigo || ''} ${m.categoria || ''} ${m.serial || ''}`);
+    let pts = 0;
+    for (const p of palabras) {
+      if (mNorm.includes(p)) pts += (p.length >= 4 ? 3 : 1.5);
+    }
+    return { m, pts, idx };
+  });
+
+  puntuados.sort((a, b) => (b.pts - a.pts) || (a.idx - b.idx));
+  return puntuados.slice(0, 75).map(({ m }) => ({
+    nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
+    esHerramienta: !!m.esHerramienta, serial: m.serial || ''
+  }));
+}
+
+// Fetch con timeout automático (AbortController) para que nunca se quede congelado en "Procesando..."
+async function fetchConTimeout(url, options, timeoutMs = 26000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Respaldo local instantáneo: si el usuario dictó una lista de materiales y el servidor IA falla o tarda,
+// desglosa los materiales localmente por comas y abre la orden con los materiales encontrados.
+function intentarArmarOrdenLocalSiFallaIA(texto) {
+  const raw = String(texto || '').trim();
+  if (!raw || raw.length < 10) return false;
+  const numPalabras = {
+    un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
+    seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12,
+    quince: 15, veinte: 20, treinta: 30, cuarenta: 40, cincuenta: 50, cien: 100
+  };
+  const segmentos = raw.split(/\s*(?:,|;|\by\b(?=\s+(?:\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b))\s*/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 3);
+
+  const itemsDetectados = [];
+  for (let i = 0; i < segmentos.length; i++) {
+    let seg = segmentos[i];
+    // Si el siguiente segmento es solo "cable 12" o "calibre 12", unirlo al anterior (ej. "6 metros de línea amarilla, cable 12")
+    if (i + 1 < segmentos.length && /^(?:cable|calibre|cal|awg)\s*#?\s*\d{1,2}\b/i.test(segmentos[i + 1]) && !/^\d+/.test(segmentos[i + 1])) {
+      seg = `${seg} ${segmentos[i + 1]}`;
+      i++;
+    }
+    let cant = 1;
+    let resto = seg;
+    const mNum = seg.match(/^(\d+(?:[.,]\d+)?)\s+(?:metros?|mts?|m|unidades?|unds?|rollos?|cajas?|tramos?|juegos?|pares?)?\s*(?:de\s+)?(.+)$/i);
+    if (mNum) {
+      cant = Number(mNum[1].replace(',', '.')) || 1;
+      resto = mNum[2].trim();
+    } else {
+      const mPal = seg.match(/^(un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|treinta|cuarenta|cincuenta|cien)\s+(?:metros?|mts?|unidades?|unds?|rollos?|cajas?|tramos?)?\s*(?:de\s+)?(.+)$/i);
+      if (mPal) {
+        cant = numPalabras[mPal[1].toLowerCase()] || 1;
+        resto = mPal[2].trim();
+      }
+    }
+    resto = resto.replace(/\bl[ií]nea\s+(amarilla|roja|verde|blanca|azul|negra)\b/gi, (_, col) => {
+      const mapaCol = { amarilla: 'Amarillo', roja: 'Rojo', verde: 'Verde', blanca: 'Blanco', azul: 'Azul', negra: 'Negro' };
+      return 'Cable ' + (mapaCol[col.toLowerCase()] || col);
+    });
+    const match = buscarMaterialInteligente(resto);
+    if (match && match.material) {
+      itemsDetectados.push({
+        materialId: match.material.id,
+        cantidad: cant,
+        reqDevolucion: !!match.material.esHerramienta
+      });
+    }
+  }
+
+  if (itemsDetectados.length === 0) return false;
+  const tNorm = normTxt(raw);
+  const tipoOrd = /\bdevoluci[oó]n\b/.test(tNorm) ? 'devolucion' : (/\bentrada\b|\bpedido\b/.test(tNorm) ? 'entrada' : 'salida');
+  const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
+  if (vistaActual !== 'ordenes') {
+    const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
+    if (btnOrd) btnOrd.click();
+  }
+  modalOrden(tipoOrd, {
+    aviso: `✨ Se cargaron ${itemsDetectados.length} material(es) de tu comando de voz. Verifica y completa los datos.`,
+    items: itemsDetectados
+  });
+  agregarAlHistorial('agente', `Te abrí la orden con ${itemsDetectados.length} material(es) reconocidos de tu lista para que la revises.`);
+  actualizarPanel();
+  return true;
 }
 
 function actualizarPanel() {
@@ -8636,9 +8776,39 @@ function actualizarEstado(txt) {
   el.innerHTML = '<span class="ai-status-text">Toca el micrófono 🎤 para hablar o escribe abajo</span>';
 }
 
-// --- Navegacion local instantanea ---
+// --- Navegacion y apertura de formularios local instantanea (0 ms) ---
 function intentarNavLocal(texto) {
   const t = normTxt(texto).replace(/[.,;:!?]+/g, '').trim();
+
+  // Comandos directos para abrir nueva orden de salida / entrada / devolución o escáner IA
+  if (/^(?:abre|abrir|crea|crear|nueva|nuevo|hacer|generar)?\s*(?:una\s+)?(?:nueva\s+)?orden\s+de\s+(salida|entrada|pedido|devolucion)$/.test(t)) {
+    const mOrd = t.match(/(salida|entrada|pedido|devolucion)$/);
+    const tipoOrd = mOrd[1] === 'pedido' ? 'entrada' : mOrd[1];
+    const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
+    if (vistaActual !== 'ordenes') {
+      const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
+      if (btnOrd) btnOrd.click();
+    }
+    // Si en el último turno del historial el usuario acababa de dictar una lista que falló, cargarla en esta orden
+    const ultimoUsuario = [...asistente.historial].reverse().find((h) => h.rol === 'usuario' && h.texto && h.texto.length > 35);
+    agregarAlHistorial('usuario', texto);
+    if (ultimoUsuario && intentarArmarOrdenLocalSiFallaIA(ultimoUsuario.texto)) {
+      return true;
+    }
+    modalOrden(tipoOrd);
+    agregarAlHistorial('agente', `Listo, abrí una nueva orden de ${tipoOrd}.`);
+    actualizarPanel();
+    return true;
+  }
+
+  if (/^(?:abre|abrir|iniciar)?\s*(?:el\s+)?(?:escaner|lector)\s*(?:de\s+)?(?:ia|listas?|fotos?)?$/.test(t)) {
+    agregarAlHistorial('usuario', texto);
+    agregarAlHistorial('agente', 'Abrí el Escáner IA de listas y facturas.');
+    actualizarPanel();
+    modalEscanearListaIA();
+    return true;
+  }
+
   const regexNav = /^(?:abre|abrir|ve a|ve al|muestra|muestrame|ir a|ir al|vamos a|llevame a|abreme)\s+(.+)$/;
   const match = t.match(regexNav);
   if (!match) return false;
@@ -8664,30 +8834,22 @@ function mostrarBtnEnviar(visible) {
   if (btn) btn.hidden = !visible;
 }
 
-// --- Paso 1: Transcribe el audio grabado con Gemini y luego llama a enviarAGemini(texto) (Paso 2) ---
+// --- Paso 1: Transcribe el audio grabado con Gemini en modo rápido y luego llama a enviarAGemini(texto) (Paso 2) ---
 async function transcribirYEnviarAudio(base64Audio, mimeTypeAudio) {
   if (asistente.procesando || !base64Audio) return;
   asistente.procesando = true;
   mostrarBtnEnviar(false);
-  actualizarEstado('🧠 Escuchando tu audio...');
+  actualizarEstado('🧠 Transcribiendo tu audio...');
 
   try {
-    const nombresMuestra = estado.materiales.slice(0, 120).map((m) => m.nombre).join(', ');
-    const responsablesMuestra = responsablesExistentes().slice(0, 40).join(', ');
     const promptTranscripcion = [
-      'MODO TRANSCRIPTOR DE VOZ EXACTO (ESPAÑOL COLOMBIA):',
-      'El archivo adjunto es un AUDIO DE VOZ hablado por el almacenista de FVIECOM S.A.S.',
-      'Tu UNICA tarea en este paso es transcribir PALABRA POR PALABRA lo que dice el almacenista en el audio.',
-      'Pon especial cuidado con nombres de materiales eléctricos (cables #12, #10, #8, circuito/cto rojo/blanco/verde/amarillo/azul, tubería EMT, cajas 2x4 y 4x4, breakers, grapas, herramientas), cantidades (metros, unidades, rollos), frentes de obra (3, 3A, 3B, 3C, 4, 5, 5B, 11, A) y nombres de responsables.',
-      nombresMuestra ? ('Materiales conocidos en inventario: ' + nombresMuestra) : '',
-      responsablesMuestra ? ('Responsables conocidos: ' + responsablesMuestra) : '',
-      'Devuelve UNICAMENTE este JSON puro sin markdown:',
+      'MODO RAPIDO SIN PENSAR: Escucha este audio del almacenista de obra eléctrica (Colombia) y transcribe PALABRA POR PALABRA lo que dice en español.',
+      'Devuelve UNICAMENTE este JSON en una sola linea:',
       '{"transcripcion":"texto exacto que dijo el usuario"}',
-      'Si el audio solo contiene silencio o ruido sin ninguna palabra hablada, devuelve:',
-      '{"transcripcion":""}'
-    ].filter(Boolean).join('\n');
+      'Si solo hay silencio o ruido sin palabras, devuelve: {"transcripcion":""}'
+    ].join('\n');
 
-    const resp = await fetch(CLOUD_FUNCTION_URL, {
+    const resp = await fetchConTimeout(CLOUD_FUNCTION_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -8695,25 +8857,23 @@ async function transcribirYEnviarAudio(base64Audio, mimeTypeAudio) {
         mimeType: mimeTypeAudio || 'audio/webm',
         texto: promptTranscripcion,
         inventario: [],
-        contratos: obtenerContratos(),
+        contratos: {},
         vistaActual: 'ordenes',
         historial: []
       })
-    });
+    }, 24000);
 
     if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
     const json = await resp.json();
     let textoTranscrito = String(json.transcripcion || '').trim();
-    // Si el modelo devolvió el texto en 'mensaje' y no en 'transcripcion'
     if (!textoTranscrito && json.mensaje && !/no pude leer|no entendi|lista leida/i.test(json.mensaje)) {
       textoTranscrito = String(json.mensaje).trim();
     }
-    // Limpiar palabras de cierre al final si el usuario dijo "listo" o "enviar"
     textoTranscrito = textoTranscrito.replace(/\s+\b(?:listo|enviar|eso es todo)\b[.!]*$/i, '').trim();
 
     asistente.procesando = false;
     if (!textoTranscrito) {
-      actualizarEstado('⚠️ No se escuchó voz en el audio. Verifica tu micrófono e intenta de nuevo.');
+      actualizarEstado('⚠️ No se escuchó voz en el audio. Intenta hablar más cerca del micrófono.');
       toast('No se escuchó voz en la grabación', 'error');
       return;
     }
@@ -8722,11 +8882,11 @@ async function transcribirYEnviarAudio(base64Audio, mimeTypeAudio) {
       actualizarEstado();
       return;
     }
-    // Paso 2: Enviar el texto transcrito al flujo original enviarAGemini (que usa SYSTEM_PROMPT + historial)
+    // Paso 2: Enviar el texto transcrito al flujo enviarAGemini
     await enviarAGemini(textoTranscrito);
   } catch (_err) {
     asistente.procesando = false;
-    const msg = 'Error procesando el audio. Intenta de nuevo.';
+    const msg = 'No se pudo transcribir el audio a tiempo. Intenta de nuevo.';
     agregarAlHistorial('agente', msg);
     actualizarPanel();
     actualizarEstado();
@@ -8746,35 +8906,69 @@ function enviarBuffer() {
   return true;
 }
 
-// --- Enviar a Gemini (Flujo original de texto con SYSTEM_PROMPT + historial) ---
+// --- Enviar a Gemini (con historial sanitizado, inventario relevante pre-filtrado, modo rápido y reintento automático) ---
 async function enviarAGemini(texto) {
   if (asistente.procesando) return;
   asistente.procesando = true;
-  const histCtx = asistente.historial.slice(-6).map((h) => ({ rol: h.rol, texto: h.texto }));
+  const histCtx = construirHistorialLimpioParaIA();
   agregarAlHistorial('usuario', texto);
   actualizarPanel();
-  actualizarEstado('🧠 Procesando...');
+  actualizarEstado('🧠 Procesando con IA...');
 
   try {
     const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
-    const inv = estado.materiales.slice(0, 250).map((m) => ({
-      nombre: m.nombre, cantidad: m.cantidad, unidad: m.unidad,
-      esHerramienta: !!m.esHerramienta, serial: m.serial || ''
-    }));
+    const inv = seleccionarInventarioParaAsistente(texto);
+    const textoConModoRapido = `[MODO RAPIDO SIN PENSAR: Devuelve directo el JSON de accion en una sola linea]\n${texto}`;
 
-    const resp = await fetch(CLOUD_FUNCTION_URL, {
+    let resp = await fetchConTimeout(CLOUD_FUNCTION_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texto, inventario: inv, contratos: obtenerContratos(), vistaActual, historial: histCtx })
-    });
+      body: JSON.stringify({
+        texto: textoConModoRapido,
+        inventario: inv,
+        contratos: obtenerContratos(),
+        vistaActual,
+        historial: histCtx
+      })
+    }, 25000);
+
+    // Si el servidor devolvió 500 (por ej. límite de 2048 tokens en listas largas o historial),
+    // reintentamos automáticamente sin historial y en modo de alta capacidad (8192 tokens)
+    if (!resp.ok) {
+      const promptAltaCapacidad = [
+        'MODO RAPIDO SIN PENSAR: Eres el asistente del almacenista de FVIECOM. Interpreta el pedido del usuario y devuelve SOLO una linea JSON con la accion correspondiente:',
+        '- Si pide crear/abrir/despachar una lista de materiales y NO dio responsable o frente -> {"accion":"abrir_orden","tipo":"salida","items":[{"nombre":"nombre exacto del inventario","cantidad":1,"unidad":"unidad"}],"responsables":[],"frente":"","nota":"","mensaje":"Te abro la orden con los materiales para que completes responsable y frente"}',
+        '- Si dio material + cantidad + responsable + frente -> {"accion":"ejecutar_orden","tipo":"salida","items":[{"nombre":"...","cantidad":1,"unidad":"..."}],"responsables":["..."],"frente":"...","nota":"","mensaje":"..."}',
+        '- Si pregunta stock -> {"accion":"consulta","mensaje":"..."}',
+        '- Si pide ir a una vista -> {"accion":"navegar","destino":"ordenes","mensaje":"..."}',
+        '- Si falta informacion o conversa -> {"accion":"respuesta","mensaje":"..."}',
+        'Comando del usuario: ' + texto
+      ].join('\n');
+
+      resp = await fetchConTimeout(CLOUD_FUNCTION_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modo: 'lista',
+          texto: promptAltaCapacidad,
+          inventario: inv,
+          contratos: obtenerContratos(),
+          vistaActual,
+          historial: []
+        })
+      }, 25000);
+    }
 
     if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
     const json = await resp.json();
     await ejecutarRespuesta(json);
   } catch (_err) {
-    const msg = 'Error de comunicación. Intenta de nuevo.';
-    agregarAlHistorial('agente', msg);
-    actualizarPanel();
+    // Último respaldo local: si el texto era una lista de materiales, armamos y abrimos la orden localmente
+    if (!intentarArmarOrdenLocalSiFallaIA(texto)) {
+      const msg = 'Error de comunicación. Intenta de nuevo.';
+      agregarAlHistorial('agente', msg);
+      actualizarPanel();
+    }
   } finally {
     asistente.procesando = false;
     actualizarEstado();
