@@ -7129,10 +7129,21 @@ llenarConsumo();
    ================================================================== */
 const CLOUD_FUNCTION_URL = 'https://asistente-5lyachxl4a-uc.a.run.app';
 
-// Sinónimos y normalización de jerga eléctrica para emparejar manuscritos con inventario
+// Sinónimos y normalización de jerga eléctrica para emparejar manuscritos y voz con inventario
 function normalizarJergaElectrica(str) {
   let s = normTxt(str || '');
   s = s
+    .replace(/\b(?:tres|3)\s+cuartos\b/g, '3/4')
+    .replace(/\b(?:un|1)\s+cuarto\b/g, '1/4')
+    .replace(/\b(?:tres|3)\s+octavos\b/g, '3/8')
+    .replace(/\b(?:cinco|5)\s+octavos\b/g, '5/8')
+    .replace(/\bde\s+media\b/g, '1/2')
+    .replace(/\bmedia\s+pulgada\b/g, '1/2')
+    .replace(/\bl[ií]nea\s+(amarill[oa]|roj[oa]|verde|blanc[oa]|azul|negr[oa])\b/g, 'cable $1')
+    .replace(/\bamarilla\b/g, 'amarillo')
+    .replace(/\broja\b/g, 'rojo')
+    .replace(/\bblanca\b/g, 'blanco')
+    .replace(/\bnegra\b/g, 'negro')
     .replace(/\b(?:calibre|cal|no\.?|nro\.?|num\.?)\s*(\d+)\b/g, '#$1')
     .replace(/\b(?:cto|ctos|circuito|circuitos)\.?\s*(?:\d+\s*)?(?=(?:rojo|blanco|verde|amarillo|azul|negro|gris|naranja|tierra|#?\d+)\b)/g, 'cable ')
     .replace(/\b(?:cto|ctos)\.?\b/g, 'cable')
@@ -8674,36 +8685,82 @@ async function fetchConTimeout(url, options, timeoutMs = 26000) {
   }
 }
 
-// Respaldo local instantáneo: si el usuario dictó una lista de materiales y el servidor IA falla o tarda,
-// desglosa los materiales localmente por comas y abre la orden con los materiales encontrados.
+// Separa un texto dictado por voz (con o sin comas) en bloques individuales de material + cantidad
+function desglosarTextoEnItemsLocal(texto) {
+  let s = String(texto || '').trim();
+  s = s.replace(/^.*?(?:siguientes\s+materiales|estos\s+materiales|los\s+materiales|agrega(?:r|me)?\s+a\s+(?:esta|la)\s+orden(?:\s+de\s+\w+)?(?:\s+los\s+siguientes\s+materiales)?|abre\s+una\s+orden(?:\s+de\s+\w+)?\s+con)\s*[:,-]?\s*/i, '');
+  s = s
+    .replace(/\b(?:tres|3)\s+cuartos\b/gi, '3/4')
+    .replace(/\b(?:un|1)\s+cuarto\b/gi, '1/4')
+    .replace(/\b(?:tres|3)\s+octavos\b/gi, '3/8')
+    .replace(/\b(?:cinco|5)\s+octavos\b/gi, '5/8')
+    .replace(/\bde\s+media\b/gi, 'de 1/2')
+    .replace(/\bmedia\s+pulgada\b/gi, '1/2 pulgada')
+    .replace(/,\s*(?=(?:cable|calibre|cal|awg)\s*#?\s*\d{1,2}\b)/gi, ' ');
+
+  const numMap = {
+    un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
+    seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12,
+    quince: 15, veinte: 20, treinta: 30, cuarenta: 40, cincuenta: 50, cien: 100
+  };
+  const tokens = s.split(/\s+/);
+  const bloques = [];
+  let actual = [];
+  const noSepararTras = /^(?:cable|calibre|cal|cto|circuito|frente|intervenci[oó]n|de|del|para|caja|cajas|tubo|tubos|escalera|con|por|a|en|numero|nro|#)$/i;
+  const esCantidadInicio = (tok, sigTok) => {
+    const tLimpio = tok.replace(/^[,;]+|[,;]+$/g, '').toLowerCase();
+    if (!tLimpio) return false;
+    const sigLimpio = (sigTok || '').replace(/[,;.]/g, '');
+    if (/^\d+(?:[.,]\d+)?$/.test(tLimpio)) {
+      if (sigLimpio && /^(?:pulgadas?|pelda[ñn]os?|awg|v|voltios?|mm|cm|cuartos|octavos)$/i.test(sigLimpio)) return false;
+      return true;
+    }
+    if (numMap[tLimpio] !== undefined) {
+      if (sigLimpio && /^(?:pulgadas?|pelda[ñn]os?|cuarto|octavo)$/i.test(sigLimpio)) return false;
+      return true;
+    }
+    return false;
+  };
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    const prev = actual.length > 0 ? actual[actual.length - 1].replace(/[,;.]+$/g, '') : '';
+    const prevTeniaComa = actual.length > 0 && /[,;]$/.test(actual[actual.length - 1]);
+    const sig = tokens[i + 1] || '';
+    if (actual.length > 0 && esCantidadInicio(tok, sig) && (prevTeniaComa || !noSepararTras.test(prev))) {
+      bloques.push(actual.join(' ').replace(/[,;.]+$/g, '').trim());
+      actual = [tok];
+    } else {
+      actual.push(tok);
+    }
+  }
+  if (actual.length > 0) bloques.push(actual.join(' ').replace(/[,;.]+$/g, '').trim());
+  return bloques.filter((b) => b.length >= 2 && !/^(?:los\s+siguientes\s+materiales|agrega(?:r)?|orden\s+de\s+\w+)$/i.test(b));
+}
+
+// Respaldo local instantáneo: si el usuario dictó una lista de materiales (con o sin comas) y el servidor IA
+// devuelve "No entendí" o falla, desglosa los materiales localmente y los inyecta en la orden abierta o abre una nueva.
 function intentarArmarOrdenLocalSiFallaIA(texto) {
   const raw = String(texto || '').trim();
-  if (!raw || raw.length < 10) return false;
+  if (!raw || raw.length < 8) return false;
   const numPalabras = {
     un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5,
     seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12,
     quince: 15, veinte: 20, treinta: 30, cuarenta: 40, cincuenta: 50, cien: 100
   };
-  const segmentos = raw.split(/\s*(?:,|;|\by\b(?=\s+(?:\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b))\s*/i)
-    .map((s) => s.trim())
-    .filter((s) => s.length >= 3);
+  const segmentos = desglosarTextoEnItemsLocal(raw);
+  const itemsCrudos = [];
 
-  const itemsDetectados = [];
   for (let i = 0; i < segmentos.length; i++) {
-    let seg = segmentos[i];
-    // Si el siguiente segmento es solo "cable 12" o "calibre 12", unirlo al anterior (ej. "6 metros de línea amarilla, cable 12")
-    if (i + 1 < segmentos.length && /^(?:cable|calibre|cal|awg)\s*#?\s*\d{1,2}\b/i.test(segmentos[i + 1]) && !/^\d+/.test(segmentos[i + 1])) {
-      seg = `${seg} ${segmentos[i + 1]}`;
-      i++;
-    }
+    const seg = segmentos[i];
     let cant = 1;
     let resto = seg;
-    const mNum = seg.match(/^(\d+(?:[.,]\d+)?)\s+(?:metros?|mts?|m|unidades?|unds?|rollos?|cajas?|tramos?|juegos?|pares?)?\s*(?:de\s+)?(.+)$/i);
+    const mNum = seg.match(/^(\d+(?:[.,]\d+)?)\s+(?:metros?|mts?|m|unidades?|unds?|rollos?|cajas?|tramos?|juegos?|pares?|tarros?|galon(?:es)?)?\s*(?:de\s+)?(.+)$/i);
     if (mNum) {
       cant = Number(mNum[1].replace(',', '.')) || 1;
       resto = mNum[2].trim();
     } else {
-      const mPal = seg.match(/^(un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|treinta|cuarenta|cincuenta|cien)\s+(?:metros?|mts?|unidades?|unds?|rollos?|cajas?|tramos?)?\s*(?:de\s+)?(.+)$/i);
+      const mPal = seg.match(/^(un|uno|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|quince|veinte|treinta|cuarenta|cincuenta|cien)\s+(?:metros?|mts?|unidades?|unds?|rollos?|cajas?|tramos?|tarros?|galon(?:es)?)?\s*(?:de\s+)?(.+)$/i);
       if (mPal) {
         cant = numPalabras[mPal[1].toLowerCase()] || 1;
         resto = mPal[2].trim();
@@ -8713,11 +8770,17 @@ function intentarArmarOrdenLocalSiFallaIA(texto) {
       const mapaCol = { amarilla: 'Amarillo', roja: 'Rojo', verde: 'Verde', blanca: 'Blanco', azul: 'Azul', negra: 'Negro' };
       return 'Cable ' + (mapaCol[col.toLowerCase()] || col);
     });
-    const match = buscarMaterialInteligente(resto);
+    itemsCrudos.push({ nombre: resto, textoOriginal: seg, cantidad: cant, unidad: 'unidad' });
+  }
+
+  const itemsDesglosados = desglosarCircuitosIA(itemsCrudos);
+  const itemsDetectados = [];
+  for (const it of itemsDesglosados) {
+    const match = buscarMaterialInteligente(it.nombre, it.textoOriginal);
     if (match && match.material) {
       itemsDetectados.push({
         materialId: match.material.id,
-        cantidad: cant,
+        cantidad: it.cantidad,
         reqDevolucion: !!match.material.esHerramienta
       });
     }
@@ -8726,6 +8789,16 @@ function intentarArmarOrdenLocalSiFallaIA(texto) {
   if (itemsDetectados.length === 0) return false;
   const tNorm = normTxt(raw);
   const tipoOrd = /\bdevoluci[oó]n\b/.test(tNorm) ? 'devolucion' : (/\bentrada\b|\bpedido\b/.test(tNorm) ? 'entrada' : 'salida');
+
+  // Si el usuario YA tiene una ventana de orden abierta en pantalla, agregamos los materiales ahí mismo
+  const vAct = ventanas.activa;
+  if (vAct && vAct.aplicarDatosIA && !$('#modal').hidden) {
+    vAct.aplicarDatosIA({ items: itemsDetectados });
+    agregarAlHistorial('agente', `Listo, agregué ${itemsDetectados.length} material(es) a la orden que tienes abierta en pantalla.`);
+    actualizarPanel();
+    return true;
+  }
+
   const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
   if (vistaActual !== 'ordenes') {
     const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
@@ -8789,7 +8862,6 @@ function intentarNavLocal(texto) {
       const btnOrd = document.querySelector('.menu-item[data-vista="ordenes"]');
       if (btnOrd) btnOrd.click();
     }
-    // Si en el último turno del historial el usuario acababa de dictar una lista que falló, cargarla en esta orden
     const ultimoUsuario = [...asistente.historial].reverse().find((h) => h.rol === 'usuario' && h.texto && h.texto.length > 35);
     agregarAlHistorial('usuario', texto);
     if (ultimoUsuario && intentarArmarOrdenLocalSiFallaIA(ultimoUsuario.texto)) {
@@ -8906,7 +8978,7 @@ function enviarBuffer() {
   return true;
 }
 
-// --- Enviar a Gemini (con historial sanitizado, inventario relevante pre-filtrado, modo rápido y reintento automático) ---
+// --- Enviar a Gemini (usa siempre el modo de alta capacidad 8192 tokens + JSON estricto cuando se dictan materiales) ---
 async function enviarAGemini(texto) {
   if (asistente.procesando) return;
   asistente.procesando = true;
@@ -8918,52 +8990,58 @@ async function enviarAGemini(texto) {
   try {
     const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || 'dashboard';
     const inv = seleccionarInventarioParaAsistente(texto);
-    const textoConModoRapido = `[MODO RAPIDO SIN PENSAR: Devuelve directo el JSON de accion en una sola linea]\n${texto}`;
+    const vAct = ventanas.activa;
+    const hayOrdenAbierta = !!(vAct && vAct.aplicarDatosIA && !$('#modal').hidden);
+    const histTexto = histCtx.map((h) => `${h.rol === 'usuario' ? 'Usuario' : 'Agente'}: ${h.texto}`).join('\n');
 
-    let resp = await fetchConTimeout(CLOUD_FUNCTION_URL, {
+    const promptAltaCapacidad = [
+      'MODO RAPIDO SIN PENSAR: Eres el asistente de voz y chat del almacenista de FVIECOM S.A.S (Rionegro).',
+      'Interpreta el comando del usuario y devuelve UNICAMENTE un objeto JSON valido en una sola linea:',
+      '1. Si el usuario dicta una lista de materiales o pide agregarlos a la orden (ej. "agregar a esta orden...", "8 cajas PVC 4x4 10 entradas de media...", etc.):',
+      '   - Separa CADA material con su cantidad numerica en el array "items" (aunque el usuario los haya dicho seguidos sin comas).',
+      '   - Busca cada material en "INVENTARIO ACTUAL" y escribe su nombre en "nombre" y su nombre exacto del inventario en "nombreInventario".',
+      '   - Si dice "de media" es "1/2", "3 cuartos" es "3/4", "tres octavos" es "3/8", "cto" o "circuito" se desglosa en 3 cables (Fase color + Blanco + Verde).',
+      '   - Si NO dio responsable o frente (o si pide agregarlos a la orden actual), usa "accion":"abrir_orden":',
+      '     {"accion":"abrir_orden","tipo":"salida","items":[{"nombre":"...","nombreInventario":"...","cantidad":1,"unidad":"unidad"}],"responsables":[],"frente":"","nota":"","mensaje":"Listo, agregué los materiales a la orden"}',
+      '   - Si dio material + cantidad + responsable + frente completo y NO está editando una orden abierta, usa "accion":"ejecutar_orden":',
+      '     {"accion":"ejecutar_orden","tipo":"salida","items":[{"nombre":"...","nombreInventario":"...","cantidad":1,"unidad":"unidad"}],"responsables":["..."],"frente":"...","nota":"","mensaje":"..."}',
+      '2. Si pregunta por stock o cantidad en bodega -> {"accion":"consulta","mensaje":"..."}',
+      '3. Si pide ir a una vista (dashboard, inventario, movimientos, ordenes, responsables, consumo, kits, herramientas, importar, reportes, acerca) -> {"accion":"navegar","destino":"...","mensaje":"..."}',
+      '4. Si conversa o falta un dato -> {"accion":"respuesta","mensaje":"..."}',
+      hayOrdenAbierta ? (`Contexto: El usuario TIENE ABIERTA en pantalla una ventana de Orden de ${vAct.ordenTipo || 'salida'}.`) : '',
+      histTexto ? ('Historial reciente:\n' + histTexto) : '',
+      'Comando actual del usuario: ' + texto
+    ].filter(Boolean).join('\n');
+
+    // Usamos modo: 'lista' para que la Cloud Function active maxOutputTokens: 8192 y responseMimeType: 'application/json'
+    // evitando que se corte el JSON a los 2048 tokens y nunca devuelva "No entendí. Repite por favor."
+    const resp = await fetchConTimeout(CLOUD_FUNCTION_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        texto: textoConModoRapido,
+        modo: 'lista',
+        texto: promptAltaCapacidad,
         inventario: inv,
         contratos: obtenerContratos(),
         vistaActual,
-        historial: histCtx
+        historial: []
       })
     }, 25000);
 
-    // Si el servidor devolvió 500 (por ej. límite de 2048 tokens en listas largas o historial),
-    // reintentamos automáticamente sin historial y en modo de alta capacidad (8192 tokens)
-    if (!resp.ok) {
-      const promptAltaCapacidad = [
-        'MODO RAPIDO SIN PENSAR: Eres el asistente del almacenista de FVIECOM. Interpreta el pedido del usuario y devuelve SOLO una linea JSON con la accion correspondiente:',
-        '- Si pide crear/abrir/despachar una lista de materiales y NO dio responsable o frente -> {"accion":"abrir_orden","tipo":"salida","items":[{"nombre":"nombre exacto del inventario","cantidad":1,"unidad":"unidad"}],"responsables":[],"frente":"","nota":"","mensaje":"Te abro la orden con los materiales para que completes responsable y frente"}',
-        '- Si dio material + cantidad + responsable + frente -> {"accion":"ejecutar_orden","tipo":"salida","items":[{"nombre":"...","cantidad":1,"unidad":"..."}],"responsables":["..."],"frente":"...","nota":"","mensaje":"..."}',
-        '- Si pregunta stock -> {"accion":"consulta","mensaje":"..."}',
-        '- Si pide ir a una vista -> {"accion":"navegar","destino":"ordenes","mensaje":"..."}',
-        '- Si falta informacion o conversa -> {"accion":"respuesta","mensaje":"..."}',
-        'Comando del usuario: ' + texto
-      ].join('\n');
-
-      resp = await fetchConTimeout(CLOUD_FUNCTION_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          modo: 'lista',
-          texto: promptAltaCapacidad,
-          inventario: inv,
-          contratos: obtenerContratos(),
-          vistaActual,
-          historial: []
-        })
-      }, 25000);
-    }
-
     if (!resp.ok) throw new Error('Error del servidor: ' + resp.status);
     const json = await resp.json();
-    await ejecutarRespuesta(json);
+
+    // Si el servidor devolvió un mensaje genérico de error de parseo ("No entendí" / "No pude leer"),
+    // ejecutamos el desglose local de materiales de inmediato.
+    if (
+      (!Array.isArray(json.items) || json.items.length === 0)
+      && /no entendi|no pude leer/i.test(String(json.mensaje || ''))
+    ) {
+      if (intentarArmarOrdenLocalSiFallaIA(texto)) return;
+    }
+
+    await ejecutarRespuesta(json, texto);
   } catch (_err) {
-    // Último respaldo local: si el texto era una lista de materiales, armamos y abrimos la orden localmente
     if (!intentarArmarOrdenLocalSiFallaIA(texto)) {
       const msg = 'Error de comunicación. Intenta de nuevo.';
       agregarAlHistorial('agente', msg);
@@ -8975,29 +9053,36 @@ async function enviarAGemini(texto) {
   }
 }
 
-// Busca un material por coincidencia directa de nombre (como en la versión original de voz)
+// Busca el material en el inventario usando coincidencia exacta, parcial o difusa inteligente
 function resolverMaterialPorVoz(it) {
   if (!it) return null;
   if (it.materialId) {
     const porId = estado.materiales.find((m) => m.id === it.materialId);
     if (porId) return porId;
   }
-  const buscado = normTxt(it.nombre || '');
+  const difuso = buscarMaterialInteligente(it.nombre || it.textoOriginal || '', it.nombreInventario || '');
+  if (difuso && difuso.material) return difuso.material;
+  const buscado = normTxt(it.nombre || it.nombreInventario || '');
   if (!buscado) return null;
-  const directo = estado.materiales.find((m) => normTxt(m.nombre) === buscado)
-    || estado.materiales.find((m) => normTxt(m.nombre).includes(buscado) || buscado.includes(normTxt(m.nombre)));
-  if (directo) return directo;
-  const difuso = buscarMaterialInteligente(it.nombre, it.nombreInventario);
-  return (difuso && difuso.score >= 0.55) ? difuso.material : null;
+  return estado.materiales.find((m) => normTxt(m.nombre) === buscado)
+    || estado.materiales.find((m) => normTxt(m.nombre).includes(buscado) || buscado.includes(normTxt(m.nombre)))
+    || null;
 }
 
 // --- Ejecutar respuesta de Gemini ---
-async function ejecutarRespuesta(json) {
+async function ejecutarRespuesta(json, textoOriginalUsuario = '') {
   if (json && Array.isArray(json.items)) {
     json.items = desglosarCircuitosIA(json.items);
   }
-  const accion = json.accion;
+  let accion = json.accion;
   const mensaje = json.mensaje || '';
+  const vAct = ventanas.activa;
+  const ordenAbiertaEnPantalla = !!(vAct && vAct.aplicarDatosIA && !$('#modal').hidden);
+
+  // Si viene de un comando de voz/chat y el modelo devolvió 'lista_escaneada' con items, tratarlo como 'abrir_orden'
+  if (accion === 'lista_escaneada' && Array.isArray(json.items) && json.items.length > 0 && textoOriginalUsuario) {
+    accion = 'abrir_orden';
+  }
 
   if (accion === 'navegar') {
     const dest = ALIAS_VISTAS[normTxt(json.destino || '')] || normTxt(json.destino || '');
@@ -9007,9 +9092,11 @@ async function ejecutarRespuesta(json) {
     actualizarPanel();
 
   } else if (accion === 'lista_escaneada') {
+    if (textoOriginalUsuario && intentarArmarOrdenLocalSiFallaIA(textoOriginalUsuario)) {
+      return;
+    }
     agregarAlHistorial('agente', mensaje || 'Lista escaneada. Revisa los renglones en pantalla.');
     actualizarPanel();
-    const vAct = ventanas.activa;
     modalEscanearListaIA({
       enOrdenActiva: !!(vAct && vAct.aplicarDatosIA),
       tipoOrden: (vAct && vAct.ordenTipo) || json.tipo || 'salida',
@@ -9018,24 +9105,80 @@ async function ejecutarRespuesta(json) {
     });
 
   } else if (accion === 'ejecutar_orden') {
+    // Si el usuario ya tiene una ventana de orden abierta en pantalla y pidió agregar materiales (o no dio frente/responsable),
+    // los agregamos directamente a la orden abierta en pantalla.
+    if (ordenAbiertaEnPantalla && (!json.frente || !Array.isArray(json.responsables) || json.responsables.length === 0 || /agrega|a esta orden/i.test(textoOriginalUsuario))) {
+      const itemsResueltos = (json.items || []).map((it) => {
+        const mat = resolverMaterialPorVoz(it);
+        return {
+          materialId: mat ? mat.id : '',
+          cantidad: Number(it.cantidad) || 1,
+          reqDevolucion: !!(it.reqDevolucion || (mat && mat.esHerramienta))
+        };
+      }).filter((x) => x.materialId);
+      if (itemsResueltos.length > 0) {
+        vAct.aplicarDatosIA({
+          tipo: json.tipo || vAct.ordenTipo,
+          frente: json.frente,
+          proveedor: json.proveedor,
+          responsables: json.responsables,
+          nota: json.nota,
+          items: itemsResueltos
+        });
+        agregarAlHistorial('agente', `Listo, agregué ${itemsResueltos.length} material(es) a la orden que tienes abierta.`);
+        actualizarPanel();
+        return;
+      }
+    }
     await ejecutarOrden(json);
 
   } else if (accion === 'abrir_orden') {
-    const tipo = json.tipo || 'salida';
+    const tipo = json.tipo || (vAct && vAct.ordenTipo) || 'salida';
     const items = (json.items || []).map((it) => {
       const mat = resolverMaterialPorVoz(it);
       return {
         materialId: mat ? mat.id : '',
-        cantidad: it.cantidad || 1,
+        cantidad: Number(it.cantidad) || 1,
         reqDevolucion: !!(it.reqDevolucion || (mat && mat.esHerramienta))
       };
     });
+    const itemsConMat = items.filter((x) => x.materialId);
+
+    // Si hay algún material dictado que no existe aún en el inventario, o si todos existen y hay una orden abierta:
+    if (ordenAbiertaEnPantalla && itemsConMat.length > 0) {
+      vAct.aplicarDatosIA({
+        tipo: json.tipo || vAct.ordenTipo,
+        frente: json.frente,
+        proveedor: json.proveedor,
+        responsables: json.responsables,
+        nota: json.nota,
+        items: itemsConMat
+      });
+      agregarAlHistorial('agente', `Listo, agregué ${itemsConMat.length} material(es) a la orden que tienes en pantalla.`);
+      actualizarPanel();
+      return;
+    }
+
+    if (itemsConMat.length === 0 && Array.isArray(json.items) && json.items.length > 0) {
+      // Si los materiales dictados son nuevos o no coincidieron con el catálogo, abrimos el verificador IA para crearlos/vincularlos
+      modalEscanearListaIA({
+        enOrdenActiva: ordenAbiertaEnPantalla,
+        tipoOrden: tipo,
+        alConfirmarEnOrden: ordenAbiertaEnPantalla ? vAct.aplicarDatosIA : null,
+        respuestaInicial: json
+      });
+      agregarAlHistorial('agente', 'Algunos materiales no están en el inventario con ese nombre. Te los cargué en el verificador IA para vincularlos o crearlos.');
+      actualizarPanel();
+      return;
+    }
+
     const precarga = {
       frente: json.frente || '',
+      proveedor: json.proveedor || '',
       responsable: (json.responsables && json.responsables[0]) || '',
       responsables: (json.responsables || []).map((n) => ({ nombre: n, whatsapp: buscarWhatsappResp(n) })),
       nota: json.nota || '',
-      items: items.length ? items : [{ materialId: '', cantidad: '' }]
+      items: itemsConMat.length ? itemsConMat : [{ materialId: '', cantidad: '' }]
     };
     const vistaActual = document.querySelector('.menu-item.active')?.dataset?.vista || '';
     if (vistaActual !== 'ordenes') {
@@ -9043,10 +9186,13 @@ async function ejecutarRespuesta(json) {
       if (btnOrd) btnOrd.click();
     }
     modalOrden(tipo, precarga);
-    agregarAlHistorial('agente', mensaje || 'Abrí la orden para que la revises.');
+    agregarAlHistorial('agente', mensaje || `Abrí la orden con ${itemsConMat.length} material(es) para que la revises.`);
     actualizarPanel();
 
   } else if (accion === 'consulta' || accion === 'respuesta') {
+    if (/no entendi|no pude leer/i.test(mensaje) && textoOriginalUsuario && intentarArmarOrdenLocalSiFallaIA(textoOriginalUsuario)) {
+      return;
+    }
     agregarAlHistorial('agente', mensaje);
     actualizarPanel();
 
